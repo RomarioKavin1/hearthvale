@@ -2,8 +2,8 @@ import { Scene } from 'phaser';
 import { PAL } from '../../shared/palette';
 import { SPRITES } from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
+import { BG } from '../art/render';
 
-const BG = '#322a3d';
 const BAR_W = 260;
 const BAR_H = 8;
 

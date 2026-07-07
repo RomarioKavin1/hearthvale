@@ -165,6 +165,10 @@ export class Village extends Scene {
 
   private pollTimer: number | null = null;
   private lastBarTick = 0;
+  /** Ring bounds the ground was last painted with. repaintRing() compares the
+   * store's current ring against this so both delivery paths (realtime message
+   * AND poll/visibility refresh) repaint exactly once — double delivery is safe. */
+  private paintedRing: { lo: number; hi: number } = { lo: -1, hi: -1 };
   /** True once initWorld() has run — guards the build-once ensureWorld() path. */
   private worldBuilt = false;
   /** The "Loading village…" / retry text, removed once the world is built. */
@@ -289,6 +293,7 @@ export class Village extends Scene {
   // ── Ground ──────────────────────────────────────────────────────────────────
 
   private buildGround(): void {
+    this.paintedRing = this.ringLoHi();
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         this.paintGround(x, y);
@@ -365,6 +370,9 @@ export class Village extends Scene {
   private reconcileAll(): void {
     const data = store.data;
     if (!data) return;
+    // Ring bounds can also change via the poll/refresh path (a dropped realtime
+    // {t:'ring'} message) — repaint the ground whenever they differ.
+    this.repaintRing();
     for (const [key, tile] of Object.entries(data.grid)) {
       this.syncTile(key, tile);
     }
@@ -904,23 +912,43 @@ export class Village extends Scene {
     }
   }
 
-  /** New land opened: widen the ring, pop the new tiles in, celebrate. */
+  /** Realtime ring message: widen the store's bounds, then repaint/celebrate.
+   * Population + nextThreshold aren't in the message, so a refresh is kicked
+   * off to keep the "N more villagers" copy honest. */
   private onRingUnlock(lo: number, hi: number): void {
     const data = store.data;
     if (!data) return;
-    const old = { lo: data.ring.lo, hi: data.ring.hi };
-    if (lo >= old.lo && hi <= old.hi) return; // no growth
-    data.ring.lo = lo;
-    data.ring.hi = hi;
+    // Only ever widen — ignore stale/out-of-order messages.
+    if (lo < data.ring.lo || hi > data.ring.hi) {
+      data.ring.lo = Math.min(lo, data.ring.lo);
+      data.ring.hi = Math.max(hi, data.ring.hi);
+      void store.refresh().catch(() => {});
+    }
+    this.repaintRing();
+  }
 
-    // Gather freshly-unlocked tiles (inside new bounds, outside old).
+  /**
+   * Repaint the ground when the store's ring bounds differ from what was last
+   * painted, with the unlock celebration (zoom-out, staggered pop-in, confetti).
+   * Idempotent — the paintedRing guard makes realtime + poll double-delivery a
+   * no-op on the second arrival.
+   */
+  private repaintRing(): void {
+    const { lo, hi } = this.ringLoHi();
+    const old = this.paintedRing;
+    if (lo === old.lo && hi === old.hi) return;
+    this.paintedRing = { lo, hi };
+
+    // Tiles whose locked/unlocked membership changed (normally only growth).
     const fresh: Array<{ x: number; y: number }> = [];
-    for (let y = lo; y <= hi; y++) {
-      for (let x = lo; x <= hi; x++) {
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        const isIn = x >= lo && x <= hi && y >= lo && y <= hi;
         const wasIn = x >= old.lo && x <= old.hi && y >= old.lo && y <= old.hi;
-        if (!wasIn) fresh.push({ x, y });
+        if (isIn !== wasIn) fresh.push({ x, y });
       }
     }
+    if (fresh.length === 0) return;
 
     // Gentle zoom-out to reveal the bigger village.
     const cam = this.cameras.main;
@@ -931,7 +959,7 @@ export class Village extends Scene {
       ease: 'Sine.inOut',
     });
 
-    // Staggered pop-in of the new terrain.
+    // Staggered pop-in of the changed terrain.
     fresh.forEach((t, i) => {
       this.time.delayedCall(i * 20, () => {
         const img = this.paintGround(t.x, t.y);
