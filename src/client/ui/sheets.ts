@@ -132,9 +132,13 @@ export const openLandmarkSheet = (): void => {
           return;
         }
         void action('contribute', async () => {
+          // The server clamps the contribution to the player's supplies, so read
+          // the balance before the call and report the amount actually applied.
+          const before = store.data?.me?.supplies ?? 0;
           const res = await api.contribute(amount);
           store.applyMutation({ city: res.city, me: res.me });
-          toast(`+${fmtInt(amount)} to the clocktower! 🏰`, 'celebrate');
+          const applied = Math.max(0, before - res.me.supplies);
+          toast(`+${fmtInt(applied)} to the clocktower! 🏰`, 'celebrate');
         });
       });
       stack.appendChild(confirm);

@@ -146,6 +146,10 @@ export class Village extends Scene {
 
   private pollTimer: number | null = null;
   private lastBarTick = 0;
+  /** True once initWorld() has run — guards the build-once ensureWorld() path. */
+  private worldBuilt = false;
+  /** The "Loading village…" / retry text, removed once the world is built. */
+  private loading: Phaser.GameObjects.Text | undefined;
   /** Tile keys with a collect POST currently in flight (double-tap guard). */
   private collecting: Set<string> = new Set();
 
@@ -179,7 +183,7 @@ export class Village extends Scene {
       registerLandmark(this);
     }
 
-    const loading = this.add
+    this.loading = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'Loading village…', {
         fontFamily: 'monospace',
         fontSize: '16px',
@@ -189,19 +193,41 @@ export class Village extends Scene {
       .setScrollFactor(0)
       .setDepth(EFFECT_DEPTH);
 
+    // Any successful refresh — the initial load, a retry, a poll tick, or a
+    // visibilitychange refresh — emits 'change'. ensureWorld() builds the world
+    // once (and reconciles thereafter), so a first load that failed and later
+    // recovers via polling still comes alive instead of staying a black canvas.
+    this.onStoreChange = () => this.ensureWorld();
+    store.on('change', this.onStoreChange);
+
     void store
       .refresh()
-      .then(() => {
-        loading.destroy();
-        this.initWorld();
-      })
+      .then(() => this.ensureWorld())
       .catch(() => {
-        loading.setText('Could not reach the village. Retrying…');
+        this.loading?.setText('Could not reach the village. Retrying…');
         this.startPolling();
       });
   }
 
   // ── World construction ────────────────────────────────────────────────────
+
+  /**
+   * Build the world exactly once, then reconcile on every later change. Called
+   * from the store 'change' subscription and the initial-load success path, so
+   * a first load that fails (and only later recovers via polling / visibility)
+   * still initialises the map instead of leaving a dead canvas under the HUD.
+   */
+  private ensureWorld(): void {
+    if (this.worldBuilt) {
+      this.reconcileAll();
+      return;
+    }
+    if (!store.data) return;
+    this.loading?.destroy();
+    this.loading = undefined;
+    this.initWorld();
+    this.worldBuilt = true;
+  }
 
   private initWorld(): void {
     const data = store.data;
@@ -226,8 +252,8 @@ export class Village extends Scene {
     this.setupDomBridge();
     this.setupRealtime();
 
-    this.onStoreChange = () => this.reconcileAll();
-    store.on('change', this.onStoreChange);
+    // The 'change' subscription (→ ensureWorld → reconcileAll once built) is
+    // registered in create(), so it also catches the recover-after-outage case.
 
     this.time.addEvent({
       delay: 2000,

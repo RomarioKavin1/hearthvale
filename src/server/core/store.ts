@@ -91,6 +91,10 @@ const parsePlayer = (
   boostsToday: num(h.boostsToday, 0),
   boostsDate: h.boostsDate ?? '',
   paidStage: num(h.paidStage, 0),
+  // Legacy players predate these lifetime counters — default 0.
+  valueSpent: num(h.valueSpent, 0),
+  lifetimeEarned: num(h.lifetimeEarned, 0),
+  lifetimeContributed: num(h.lifetimeContributed, 0),
 });
 
 const playerFields = (p: PlayerState): Record<string, string> => ({
@@ -106,6 +110,9 @@ const playerFields = (p: PlayerState): Record<string, string> => ({
   boostsToday: String(p.boostsToday),
   boostsDate: p.boostsDate,
   paidStage: String(p.paidStage),
+  valueSpent: String(p.valueSpent),
+  lifetimeEarned: String(p.lifetimeEarned),
+  lifetimeContributed: String(p.lifetimeContributed),
 });
 
 export const getPlayer = async (
@@ -133,6 +140,9 @@ export const initPlayer = async (
     boostsToday: 0,
     boostsDate: '',
     paidStage: 0,
+    valueSpent: 0,
+    lifetimeEarned: 0,
+    lifetimeContributed: 0,
   };
   await redis.hSet(playerKey(userId), playerFields(player));
   return player;

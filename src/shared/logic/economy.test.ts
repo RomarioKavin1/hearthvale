@@ -23,6 +23,9 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   boostsToday: 0,
   boostsDate: '',
   paidStage: 0,
+  valueSpent: 0,
+  lifetimeEarned: 0,
+  lifetimeContributed: 0,
   ...overrides,
 });
 

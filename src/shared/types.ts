@@ -53,6 +53,12 @@ export type PlayerState = {
   boostsDate: string;
   /** Highest landmark stage index whose payout this player has collected. */
   paidStage: number;
+  /** Lifetime coins spent on build + upgrade — the `lb:value` absolute score. */
+  valueSpent: number;
+  /** Lifetime coins gathered from collects — the `lb:earned` absolute score. */
+  lifetimeEarned: number;
+  /** Lifetime supplies contributed — the `lb:contrib` absolute score. */
+  lifetimeContributed: number;
 };
 
 export type LeaderRow = { name: string; score: number; me: boolean };

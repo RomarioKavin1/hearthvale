@@ -322,6 +322,9 @@ export const applyCollect = (
         ...player,
         coins: player.coins + gained.coins,
         supplies: player.supplies + gained.supplies,
+        // Absolute lifetime-earned counter drives the replay-safe lb:earned
+        // score: re-applying the same collect result yields the same total.
+        lifetimeEarned: player.lifetimeEarned + gained.coins,
       },
       gained.xp
     );
@@ -407,15 +410,18 @@ const maybeFlair = async (
 const resolveName = async (id: string): Promise<string> => {
   const cached = await redis.get(`uname:${id}`);
   if (cached) return cached;
-  let name = 'villager';
   try {
     const user = await reddit.getUserById(asT2(id));
-    if (user) name = user.username;
+    if (user) {
+      // Only persist a real, successful lookup — never cache the fallback, or a
+      // transient failure would pin the player to 'villager' forever.
+      await redis.set(`uname:${id}`, user.username);
+      return user.username;
+    }
   } catch (error) {
     console.error(`getUserById failed for ${id}:`, error);
   }
-  await redis.set(`uname:${id}`, name);
-  return name;
+  return 'villager';
 };
 
 const ensurePlayer = async (userId: string): Promise<PlayerState> => {
@@ -550,13 +556,19 @@ export const doBuild = async (
 
   const before = player.level;
   const me = creditXp(
-    { ...player, coins: player.coins - spec.cost },
+    {
+      ...player,
+      coins: player.coins - spec.cost,
+      valueSpent: player.valueSpent + spec.cost,
+    },
     Math.floor(spec.cost / 10)
   );
 
   await putTile(key, newTile);
   await putPlayer(me);
-  await redis.zIncrBy(LB_VALUE, userId, spec.cost);
+  // Absolute write: racing duplicate builds converge on the same lb:value score
+  // instead of double-counting the cost the player only paid once.
+  await redis.zAdd(LB_VALUE, { member: userId, score: me.valueSpent });
   await maybeFlair(before, me);
   await broadcastTile(key, newTile);
   return { tile: newTile, me };
@@ -605,17 +617,26 @@ export const doUpgrade = async (
   };
 
   const before = player.level;
+  // collected.player already carries the auto-collect's lifetimeEarned bump.
   const me = creditXp(
-    { ...collected.player, coins: collected.player.coins - stats.cost },
+    {
+      ...collected.player,
+      coins: collected.player.coins - stats.cost,
+      valueSpent: collected.player.valueSpent + stats.cost,
+    },
     Math.floor(stats.cost / 10)
   );
 
   await putTile(key, upgraded);
   await putPlayer(me);
-  await redis.zIncrBy(LB_VALUE, userId, stats.cost);
+  // Absolute writes derived from the player's lifetime counters — replay-safe
+  // under concurrent duplicate upgrades.
+  await redis.zAdd(LB_VALUE, { member: userId, score: me.valueSpent });
   const bankedResources = pending.coins + pending.supplies;
   if (bankedResources > 0) {
-    if (pending.coins > 0) await redis.zIncrBy(LB_EARNED, userId, pending.coins);
+    if (pending.coins > 0) {
+      await redis.zAdd(LB_EARNED, { member: userId, score: me.lifetimeEarned });
+    }
     await putCity({ totalCollected: city.totalCollected + bankedResources });
   }
   await maybeFlair(before, me);
@@ -650,7 +671,12 @@ export const doCollect = async (
   await putTile(key, result.tile);
   if (produced) {
     await putPlayer(result.player);
-    if (gained.coins > 0) await redis.zIncrBy(LB_EARNED, userId, gained.coins);
+    if (gained.coins > 0) {
+      await redis.zAdd(LB_EARNED, {
+        member: userId,
+        score: result.player.lifetimeEarned,
+      });
+    }
     await putCity({
       totalCollected: city.totalCollected + gained.coins + gained.supplies,
     });
@@ -696,7 +722,9 @@ export const doCollectAll = async (
   const produced = total.coins + total.supplies > 0;
   if (produced) {
     await putPlayer(me);
-    if (total.coins > 0) await redis.zIncrBy(LB_EARNED, userId, total.coins);
+    if (total.coins > 0) {
+      await redis.zAdd(LB_EARNED, { member: userId, score: me.lifetimeEarned });
+    }
     await putCity({
       totalCollected: city.totalCollected + total.coins + total.supplies,
     });
@@ -847,19 +875,27 @@ export const doContribute = async (
     LANDMARK_THRESHOLDS
   );
 
-  // Record each stage's portion in its per-stage contribution zset, plus the
-  // lifetime contribution leaderboard.
+  const before = player.level;
+  // 1 xp per supply contributed, credited through the level-up helper. The
+  // absolute lifetimeContributed counter drives the replay-safe lb:contrib
+  // score below.
+  const me = creditXp(
+    {
+      ...player,
+      supplies: player.supplies - result.applied,
+      lifetimeContributed: player.lifetimeContributed + result.applied,
+    },
+    result.applied
+  );
+
+  // Per-stage zsets keep zIncrBy: their payout is boolean-gated on score > 0
+  // (see settleStagePayouts), so a replayed increment is display-only and never
+  // pays twice. The cross-stage lb:contrib leaderboard, by contrast, uses an
+  // absolute zAdd so racing duplicate contributions converge instead of summing.
   for (const split of result.splits) {
     await incrStageContrib(split.stage, userId, split.amount);
   }
-  await redis.zIncrBy(LB_CONTRIB, userId, result.applied);
-
-  const before = player.level;
-  // 1 xp per supply contributed, credited through the level-up helper.
-  const me = creditXp(
-    { ...player, supplies: player.supplies - result.applied },
-    result.applied
-  );
+  await redis.zAdd(LB_CONTRIB, { member: userId, score: me.lifetimeContributed });
 
   const nextCity: CityState = {
     ...city,

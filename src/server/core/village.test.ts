@@ -33,6 +33,9 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   boostsToday: 0,
   boostsDate: '',
   paidStage: 0,
+  valueSpent: 0,
+  lifetimeEarned: 0,
+  lifetimeContributed: 0,
   ...overrides,
 });
 
@@ -135,6 +138,25 @@ describe('applyCollect', () => {
     expect(res.player.coins).toBe(3);
     expect(res.player.xp).toBe(1);
     expect(res.tile.lastCollect).toBe(now);
+  });
+
+  it('advances the absolute lifetimeEarned counter by the coins gained', () => {
+    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(t, player({ coins: 0, lifetimeEarned: 40 }), city(), 60_000, 0);
+    expect(res.gained.coins).toBe(3);
+    expect(res.player.lifetimeEarned).toBe(43);
+  });
+
+  it('is replay-safe: re-applying the same collect result yields the same lb:earned score', () => {
+    // A racing duplicate mutation runs applyCollect on the SAME snapshot; the
+    // absolute leaderboard write uses player.lifetimeEarned, so both requests
+    // converge on one score instead of double-counting the single payout.
+    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
+    const start = player({ coins: 0, lifetimeEarned: 40 });
+    const a = applyCollect(t, start, city(), 60_000, 0);
+    const b = applyCollect(t, start, city(), 60_000, 0);
+    expect(a.player.lifetimeEarned).toBe(b.player.lifetimeEarned);
+    expect(a.player.lifetimeEarned).toBe(43);
   });
 
   it('preserves fractional progress on a zero gain (lastCollect NOT advanced)', () => {
