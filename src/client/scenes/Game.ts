@@ -1,6 +1,26 @@
 import { Scene } from 'phaser';
 import * as Phaser from 'phaser';
-import { IncrementResponse, DecrementResponse, InitResponse } from '../../shared/api';
+
+// Demo response types (inlined from the deleted shared/api.ts; this demo
+// scene gets replaced in a later task).
+type InitResponse = {
+  type: 'init';
+  postId: string;
+  count: number;
+  username: string;
+};
+
+type IncrementResponse = {
+  type: 'increment';
+  postId: string;
+  count: number;
+};
+
+type DecrementResponse = {
+  type: 'decrement';
+  postId: string;
+  count: number;
+};
 
 export class Game extends Scene {
   camera: Phaser.Cameras.Scene2D.Camera;

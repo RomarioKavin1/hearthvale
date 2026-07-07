@@ -1,10 +1,26 @@
 import { Hono } from 'hono';
 import { context, redis, reddit } from '@devvit/web/server';
-import type {
-  DecrementResponse,
-  IncrementResponse,
-  InitResponse,
-} from '../../shared/api';
+
+// Demo response types (inlined from the deleted shared/api.ts; these demo
+// routes get fully replaced in Task 3).
+type InitResponse = {
+  type: 'init';
+  postId: string;
+  count: number;
+  username: string;
+};
+
+type IncrementResponse = {
+  type: 'increment';
+  postId: string;
+  count: number;
+};
+
+type DecrementResponse = {
+  type: 'decrement';
+  postId: string;
+  count: number;
+};
 
 type ErrorResponse = {
   status: 'error';
