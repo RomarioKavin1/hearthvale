@@ -1,20 +1,21 @@
 import { context, reddit, realtime, redis } from '@devvit/web/server';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type {
-  BuildingCategory,
   CityState,
+  FestivalCategory,
   Gained,
   LeaderRow,
   PlayerState,
   StateResponse,
+  Stockpile,
   Tier,
   TileState,
+  Weather,
 } from '../../shared/types';
 import type { BuildingId } from '../../shared/types';
 import {
   BOOST_DAILY_LIMIT,
   CATALOG,
-  LANDMARK_THRESHOLDS,
   MAX_LEVEL,
   tierStats,
 } from '../../shared/catalog';
@@ -23,12 +24,28 @@ import {
   accrue,
   adjacencyBonus,
   canClaim,
+  emptyStockpile,
+  goodsTotal,
+  mergeGoods,
   levelForXp,
   plotsForLevel,
   prevDay,
   streakReward,
   utcDay,
 } from '../../shared/logic/economy';
+
+// TODO(V2): The Grand Keep now costs planks+bricks per stage (KEEP_STAGE_COSTS)
+// and pays a pro-rata pot. Until Task V2 reworks contribution, the server keeps
+// v1 landmark semantics against this legacy supply-threshold ladder so gates
+// stay green; `supplies` on PlayerState is the (deprecated) contribution store.
+export const LANDMARK_THRESHOLDS: number[] = [300, 900, 2000, 4000, 7500];
+
+// TODO(V2): the daily weather roll + village stockpile are not yet server-side.
+// accrue is fed a neutral 'clear' weather and an empty stockpile, so processors
+// produce nothing and raw producers/coins buildings behave as in v1. Task V2
+// wires the real stockpile + weather through collect.
+const STOPGAP_WEATHER: Weather = 'clear';
+const stopgapStockpile = (): Stockpile => emptyStockpile();
 import { parseKey, tileKey } from '../../shared/logic/grid';
 import {
   getBallot,
@@ -143,7 +160,7 @@ export const validateBoost = (
 ): string | null => {
   if (tile.owner === boosterId) return 'You cannot boost your own plot.';
   if (!tile.buildingId) return 'There is nothing to boost here.';
-  if (CATALOG[tile.buildingId].category === 'decor') {
+  if (CATALOG[tile.buildingId].role === 'decor') {
     return 'Decorations cannot be boosted.';
   }
   if (now < tile.readyAt) return 'This building is still under construction.';
@@ -224,10 +241,10 @@ export const applyContribution = (
 
 // --- Ballot -----------------------------------------------------------------
 
-const CATEGORIES: BuildingCategory[] = ['coins', 'supplies', 'decor'];
+const CATEGORIES: FestivalCategory[] = ['coins', 'raw', 'processed', 'decor'];
 
-/** Cyclic rotation coins -> supplies -> decor -> coins. */
-export const nextFestival = (current: BuildingCategory): BuildingCategory => {
+/** Cyclic rotation coins -> raw -> processed -> decor -> coins. */
+export const nextFestival = (current: FestivalCategory): FestivalCategory => {
   const i = CATEGORIES.indexOf(current);
   return CATEGORIES[(i + 1) % CATEGORIES.length] ?? 'coins';
 };
@@ -237,9 +254,9 @@ export const nextFestival = (current: BuildingCategory): BuildingCategory => {
  * rotates to the next category after the current festival.
  */
 export const tallyBallot = (
-  counts: Record<BuildingCategory, number>,
-  current: BuildingCategory
-): BuildingCategory => {
+  counts: Record<FestivalCategory, number>,
+  current: FestivalCategory
+): FestivalCategory => {
   const entries = CATEGORIES.map((c) => ({ c, n: counts[c] }));
   const max = Math.max(...entries.map((e) => e.n));
   const winners = entries.filter((e) => e.n === max);
@@ -310,8 +327,19 @@ export const applyCollect = (
   now: number,
   adjBonus: number
 ): { tile: TileState; player: PlayerState; gained: Gained } => {
-  const gained = accrue(tile, now, city.festival, adjBonus);
-  const produced = gained.coins + gained.supplies > 0;
+  // TODO(V2): feed the real village stockpile + today's weather here, and route
+  // produced goods into the player's wallet + village stockpile. For now goods
+  // are summed into the legacy `supplies` counter to preserve v1 behaviour.
+  const { gained } = accrue(
+    tile,
+    now,
+    city.festival,
+    adjBonus,
+    STOPGAP_WEATHER,
+    stopgapStockpile()
+  );
+  const goods = goodsTotal(gained.goods);
+  const produced = gained.coins + goods > 0;
 
   let nextTile: TileState = { ...tile };
   let nextPlayer = player;
@@ -321,7 +349,7 @@ export const applyCollect = (
       {
         ...player,
         coins: player.coins + gained.coins,
-        supplies: player.supplies + gained.supplies,
+        supplies: player.supplies + goods,
         // Absolute lifetime-earned counter drives the replay-safe lb:earned
         // score: re-applying the same collect result yields the same total.
         lifetimeEarned: player.lifetimeEarned + gained.coins,
@@ -380,7 +408,7 @@ const broadcastStage = async (stage: number): Promise<void> => {
 };
 
 export const broadcastFestival = async (
-  festival: BuildingCategory
+  festival: FestivalCategory
 ): Promise<void> => {
   try {
     await realtime.send('village', { t: 'festival', festival });
@@ -632,7 +660,7 @@ export const doUpgrade = async (
   // Absolute writes derived from the player's lifetime counters — replay-safe
   // under concurrent duplicate upgrades.
   await redis.zAdd(LB_VALUE, { member: userId, score: me.valueSpent });
-  const bankedResources = pending.coins + pending.supplies;
+  const bankedResources = pending.coins + goodsTotal(pending.goods);
   if (bankedResources > 0) {
     if (pending.coins > 0) {
       await redis.zAdd(LB_EARNED, { member: userId, score: me.lifetimeEarned });
@@ -666,7 +694,8 @@ export const doCollect = async (
   const adj = adjacencyBonus(grid, x, y, city.festival, now);
   const result = applyCollect(tile, player, city, now, adj);
   const gained = result.gained;
-  const produced = gained.coins + gained.supplies > 0;
+  const banked = gained.coins + goodsTotal(gained.goods);
+  const produced = banked > 0;
 
   await putTile(key, result.tile);
   if (produced) {
@@ -678,7 +707,7 @@ export const doCollect = async (
       });
     }
     await putCity({
-      totalCollected: city.totalCollected + gained.coins + gained.supplies,
+      totalCollected: city.totalCollected + banked,
     });
     await maybeFlair(player.level, result.player);
   }
@@ -698,7 +727,7 @@ export const doCollectAll = async (
   const now = Date.now();
   const startLevel = initial.level;
   let me = initial;
-  const total: Gained = { coins: 0, supplies: 0, xp: 0 };
+  const total: Gained = { coins: 0, xp: 0, goods: {} };
   const changed: Array<{ key: string; tile: TileState }> = [];
 
   for (const [key, tile] of Object.entries(grid)) {
@@ -708,10 +737,11 @@ export const doCollectAll = async (
     const result = applyCollect(tile, me, city, now, adj);
     me = result.player;
     total.coins += result.gained.coins;
-    total.supplies += result.gained.supplies;
+    total.goods = mergeGoods(total.goods, result.gained.goods);
     total.xp += result.gained.xp;
+    const banked = result.gained.coins + goodsTotal(result.gained.goods);
     const boostChanged = result.tile.boostUntil !== tile.boostUntil;
-    if (result.gained.coins + result.gained.supplies > 0 || boostChanged) {
+    if (banked > 0 || boostChanged) {
       changed.push({ key, tile: result.tile });
     }
   }
@@ -719,14 +749,15 @@ export const doCollectAll = async (
   for (const { key, tile } of changed) {
     await putTile(key, tile);
   }
-  const produced = total.coins + total.supplies > 0;
+  const bankedTotal = total.coins + goodsTotal(total.goods);
+  const produced = bankedTotal > 0;
   if (produced) {
     await putPlayer(me);
     if (total.coins > 0) {
       await redis.zAdd(LB_EARNED, { member: userId, score: me.lifetimeEarned });
     }
     await putCity({
-      totalCollected: city.totalCollected + total.coins + total.supplies,
+      totalCollected: city.totalCollected + bankedTotal,
     });
     await maybeFlair(startLevel, me);
   }
@@ -778,8 +809,15 @@ export const loadSummary = async (
       if (tile.owner !== userId || !tile.buildingId) continue;
       const { x, y } = parseKey(key);
       const adj = adjacencyBonus(grid, x, y, city.festival, now);
-      const gained = accrue(tile, now, city.festival, adj);
-      if (gained.coins + gained.supplies > 0) readyForMe += 1;
+      const { gained } = accrue(
+        tile,
+        now,
+        city.festival,
+        adj,
+        STOPGAP_WEATHER,
+        stopgapStockpile()
+      );
+      if (gained.coins + goodsTotal(gained.goods) > 0) readyForMe += 1;
     }
   }
 
@@ -921,8 +959,8 @@ export const doContribute = async (
 
 export const doVote = async (
   userId: string,
-  category: BuildingCategory
-): Promise<{ counts: Record<BuildingCategory, number> }> => {
+  category: FestivalCategory
+): Promise<{ counts: Record<FestivalCategory, number> }> => {
   const today = utcDay(Date.now());
   if (await hasVoted(today, userId)) {
     throw new OpError(400, 'You have already voted today.');
@@ -967,7 +1005,7 @@ export const loadLeaderboards = async (
  */
 export const runFestivalRotation = async (
   now: number
-): Promise<{ festival: BuildingCategory; dayNumber: number }> => {
+): Promise<{ festival: FestivalCategory; dayNumber: number }> => {
   const city = await getCity();
   const today = utcDay(now);
   const yesterday = prevDay(today);
@@ -1054,5 +1092,8 @@ export const isBuildingId = (value: unknown): value is BuildingId =>
 export const isShareKind = (value: unknown): value is ShareKind =>
   value === 'levelup' || value === 'stage';
 
-export const isCategory = (value: unknown): value is BuildingCategory =>
-  value === 'coins' || value === 'supplies' || value === 'decor';
+export const isCategory = (value: unknown): value is FestivalCategory =>
+  value === 'coins' ||
+  value === 'raw' ||
+  value === 'processed' ||
+  value === 'decor';

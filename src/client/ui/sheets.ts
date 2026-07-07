@@ -1,5 +1,4 @@
-import type { BuildingCategory, LeaderRow } from '../../shared/types';
-import { LANDMARK_THRESHOLDS } from '../../shared/catalog';
+import type { FestivalCategory, LeaderRow } from '../../shared/types';
 import { api } from '../net';
 import { store } from '../state';
 import {
@@ -20,7 +19,12 @@ import { action, openSheet, refreshSheet, toast } from './sheet';
  * re-renders don't discard it.
  */
 
-const CATS: BuildingCategory[] = ['coins', 'supplies', 'decor'];
+// TODO(V4): the Grand Keep now costs planks+bricks (KEEP_STAGE_COSTS) with a
+// pro-rata pot; this legacy supply-threshold ladder mirrors the v1 server
+// stopgap so the landmark sheet keeps rendering until V4 reworks it.
+const LANDMARK_THRESHOLDS: number[] = [300, 900, 2000, 4000, 7500];
+
+const CATS: FestivalCategory[] = ['coins', 'raw', 'processed', 'decor'];
 
 // ── Landmark ─────────────────────────────────────────────────────────────────
 
@@ -157,11 +161,11 @@ export const openLandmarkSheet = (): void => {
 
 // ── Ballot ───────────────────────────────────────────────────────────────────
 
-let voteCounts: Record<BuildingCategory, number> | null = null;
+let voteCounts: Record<FestivalCategory, number> | null = null;
 
 const VOTE_KEY = 'hv-vote';
 
-const votedToday = (): BuildingCategory | null => {
+const votedToday = (): FestivalCategory | null => {
   try {
     const raw = sessionStorage.getItem(VOTE_KEY);
     if (!raw) return null;
@@ -174,7 +178,14 @@ const votedToday = (): BuildingCategory | null => {
       parsed.day === todayUtc()
     ) {
       const cat = parsed.category;
-      if (cat === 'coins' || cat === 'supplies' || cat === 'decor') return cat;
+      if (
+        cat === 'coins' ||
+        cat === 'raw' ||
+        cat === 'processed' ||
+        cat === 'decor'
+      ) {
+        return cat;
+      }
     }
   } catch {
     return null;
@@ -182,7 +193,7 @@ const votedToday = (): BuildingCategory | null => {
   return null;
 };
 
-const rememberVote = (category: BuildingCategory): void => {
+const rememberVote = (category: FestivalCategory): void => {
   try {
     sessionStorage.setItem(
       VOTE_KEY,

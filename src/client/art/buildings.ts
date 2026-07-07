@@ -42,14 +42,14 @@ export const TIERS: Tier[] = [1, 2, 3];
 const IDS: BuildingId[] = [
   'cottage',
   'bakery',
-  'garden',
-  'market',
+  'wheatfield',
+  'quarry',
   'sawmill',
-  'tavern',
-  'lantern',
-  'topiary',
-  'mill',
-  'forge',
+  'grove',
+  'well',
+  'trees',
+  'windmill',
+  'kiln',
   'manor',
   'fountain',
 ];
@@ -123,7 +123,7 @@ function disc(p: Painter, cx: number, cy: number, r: number, main: string, dark:
 
 const finish = (p: Painter): PixelGrid => p.outline('K').rows();
 
-// ── Gabled house archetype (cottage / bakery / tavern / forge / manor) ─────
+// ── Gabled house archetype (cottage / bakery / grove / kiln / manor) ─────
 
 type HouseOpts = { wide?: boolean; roof: [string, string] };
 
@@ -181,7 +181,7 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     return p;
   },
 
-  garden(tier) {
+  wheatfield(tier) {
     const p = new Painter(W, H);
     const beds = tier; // 1..3 raised beds
     for (let b = 0; b < beds; b++) {
@@ -216,7 +216,7 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     return p;
   },
 
-  market(tier) {
+  quarry(tier) {
     const p = new Painter(W, H);
     const halfW = 7 + (tier - 1);
     const left = CX - halfW;
@@ -294,7 +294,7 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     return p;
   },
 
-  tavern(tier) {
+  grove(tier) {
     // Force a chunky two-storey feel and hang a sign board.
     const p = gabledHouse(tier === 1 ? 2 : tier, { roof: ['R', 'r'] });
     const wallTop = BASE - (9 + ((tier === 1 ? 2 : tier) - 1) * 4);
@@ -308,7 +308,7 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     return p;
   },
 
-  lantern(tier) {
+  well(tier) {
     const p = new Painter(W, H);
     const postH = 12 + (tier - 1) * 4;
     const topY = BASE - postH;
@@ -343,7 +343,7 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     return p;
   },
 
-  topiary(tier) {
+  trees(tier) {
     const p = new Painter(W, H);
     // pot
     p.rect(CX - 3, BASE - 4, 6, 4, 'D');
@@ -369,7 +369,7 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     return p;
   },
 
-  mill(tier) {
+  windmill(tier) {
     const p = new Painter(W, H);
     const halfW = 4 + (tier - 1);
     const towerH = 16 + (tier - 1) * 4;
@@ -407,7 +407,7 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     return p;
   },
 
-  forge(tier) {
+  kiln(tier) {
     const p = new Painter(W, H);
     const halfW = 6 + (tier - 1);
     const left = CX - halfW;
@@ -493,14 +493,14 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
 const ICONS: Record<BuildingId, PixelGrid> = {
   cottage: ['...RR...', '..RRRR..', '.RRRRRR.', '.WWWWWW.', '.WWddWW.', '.WWddWW.', '.WWddWW.', '........'],
   bakery: ['..C..C..', '..SSSS..', '.SSSSSS.', '.WWWWWW.', '.WOWWOW.', '.WWddWW.', '.WWddWW.', '........'],
-  garden: ['........', '..G..G..', '.GgGGgG.', '.GGGGGG.', '.dooood.', '.dooood.', '.dddddd.', '........'],
-  market: ['.BCBCBC.', '.BCBCBC.', '..d..d..', '.DDDDDD.', '.DAOGAD.', '.dddddd.', '..d..d..', '........'],
+  wheatfield: ['........', '..G..G..', '.GgGGgG.', '.GGGGGG.', '.dooood.', '.dooood.', '.dddddd.', '........'],
+  quarry: ['.BCBCBC.', '.BCBCBC.', '..d..d..', '.DDDDDD.', '.DAOGAD.', '.dddddd.', '..d..d..', '........'],
   sawmill: ['..dddd..', '.dDDDDd.', '.DDDD.T.', '.DDDTTT.', '.DDDTOT.', '.DDDTTT.', '.dd..T..', '........'],
-  tavern: ['..RRRR..', '.RRRRRR.', 'RRRRRRRR', '.WWWWWW.', '.WOAOWW.', '.WWWWWW.', '.WWddWW.', '.WWddWW.'],
-  lantern: ['...DD...', '..DOOD..', '..DOOD..', '.O.DD.O.', '...DD...', '...DD...', '..TTTT..', '........'],
-  topiary: ['...GG...', '..GGGG..', '..GGGG..', '...GG...', '..GGGG..', '...DD...', '..DDDD..', '..dddd..'],
-  mill: ['C..D..C.', '.C.D.C..', '..CDC...', '.BBWBB..', '..WWW...', '..WdW...', '..WWW...', '........'],
-  forge: ['..rrrr..', '.rrrrrr.', '.TTTTTT.', '.TTTTTT.', '.TKAKT..', '.TKOKT..', '.TTTTTT.', '........'],
+  grove: ['..RRRR..', '.RRRRRR.', 'RRRRRRRR', '.WWWWWW.', '.WOAOWW.', '.WWWWWW.', '.WWddWW.', '.WWddWW.'],
+  well: ['...DD...', '..DOOD..', '..DOOD..', '.O.DD.O.', '...DD...', '...DD...', '..TTTT..', '........'],
+  trees: ['...GG...', '..GGGG..', '..GGGG..', '...GG...', '..GGGG..', '...DD...', '..DDDD..', '..dddd..'],
+  windmill: ['C..D..C.', '.C.D.C..', '..CDC...', '.BBWBB..', '..WWW...', '..WdW...', '..WWW...', '........'],
+  kiln: ['..rrrr..', '.rrrrrr.', '.TTTTTT.', '.TTTTTT.', '.TKAKT..', '.TKOKT..', '.TTTTTT.', '........'],
   manor: ['.BBBBBB.', 'BBBBBBBB', '.WWWWWW.', '.WOWWOW.', '.WWddWW.', '.WWddWW.', '.WWddWW.', 'T......T'],
   fountain: ['........', '...U....', '..OUO...', '..TTT...', '.UUUUU..', 'TTTTTTTT', '.TUUUT..', 'TTTTTTTT'],
 };

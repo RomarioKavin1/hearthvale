@@ -6,7 +6,10 @@ import {
   accrue,
   adjacencyBonus,
   canClaim,
+  emptyStockpile,
+  goodsTotal,
   plotsForLevel,
+  roleToFestival,
 } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
 import { api } from '../net';
@@ -154,7 +157,7 @@ const renderBuildGrid = (
   const cards = el('div', { cls: 'hv-cards' });
 
   for (const spec of Object.values(CATALOG)) {
-    const meta = CATEGORY_META[spec.category];
+    const meta = CATEGORY_META[roleToFestival(spec.role)];
     const locked = me.level < spec.unlockLevel;
     const broke = me.coins < spec.cost;
 
@@ -163,7 +166,7 @@ const renderBuildGrid = (
       attrs: { alt: spec.name, src: iconUrl(spec.id) },
     });
     const sub =
-      spec.category === 'decor'
+      spec.role === 'decor'
         ? `+10%/tier ✨`
         : `${spec.ratePerMin}/min ${meta.emoji}`;
 
@@ -213,7 +216,7 @@ const renderMineBuilding = (
   const bid = tile.buildingId;
   if (bid === undefined) return;
   const spec = CATALOG[bid];
-  const meta = CATEGORY_META[spec.category];
+  const meta = CATEGORY_META[roleToFestival(spec.role)];
   const now = store.serverNow();
   setSheetTitle(spec.name);
 
@@ -242,7 +245,7 @@ const renderMineBuilding = (
 
   const statsT = tierStats(spec, tile.tier);
 
-  if (spec.category === 'decor') {
+  if (spec.role === 'decor') {
     stack.appendChild(el('p', { cls: 'hv-note', text: `Boosts each neighbouring producer by +${10 * tile.tier}%.` }));
   } else {
     renderProducerStats(stack, data, spec, statsT, tile, x, y, now, meta.emoji, key);
@@ -272,7 +275,7 @@ const renderProducerStats = (
 ): void => {
   const fest = data.city.festival;
   const adj = adjacencyBonus(data.grid, x, y, fest, now);
-  const festing = fest === spec.category;
+  const festing = fest === roleToFestival(spec.role);
   const effRate = statsT.ratePerMin * (festing ? 1.5 : 1) * (1 + adj);
 
   stack.appendChild(line('Output', `${effRate.toFixed(1)}/min ${emoji}`));
@@ -280,8 +283,9 @@ const renderProducerStats = (
   if (festing) stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: '× 1.5 festival bonus today' }));
   if (adj > 0) stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `+ ${Math.round(adj * 100)}% from nearby decor` }));
 
-  const g = accrue(tile, now, fest, adj);
-  const accrued = g.coins + g.supplies;
+  // TODO(V4): thread the real stockpile in so processor previews are accurate.
+  const { gained } = accrue(tile, now, fest, adj, data.city.weather, emptyStockpile());
+  const accrued = gained.coins + goodsTotal(gained.goods);
   const frac = statsT.cap > 0 ? accrued / statsT.cap : 0;
   stack.appendChild(
     el('div', { cls: 'hv-fill', children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })] })
@@ -298,7 +302,7 @@ const renderProducerStats = (
     void action('collect', async () => {
       const res = await api.collect(x, y);
       store.applyMutation({ key, tile: res.tile, me: res.me });
-      const got = res.gained.coins + res.gained.supplies;
+      const got = res.gained.coins + goodsTotal(res.gained.goods);
       toast(`+${fmtInt(got)} ${emoji}`, 'gain');
     });
   });
@@ -364,7 +368,7 @@ const renderNeighbour = (
   );
 
   let reason: string | null = null;
-  if (spec.category === 'decor') reason = 'Decorations can’t be boosted.';
+  if (spec.role === 'decor') reason = 'Decorations can’t be boosted.';
   else if (now < tile.readyAt) reason = 'Still under construction.';
   else if (tile.boostUntil > now) reason = `Already boosted — ${fmtDur(tile.boostUntil - now)} left.`;
   else if (me !== null && boostsLeft(me) <= 0) reason = 'No boosts left today.';

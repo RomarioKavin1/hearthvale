@@ -2,7 +2,7 @@
 // Generated for Task V0 of the v2 rework (docs/plans/2026-07-08-hearthvale-v2.md).
 // Nothing imports this file yet — it is wired up in Task V3 (renderer) and Task V4 (HUD).
 
-import type { Tier } from '../../shared/types';
+import type { BuildingId, Tier } from '../../shared/types';
 
 /** All bundled sprite + icon keys. File name (kebab-case, no extension) is the key. */
 export type SpriteKey =
@@ -284,24 +284,6 @@ export function isIconKey(key: SpriteKey): boolean {
 }
 
 /**
- * Catalog v2 building ids (docs/plans/2026-07-08-hearthvale-v2.md "Design Reference").
- * TODO(V1): replace with shared BuildingId once catalog v2 lands.
- */
-export type BuildingIdV2 =
-  | 'cottage'
-  | 'wheatfield'
-  | 'grove'
-  | 'quarry'
-  | 'windmill'
-  | 'sawmill'
-  | 'kiln'
-  | 'bakery'
-  | 'well'
-  | 'trees'
-  | 'fountain'
-  | 'manor';
-
-/**
  * Composition for one catalog v2 building's art:
  * - `stacked`: a terrain-block "base" sprite topped with a tier-colored roof sprite
  *   (two sprites layered in a container — see Task V3 renderer).
@@ -316,7 +298,7 @@ export type BuildingArt =
  * Tier color progression used across every stacked building for a consistent read at a
  * glance: tier1 = brown roof, tier2 = green roof, tier3 = purple roof.
  */
-export const BUILDING_ART: Record<BuildingIdV2, BuildingArt> = {
+export const BUILDING_ART: Record<BuildingId, BuildingArt> = {
   // Cottage: door base + gable roof — the archetypal small house silhouette.
   cottage: {
     kind: 'stacked',

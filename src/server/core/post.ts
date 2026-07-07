@@ -1,5 +1,5 @@
 import { reddit } from '@devvit/web/server';
-import type { BuildingCategory } from '../../shared/types';
+import type { FestivalCategory } from '../../shared/types';
 
 export const createPost = async () => {
   return await reddit.submitCustomPost({
@@ -7,15 +7,17 @@ export const createPost = async () => {
   });
 };
 
-const FESTIVAL_NAME: Record<BuildingCategory, string> = {
+// TODO(V2): festival names for the v2 categories; V2 adds market report + weather.
+const FESTIVAL_NAME: Record<FestivalCategory, string> = {
   coins: 'Coin',
-  supplies: 'Supply',
+  raw: 'Harvest',
+  processed: 'Craft',
   decor: 'Decor',
 };
 
 /** The daily village post announcing which festival is active today. */
 export const createDailyPost = async (
-  festival: BuildingCategory,
+  festival: FestivalCategory,
   dayNumber: number
 ) => {
   const name = FESTIVAL_NAME[festival];

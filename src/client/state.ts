@@ -1,5 +1,5 @@
 import type {
-  BuildingCategory,
+  FestivalCategory,
   CityState,
   PlayerState,
   StateResponse,
@@ -69,7 +69,7 @@ export const store = {
     emit();
   },
 
-  setFestival(festival: BuildingCategory): void {
+  setFestival(festival: FestivalCategory): void {
     if (!data) return;
     data.city = { ...data.city, festival };
     emit();

@@ -1,136 +1,157 @@
-import type { BuildingCategory, BuildingId, Tier } from './types';
+import type { BuildingId, BuildingRole, Good, Tier } from './types';
 
 export type BuildingSpec = {
   id: BuildingId;
   name: string;
-  category: BuildingCategory;
+  role: BuildingRole;
   unlockLevel: number;
   cost: number;
   ratePerMin: number;
   cap: number;
   buildSeconds: number;
+  /** Raw producers: the good produced each cycle. */
+  good?: Good;
+  /** Processors: the input good consumed from the stockpile and how much per
+   * output unit (recipe run). */
+  input?: { good: Good; per: number };
+  /** Processors: what a recipe run yields — a processed good, or `coins`. */
+  output?: Good | 'coins';
+  /** Bakery only: coins minted per flour consumed (output === 'coins'). */
+  coinsPerFlour?: number;
 };
 
 export const CATALOG: Record<BuildingId, BuildingSpec> = {
   cottage: {
     id: 'cottage',
     name: 'Cottage',
-    category: 'coins',
+    role: 'coins',
     unlockLevel: 1,
     cost: 40,
-    ratePerMin: 3,
-    cap: 90,
-    buildSeconds: 20,
-  },
-  bakery: {
-    id: 'bakery',
-    name: 'Bakery',
-    category: 'coins',
-    unlockLevel: 1,
-    cost: 90,
-    ratePerMin: 6,
-    cap: 180,
-    buildSeconds: 45,
-  },
-  garden: {
-    id: 'garden',
-    name: 'Herb Garden',
-    category: 'supplies',
-    unlockLevel: 1,
-    cost: 60,
     ratePerMin: 2,
     cap: 60,
-    buildSeconds: 30,
+    buildSeconds: 20,
   },
-  market: {
-    id: 'market',
-    name: 'Market Stall',
-    category: 'coins',
+  wheatfield: {
+    id: 'wheatfield',
+    name: 'Wheat Field',
+    role: 'raw',
+    unlockLevel: 1,
+    cost: 60,
+    ratePerMin: 3,
+    cap: 90,
+    buildSeconds: 30,
+    good: 'wheat',
+  },
+  grove: {
+    id: 'grove',
+    name: "Forester's Grove",
+    role: 'raw',
+    unlockLevel: 1,
+    cost: 80,
+    ratePerMin: 2.5,
+    cap: 75,
+    buildSeconds: 40,
+    good: 'logs',
+  },
+  quarry: {
+    id: 'quarry',
+    name: 'Quarry',
+    role: 'raw',
     unlockLevel: 2,
-    cost: 200,
-    ratePerMin: 11,
-    cap: 330,
+    cost: 150,
+    ratePerMin: 2,
+    cap: 60,
     buildSeconds: 90,
+    good: 'stone',
+  },
+  windmill: {
+    id: 'windmill',
+    name: 'Windmill',
+    role: 'processor',
+    unlockLevel: 2,
+    cost: 220,
+    ratePerMin: 1.5,
+    cap: 45,
+    buildSeconds: 120,
+    input: { good: 'wheat', per: 2 },
+    output: 'flour',
   },
   sawmill: {
     id: 'sawmill',
     name: 'Sawmill',
-    category: 'supplies',
+    role: 'processor',
     unlockLevel: 3,
-    cost: 260,
-    ratePerMin: 4,
-    cap: 120,
-    buildSeconds: 120,
+    cost: 300,
+    ratePerMin: 1.2,
+    cap: 36,
+    buildSeconds: 150,
+    input: { good: 'logs', per: 2 },
+    output: 'planks',
   },
-  tavern: {
-    id: 'tavern',
-    name: 'Tavern',
-    category: 'coins',
+  kiln: {
+    id: 'kiln',
+    name: "Mason's Kiln",
+    role: 'processor',
     unlockLevel: 4,
-    cost: 450,
-    ratePerMin: 20,
-    cap: 600,
+    cost: 400,
+    ratePerMin: 1,
+    cap: 30,
     buildSeconds: 180,
+    input: { good: 'stone', per: 2 },
+    output: 'bricks',
   },
-  lantern: {
-    id: 'lantern',
-    name: 'Lantern Post',
-    category: 'decor',
+  bakery: {
+    id: 'bakery',
+    name: 'Bakery',
+    role: 'processor',
+    unlockLevel: 3,
+    cost: 350,
+    ratePerMin: 1,
+    cap: 480,
+    buildSeconds: 150,
+    input: { good: 'flour', per: 1 },
+    output: 'coins',
+    coinsPerFlour: 12,
+  },
+  well: {
+    id: 'well',
+    name: 'Old Well',
+    role: 'decor',
     unlockLevel: 2,
     cost: 120,
     ratePerMin: 0,
     cap: 0,
     buildSeconds: 15,
   },
-  topiary: {
-    id: 'topiary',
-    name: 'Topiary',
-    category: 'decor',
-    unlockLevel: 4,
-    cost: 300,
+  trees: {
+    id: 'trees',
+    name: 'Tree Grove',
+    role: 'decor',
+    unlockLevel: 1,
+    cost: 60,
     ratePerMin: 0,
     cap: 0,
-    buildSeconds: 30,
-  },
-  mill: {
-    id: 'mill',
-    name: 'Windmill',
-    category: 'coins',
-    unlockLevel: 6,
-    cost: 900,
-    ratePerMin: 34,
-    cap: 1000,
-    buildSeconds: 300,
-  },
-  forge: {
-    id: 'forge',
-    name: 'Forge',
-    category: 'supplies',
-    unlockLevel: 7,
-    cost: 800,
-    ratePerMin: 7,
-    cap: 210,
-    buildSeconds: 300,
-  },
-  manor: {
-    id: 'manor',
-    name: 'Manor',
-    category: 'coins',
-    unlockLevel: 9,
-    cost: 1600,
-    ratePerMin: 55,
-    cap: 1650,
-    buildSeconds: 480,
+    buildSeconds: 10,
   },
   fountain: {
     id: 'fountain',
-    name: 'Mossy Fountain',
-    category: 'decor',
-    unlockLevel: 8,
+    name: 'Stone Fountain',
+    role: 'decor',
+    unlockLevel: 6,
     cost: 700,
     ratePerMin: 0,
     cap: 0,
     buildSeconds: 60,
+  },
+  manor: {
+    id: 'manor',
+    name: 'Manor',
+    role: 'coins',
+    unlockLevel: 9,
+    cost: 1600,
+    ratePerMin: 45,
+    cap: 1350,
+    buildSeconds: 480,
   },
 };
 
@@ -154,13 +175,60 @@ export const tierStats = (spec: BuildingSpec, tier: Tier): TierStats => {
   const m = TIER_MULTIPLIERS[tier];
   return {
     cost: Math.round(spec.cost * m.cost),
-    ratePerMin: Math.round(spec.ratePerMin * m.ratePerMin),
+    // Producers keep a fractional rate through the multiplier so processors
+    // like the windmill (1.5/min) don't round to an integer prematurely.
+    ratePerMin: spec.ratePerMin * m.ratePerMin,
     cap: Math.round(spec.cap * m.cap),
     buildSeconds: Math.round(spec.buildSeconds * m.buildSeconds),
   };
 };
 
-export const LANDMARK_THRESHOLDS: number[] = [300, 900, 2000, 4000, 7500];
+// ---------------------------------------------------------------------------
+// Market pricing.
+// ---------------------------------------------------------------------------
+
+/** Per-good market tuning: `base` price and the `target` stock level the price
+ * pivots around. Raw goods target 120, processed goods 60. */
+export const MARKET: Record<Good, { base: number; target: number }> = {
+  wheat: { base: 3, target: 120 },
+  logs: { base: 4, target: 120 },
+  stone: { base: 5, target: 120 },
+  flour: { base: 9, target: 60 },
+  planks: { base: 12, target: 60 },
+  bricks: { base: 15, target: 60 },
+};
+
+// ---------------------------------------------------------------------------
+// Grand Keep.
+// ---------------------------------------------------------------------------
+
+/** Cost (planks + bricks) to complete each of the 5 keep stages, in order. */
+export const KEEP_STAGE_COSTS: Array<{ planks: number; bricks: number }> = [
+  { planks: 30, bricks: 15 },
+  { planks: 60, bricks: 40 },
+  { planks: 120, bricks: 80 },
+  { planks: 200, bricks: 140 },
+  { planks: 320, bricks: 220 },
+];
+
+/** Coin pot per stage is `stage × STAGE_POT`, split pro-rata by contributed
+ * units (minimum 25 per contributor). */
+export const STAGE_POT: number = 400;
+
+// ---------------------------------------------------------------------------
+// Land expansion rings.
+// ---------------------------------------------------------------------------
+
+/** Ring inclusive bounds `[lo, hi]` on both axes, keyed by the minimum distinct
+ * -owner population that unlocks them. Ordered ascending by `pop`. */
+export const RING_THRESHOLDS: Array<{ pop: number; lo: number; hi: number }> = [
+  { pop: 0, lo: 5, hi: 11 },
+  { pop: 3, lo: 4, hi: 13 },
+  { pop: 6, lo: 3, hi: 14 },
+  { pop: 12, lo: 1, hi: 16 },
+  { pop: 20, lo: 0, hi: 17 },
+];
+
 export const GRID_SIZE: number = 18;
 export const MAX_LEVEL: number = 15;
 export const PLOT_LEVELS: number[] = [1, 3, 5, 8, 12];

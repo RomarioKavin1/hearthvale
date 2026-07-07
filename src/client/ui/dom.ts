@@ -2,15 +2,21 @@ import type { Game } from 'phaser';
 import { showLoginPrompt, showToast } from '@devvit/web/client';
 import { PAL } from '../../shared/palette';
 import type {
-  BuildingCategory,
   BuildingId,
+  FestivalCategory,
   PlayerState,
   StateResponse,
   TileState,
 } from '../../shared/types';
 import { BOOST_DAILY_LIMIT } from '../../shared/catalog';
 import { parseKey } from '../../shared/logic/grid';
-import { accrue, adjacencyBonus, utcDay } from '../../shared/logic/economy';
+import {
+  accrue,
+  adjacencyBonus,
+  emptyStockpile,
+  goodsTotal,
+  utcDay,
+} from '../../shared/logic/economy';
 import { store } from '../state';
 
 /**
@@ -84,9 +90,12 @@ export const iconUrl = (id: BuildingId): string => {
 
 export type CatMeta = { label: string; emoji: string; color: string };
 
-export const CATEGORY_META: Record<BuildingCategory, CatMeta> = {
+// TODO(V4): keyed by festival category; V4 replaces emoji with sprite icons and
+// adds richer chain/market labels.
+export const CATEGORY_META: Record<FestivalCategory, CatMeta> = {
   coins: { label: 'Coins', emoji: '🪙', color: PAL.roofStraw },
-  supplies: { label: 'Supplies', emoji: '🌿', color: PAL.leaf },
+  raw: { label: 'Raw goods', emoji: '🌾', color: PAL.leaf },
+  processed: { label: 'Crafted', emoji: '🍞', color: PAL.wood },
   decor: { label: 'Decor', emoji: '✨', color: PAL.accent },
 };
 
@@ -143,14 +152,17 @@ export const ownedCount = (data: StateResponse, id: string): number => {
 /** Count of the player's own tiles with something ready to collect. */
 export const readyCount = (data: StateResponse, id: string, now: number): number => {
   const fest = data.city.festival;
+  // TODO(V4): the client has no stockpile snapshot yet, so processors read as
+  // idle here; V4 threads the real stockpile + prices into state.
+  const stockpile = emptyStockpile();
   let n = 0;
   for (const [key, tile] of Object.entries(data.grid)) {
     if (tile.owner !== id || tile.buildingId === undefined) continue;
     if (now < tile.readyAt) continue;
     const { x, y } = parseKey(key);
     const adj = adjacencyBonus(data.grid, x, y, fest, now);
-    const g = accrue(tile, now, fest, adj);
-    if (g.coins + g.supplies > 0) n += 1;
+    const { gained } = accrue(tile, now, fest, adj, data.city.weather, stockpile);
+    if (gained.coins + goodsTotal(gained.goods) > 0) n += 1;
   }
   return n;
 };

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { CityState, PlayerState, TileState } from '../../shared/types';
-import { CATALOG, LANDMARK_THRESHOLDS } from '../../shared/catalog';
+import { CATALOG } from '../../shared/catalog';
 import {
+  LANDMARK_THRESHOLDS,
   applyCollect,
   applyContribution,
   applyLevelUp,
@@ -25,6 +26,7 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   name: 'Alice',
   coins: 1000,
   supplies: 0,
+  wallet: { wheat: 0, logs: 0, stone: 0, flour: 0, planks: 0, bricks: 0 },
   xp: 0,
   level: 1,
   plots: 1,
@@ -52,12 +54,16 @@ const tile = (overrides: Partial<TileState> = {}): TileState => ({
 
 const city = (overrides: Partial<CityState> = {}): CityState => ({
   foundedAt: 0,
-  festival: 'supplies',
+  festival: 'raw',
   festivalDate: '2026-07-07',
   landmarkStage: 0,
   landmarkProgress: 0,
   totalCollected: 0,
   totalContributed: 0,
+  weather: 'clear',
+  weatherDate: '2026-07-07',
+  population: 0,
+  stageNames: [],
   ...overrides,
 });
 
@@ -73,8 +79,8 @@ describe('validateBuild', () => {
   });
 
   it('rejects a building locked behind a higher level', () => {
-    // market unlocks at level 2; a level-1 player cannot build it.
-    expect(validateBuild(player({ level: 1 }), tile(), CATALOG.market)).not.toBeNull();
+    // quarry unlocks at level 2; a level-1 player cannot build it.
+    expect(validateBuild(player({ level: 1 }), tile(), CATALOG.quarry)).not.toBeNull();
   });
 
   it('rejects when the player cannot afford the tier-1 cost', () => {
@@ -134,8 +140,9 @@ describe('applyCollect', () => {
     const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
     const now = 60_000;
     const res = applyCollect(t, player({ coins: 0 }), city(), now, 0);
-    expect(res.gained).toEqual({ coins: 3, supplies: 0, xp: 1 });
-    expect(res.player.coins).toBe(3);
+    // cottage now mints 2 coins/min.
+    expect(res.gained).toEqual({ coins: 2, xp: 1, goods: {} });
+    expect(res.player.coins).toBe(2);
     expect(res.player.xp).toBe(1);
     expect(res.tile.lastCollect).toBe(now);
   });
@@ -143,8 +150,8 @@ describe('applyCollect', () => {
   it('advances the absolute lifetimeEarned counter by the coins gained', () => {
     const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(t, player({ coins: 0, lifetimeEarned: 40 }), city(), 60_000, 0);
-    expect(res.gained.coins).toBe(3);
-    expect(res.player.lifetimeEarned).toBe(43);
+    expect(res.gained.coins).toBe(2);
+    expect(res.player.lifetimeEarned).toBe(42);
   });
 
   it('is replay-safe: re-applying the same collect result yields the same lb:earned score', () => {
@@ -156,7 +163,7 @@ describe('applyCollect', () => {
     const a = applyCollect(t, start, city(), 60_000, 0);
     const b = applyCollect(t, start, city(), 60_000, 0);
     expect(a.player.lifetimeEarned).toBe(b.player.lifetimeEarned);
-    expect(a.player.lifetimeEarned).toBe(43);
+    expect(a.player.lifetimeEarned).toBe(42);
   });
 
   it('preserves fractional progress on a zero gain (lastCollect NOT advanced)', () => {
@@ -164,7 +171,7 @@ describe('applyCollect', () => {
     const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
     const now = 1000;
     const res = applyCollect(t, player({ coins: 0 }), city(), now, 0);
-    expect(res.gained).toEqual({ coins: 0, supplies: 0, xp: 0 });
+    expect(res.gained).toEqual({ coins: 0, xp: 0, goods: {} });
     expect(res.player.coins).toBe(0);
     expect(res.tile.lastCollect).toBe(0);
   });
@@ -199,14 +206,14 @@ describe('applyCollect', () => {
   it('clamps to the tier cap on a long absence', () => {
     const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(t, player({ coins: 0 }), city(), 1_000_000_000, 0);
-    // cottage tier-1 cap is 90 coins.
-    expect(res.gained.coins).toBe(90);
-    expect(res.player.coins).toBe(90);
+    // cottage tier-1 cap is 60 coins.
+    expect(res.gained.coins).toBe(60);
+    expect(res.player.coins).toBe(60);
   });
 
   it('grants a level-up (and plots) when the collected xp crosses a threshold', () => {
-    // Big supplies haul yields xp === supplies; garden tier-1 cap is 60.
-    const t = tile({ buildingId: 'garden', lastCollect: 0, readyAt: 0 });
+    // A raw producer yields xp === goods produced; wheatfield tier-1 cap is 90.
+    const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(
       t,
       player({ coins: 0, supplies: 0, xp: 440, level: 2, plots: 1 }),
@@ -214,8 +221,8 @@ describe('applyCollect', () => {
       1_000_000_000,
       0
     );
-    // 440 + 60 = 500 xp >= 450 (level-3 threshold) -> level 3, plots 2.
-    expect(res.player.xp).toBe(500);
+    // 440 + 90 = 530 xp >= 450 (level-3 threshold) -> level 3, plots 2.
+    expect(res.player.xp).toBe(530);
     expect(res.player.level).toBe(3);
     expect(res.player.plots).toBe(2);
   });
@@ -258,7 +265,7 @@ describe('boost validation', () => {
   });
 
   it('rejects a decoration (non-producer)', () => {
-    const t = producer({ buildingId: 'lantern' });
+    const t = producer({ buildingId: 'well' });
     expect(validateBoost('me', t, 5000, 0)).not.toBeNull();
   });
 
@@ -389,29 +396,30 @@ describe('landmark contribution', () => {
 
 describe('ballot tally', () => {
   it('picks the strict majority winner', () => {
-    expect(tallyBallot({ coins: 5, supplies: 2, decor: 1 }, 'coins')).toBe(
-      'coins'
-    );
+    expect(
+      tallyBallot({ coins: 5, raw: 2, processed: 1, decor: 0 }, 'coins')
+    ).toBe('coins');
   });
 
   it('rotates to the next category from the current festival on a tie', () => {
-    expect(tallyBallot({ coins: 3, supplies: 3, decor: 0 }, 'coins')).toBe(
-      'supplies'
-    );
+    expect(
+      tallyBallot({ coins: 3, raw: 3, processed: 0, decor: 0 }, 'coins')
+    ).toBe('raw');
   });
 
   it('rotates when no votes were cast', () => {
-    expect(tallyBallot({ coins: 0, supplies: 0, decor: 0 }, 'supplies')).toBe(
-      'decor'
-    );
-    expect(tallyBallot({ coins: 0, supplies: 0, decor: 0 }, 'decor')).toBe(
-      'coins'
-    );
+    expect(
+      tallyBallot({ coins: 0, raw: 0, processed: 0, decor: 0 }, 'raw')
+    ).toBe('processed');
+    expect(
+      tallyBallot({ coins: 0, raw: 0, processed: 0, decor: 0 }, 'decor')
+    ).toBe('coins');
   });
 
-  it('rotates coins -> supplies -> decor -> coins', () => {
-    expect(nextFestival('coins')).toBe('supplies');
-    expect(nextFestival('supplies')).toBe('decor');
+  it('rotates coins -> raw -> processed -> decor -> coins', () => {
+    expect(nextFestival('coins')).toBe('raw');
+    expect(nextFestival('raw')).toBe('processed');
+    expect(nextFestival('processed')).toBe('decor');
     expect(nextFestival('decor')).toBe('coins');
   });
 });

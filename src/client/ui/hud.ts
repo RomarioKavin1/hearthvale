@@ -1,7 +1,7 @@
 import type { Game } from 'phaser';
 import { MAX_LEVEL, PLOT_LEVELS } from '../../shared/catalog';
 import type { PlayerState, StateResponse } from '../../shared/types';
-import { xpFor } from '../../shared/logic/economy';
+import { goodsTotal, xpFor } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
 import { HV_TILE_SELECTED } from '../events';
 import { api } from '../net';
@@ -225,7 +225,7 @@ const doCollectAll = (): void => {
     .then((res) => {
       const tiles = Object.entries(res.tiles).map(([key, tile]) => ({ key, tile }));
       store.applyMutation({ tiles, me: res.me });
-      const got = res.gained.coins + res.gained.supplies;
+      const got = res.gained.coins + goodsTotal(res.gained.goods);
       if (got > 0) toast(`Collected +${fmtInt(got)} 🪙🌿`, 'gain');
     })
     .catch((err: unknown) =>

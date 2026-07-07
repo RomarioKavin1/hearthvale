@@ -11,7 +11,12 @@ import {
   parseKey,
   tileKey,
 } from '../../shared/logic/grid';
-import { accrue, adjacencyBonus } from '../../shared/logic/economy';
+import {
+  accrue,
+  adjacencyBonus,
+  emptyStockpile,
+  goodsTotal,
+} from '../../shared/logic/economy';
 import type {
   CityState,
   TileState,
@@ -110,7 +115,8 @@ const isVillageMessage = (v: JsonValue): v is VillageMessage => {
     case 'festival':
       return (
         v.festival === 'coins' ||
-        v.festival === 'supplies' ||
+        v.festival === 'raw' ||
+        v.festival === 'processed' ||
         v.festival === 'decor'
       );
     case 'stage':
@@ -420,8 +426,9 @@ export class Village extends Scene {
       if (tile.owner === this.me && tile.buildingId !== undefined && now >= tile.readyAt) {
         const { x, y } = parseKey(key);
         const adj = adjacencyBonus(data.grid, x, y, fest, now);
-        const g = accrue(tile, now, fest, adj);
-        show = g.coins + g.supplies > 0;
+        // TODO(V4): thread the real stockpile in for accurate processor pips.
+        const { gained } = accrue(tile, now, fest, adj, data.city.weather, emptyStockpile());
+        show = gained.coins + goodsTotal(gained.goods) > 0;
       }
 
       if (show && !view.pip) {
@@ -557,8 +564,8 @@ export class Village extends Scene {
       const now = this.now();
       if (now >= tile.readyAt) {
         const adj = adjacencyBonus(data.grid, x, y, data.city.festival, now);
-        const g = accrue(tile, now, data.city.festival, adj);
-        if (g.coins + g.supplies > 0) {
+        const { gained } = accrue(tile, now, data.city.festival, adj, data.city.weather, emptyStockpile());
+        if (gained.coins + goodsTotal(gained.goods) > 0) {
           this.collectTile(x, y);
           return;
         }

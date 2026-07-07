@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { BuildingCategory } from '../../shared/types';
+import type { FestivalCategory } from '../../shared/types';
 import { createDailyPost } from '../core/post';
 import { runFestivalRotation } from '../core/village';
 
@@ -19,7 +19,7 @@ type CycleResponse = {
 scheduler.post('/daily-cycle', async (c) => {
   const now = Date.now();
 
-  let rotation: { festival: BuildingCategory; dayNumber: number };
+  let rotation: { festival: FestivalCategory; dayNumber: number };
   try {
     rotation = await runFestivalRotation(now);
   } catch (error) {

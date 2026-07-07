@@ -1,10 +1,13 @@
 import { redis } from '@devvit/web/server';
 import type {
-  BuildingCategory,
   CityState,
+  FestivalCategory,
   PlayerState,
-  TileState,
+  Wallet,
+  Weather,
 } from '../../shared/types';
+import type { TileState } from '../../shared/types';
+import { GOODS } from '../../shared/logic/economy';
 
 const GRID_KEY = 'city:grid';
 const CITY_KEY = 'city:state';
@@ -16,8 +19,48 @@ const num = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-const isCategory = (value: string | undefined): value is BuildingCategory =>
-  value === 'coins' || value === 'supplies' || value === 'decor';
+const isCategory = (value: string | undefined): value is FestivalCategory =>
+  value === 'coins' ||
+  value === 'raw' ||
+  value === 'processed' ||
+  value === 'decor';
+
+// TODO(V2): the daily weather roll is not yet persisted by the server; getCity
+// returns a benign 'clear' default and putCity round-trips it. Task V2 wires the
+// scheduler weather roll + weatherDate through here.
+const isWeather = (value: string | undefined): value is Weather =>
+  value === 'sunny' ||
+  value === 'rain' ||
+  value === 'clear' ||
+  value === 'harvestmoon';
+
+const parseStageNames = (value: string | undefined): string[] => {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed) && parsed.every((s) => typeof s === 'string')) {
+      return parsed;
+    }
+  } catch {
+    // Corrupt/legacy value — start fresh.
+  }
+  return [];
+};
+
+const parseWallet = (h: Record<string, string>): Wallet => ({
+  wheat: num(h.w_wheat, 0),
+  logs: num(h.w_logs, 0),
+  stone: num(h.w_stone, 0),
+  flour: num(h.w_flour, 0),
+  planks: num(h.w_planks, 0),
+  bricks: num(h.w_bricks, 0),
+});
+
+const walletFields = (wallet: Wallet): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const g of GOODS) out[`w_${g}`] = String(wallet[g]);
+  return out;
+};
 
 const todayUtc = (): string => new Date().toISOString().slice(0, 10);
 
@@ -52,6 +95,12 @@ export const getCity = async (): Promise<CityState> => {
     landmarkProgress: num(h.landmarkProgress, 0),
     totalCollected: num(h.totalCollected, 0),
     totalContributed: num(h.totalContributed, 0),
+    // TODO(V2): weather/population/stageNames are read-through defaults until
+    // the V2 server manages them (weather roll, distinct-owner cache, naming).
+    weather: isWeather(h.weather) ? h.weather : 'clear',
+    weatherDate: h.weatherDate ? h.weatherDate : '',
+    population: num(h.population, 0),
+    stageNames: parseStageNames(h.stageNames),
   };
 };
 
@@ -70,6 +119,13 @@ export const putCity = async (c: Partial<CityState>): Promise<void> => {
   if (c.totalContributed !== undefined) {
     fields.totalContributed = String(c.totalContributed);
   }
+  // TODO(V2): these are round-tripped but not yet produced by server logic.
+  if (c.weather !== undefined) fields.weather = c.weather;
+  if (c.weatherDate !== undefined) fields.weatherDate = c.weatherDate;
+  if (c.population !== undefined) fields.population = String(c.population);
+  if (c.stageNames !== undefined) {
+    fields.stageNames = JSON.stringify(c.stageNames);
+  }
   if (Object.keys(fields).length > 0) {
     await redis.hSet(CITY_KEY, fields);
   }
@@ -82,7 +138,9 @@ const parsePlayer = (
   id: h.id ? h.id : userId,
   name: h.name ?? '',
   coins: num(h.coins, 0),
+  // TODO(V2): `supplies` is legacy; wallet is the v2 balance store.
   supplies: num(h.supplies, 0),
+  wallet: parseWallet(h),
   xp: num(h.xp, 0),
   level: num(h.level, 1),
   plots: num(h.plots, 1),
@@ -102,6 +160,7 @@ const playerFields = (p: PlayerState): Record<string, string> => ({
   name: p.name,
   coins: String(p.coins),
   supplies: String(p.supplies),
+  ...walletFields(p.wallet),
   xp: String(p.xp),
   level: String(p.level),
   plots: String(p.plots),
@@ -132,6 +191,7 @@ export const initPlayer = async (
     name,
     coins: 120,
     supplies: 0,
+    wallet: { wheat: 0, logs: 0, stone: 0, flour: 0, planks: 0, bricks: 0 },
     xp: 0,
     level: 1,
     plots: 1,
@@ -208,7 +268,7 @@ export const hasVoted = async (
 export const recordVote = async (
   day: string,
   userId: string,
-  category: BuildingCategory
+  category: FestivalCategory
 ): Promise<void> => {
   await redis.hSet(ballotVotedKey(day), { [userId]: '1' });
   await redis.hIncrBy(ballotKey(day), category, 1);
@@ -218,11 +278,12 @@ export const recordVote = async (
 
 export const getBallot = async (
   day: string
-): Promise<Record<BuildingCategory, number>> => {
+): Promise<Record<FestivalCategory, number>> => {
   const h = await redis.hGetAll(ballotKey(day));
   return {
     coins: num(h.coins, 0),
-    supplies: num(h.supplies, 0),
+    raw: num(h.raw, 0),
+    processed: num(h.processed, 0),
     decor: num(h.decor, 0),
   };
 };

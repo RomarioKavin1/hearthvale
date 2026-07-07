@@ -1,5 +1,5 @@
 import type {
-  BuildingCategory,
+  FestivalCategory,
   BuildingId,
   CityState,
   Gained,
@@ -28,7 +28,7 @@ export type CollectAllResult = {
 };
 export type CheckInResult = { me: PlayerState; gained: { coins: number } };
 export type ContributeResult = { city: CityState; me: PlayerState };
-export type VoteResult = { counts: Record<BuildingCategory, number> };
+export type VoteResult = { counts: Record<FestivalCategory, number> };
 export type LeaderboardsResult = {
   value: LeaderRow[];
   earned: LeaderRow[];
@@ -41,7 +41,7 @@ export type SummaryResult = {
   players: number;
   landmarkStage: number;
   landmarkPct: number;
-  festival: BuildingCategory;
+  festival: FestivalCategory;
   readyForMe: number;
 };
 
@@ -126,7 +126,7 @@ export const api = {
   contribute: (amount: number): Promise<ContributeResult> =>
     post('/api/contribute', { amount }),
 
-  vote: (category: BuildingCategory): Promise<VoteResult> =>
+  vote: (category: FestivalCategory): Promise<VoteResult> =>
     post('/api/vote', { category }),
 
   share: (kind: ShareKind, value: number): Promise<ShareResult> =>
