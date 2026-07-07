@@ -1,3 +1,4 @@
+import { ArtDebug } from './scenes/ArtDebug';
 import { Boot } from './scenes/Boot';
 import { GameOver } from './scenes/GameOver';
 import { Game as MainGame } from './scenes/Game';
@@ -5,6 +6,10 @@ import { MainMenu } from './scenes/MainMenu';
 import * as Phaser from 'phaser';
 import { AUTO, Game } from 'phaser';
 import { Preloader } from './scenes/Preloader';
+
+// Dev-only art verification surface, opt-in via the `?artdebug` query string.
+const ART_DEBUG =
+  typeof location !== 'undefined' && location.search.includes('artdebug');
 
 //  Find out more information about the Game Config at:
 //  https://docs.phaser.io/api-documentation/typedef/types-core#gameconfig
@@ -20,7 +25,9 @@ const config: Phaser.Types.Core.GameConfig = {
     width: 1024,
     height: 768,
   },
-  scene: [Boot, Preloader, MainMenu, MainGame, GameOver],
+  scene: ART_DEBUG
+    ? [ArtDebug, Boot, Preloader, MainMenu, MainGame, GameOver]
+    : [Boot, Preloader, MainMenu, MainGame, GameOver],
 };
 
 const StartGame = (parent: string) => {
