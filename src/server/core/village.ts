@@ -1670,7 +1670,7 @@ export const doShare = async (
   const current = await redis.get(key);
   const count = current ? Number(current) : 0;
   if (count >= SHARE_DAILY_LIMIT) {
-    throw new OpError(429, "You've shared enough for today 😄");
+    throw new OpError(429, "You've shared enough for today.");
   }
   await redis.incrBy(key, 1);
   await redis.expire(key, 172800);

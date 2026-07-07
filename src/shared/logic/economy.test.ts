@@ -283,4 +283,7 @@ describe('canClaim', () => {
   it('allows a valid claim', () => {
     expect(canClaim({}, 0, 0, player({ level: 1 }), 0)).toBeNull();
   });
+  it('rejects a river tile', () => {
+    expect(canClaim({}, 1, 4, player({ level: 1 }), 0)).not.toBeNull();
+  });
 });

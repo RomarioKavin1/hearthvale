@@ -18,6 +18,7 @@ import {
   roleToFestival,
 } from '../../shared/logic/economy';
 import { isRiver } from '../../shared/logic/expansion';
+import { priceFor } from '../../shared/logic/market';
 import type { HvTileSelected } from '../events';
 import { api } from '../net';
 import { store } from '../state';
@@ -107,7 +108,7 @@ export const openTileSheet = (detail: HvTileSelected): void => {
       const me = data.me;
       const tile = data.grid[key] ?? null;
       const mine = tile !== null && me !== null && tile.owner === me.id;
-      const claimable = isClaimable(x, y) && tile === null;
+      const claimable = isClaimable(x, y) && tile === null && !isRiver(x, y);
 
       if (claimable) {
         if (me) renderClaim(body, data, me, x, y, key);
@@ -387,13 +388,42 @@ const renderProducerStats = (
     stack.appendChild(openMkt);
   }
 
-  const { gained } = accrue(tile, now, fest, adj, data.weather, data.stockpile);
+  const { gained, consumed } = accrue(tile, now, fest, adj, data.weather, data.stockpile);
   const accrued = gained.coins + goodsTotal(gained.goods);
   const frac = statsT.cap > 0 ? accrued / statsT.cap : 0;
   stack.appendChild(
     el('div', { cls: 'hv-fill', children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })] })
   );
   stack.appendChild(el('div', { cls: 'hv-fill-cap', text: `Storage ${fmtInt(accrued)} / ${fmtInt(statsT.cap)}` }));
+
+  // Collecting a processor silently spends stockpile inputs from the owner's
+  // coin balance — preview that cost so it isn't a surprise. Uses the same
+  // `consumed` the accrual above already computed; the server remains the
+  // authority on the exact charge (this is only an estimate, hence '≈').
+  if (spec.role === 'processor' && spec.input) {
+    const inputGood = spec.input.good;
+    const units = consumed[inputGood] ?? 0;
+    if (units > 0) {
+      const price = priceFor(data.stockpile[inputGood], inputGood);
+      const cost = price * units;
+      if (spec.output === 'coins') {
+        const net = Math.max(0, gained.coins - cost);
+        stack.appendChild(
+          el('div', {
+            cls: 'hv-note hv-muted',
+            text: `≈${fmtInt(net)} coins after buying ${GOOD_LABEL[inputGood]}`,
+          })
+        );
+      } else {
+        stack.appendChild(
+          el('div', {
+            cls: 'hv-note hv-muted',
+            text: `Inputs: ~${fmtInt(units)} ${GOOD_LABEL[inputGood]} (≈${fmtInt(cost)} coins from your balance)`,
+          })
+        );
+      }
+    }
+  }
 
   const collect = el('button', {
     cls: 'hv-btn',

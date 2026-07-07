@@ -249,6 +249,7 @@ export const canClaim = (
 ): string | null => {
   if (isPlaza(x, y)) return 'That tile is part of the village plaza.';
   if (!isClaimable(x, y)) return 'That tile is outside the village.';
+  if (isRiver(x, y)) return "You can't settle on the river.";
   if (grid[tileKey(x, y)]) return 'That tile is already claimed.';
   if (owned >= plotsForLevel(player.level)) {
     return 'You have reached your plot limit. Level up to claim more.';

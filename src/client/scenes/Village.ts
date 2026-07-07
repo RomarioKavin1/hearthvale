@@ -769,10 +769,16 @@ export class Village extends Scene {
       return;
     }
 
+    // The river runs through the outer ring — it can't be settled or built on.
+    if (isRiver(x, y)) {
+      toast('The river flows here', 'info');
+      return;
+    }
+
     const key = tileKey(x, y);
     const tile = data.grid[key] ?? null;
     const mine = tile !== null && tile.owner === this.me;
-    const claimable = isClaimable(x, y) && tile === null;
+    const claimable = isClaimable(x, y) && tile === null && !isRiver(x, y);
 
     // Fast path: tapping your own ready, producing tile collects immediately.
     if (mine && tile !== null && tile.buildingId !== undefined) {
