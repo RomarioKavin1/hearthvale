@@ -836,8 +836,9 @@ export const doContribute = async (
   await putPlayer(me);
   await maybeFlair(before, me);
   await broadcastCity(nextCity);
-  if (result.completed.length > 0) {
-    await broadcastStage(nextCity.landmarkStage);
+  // One {t:'stage'} broadcast per completed stage, in completion order.
+  for (const stage of result.completed) {
+    await broadcastStage(stage);
   }
   return { city: nextCity, me };
 };
