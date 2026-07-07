@@ -46,6 +46,8 @@ import { isUnlocked, nextThreshold, ringBounds } from '../../shared/logic/expans
 import { offersForDay, weatherForDay } from '../../shared/logic/trader';
 import { parseKey, tileKey } from '../../shared/logic/grid';
 import {
+  STOCKPILE_KEY,
+  claimDailyTrade,
   getBallot,
   getCity,
   getGrid,
@@ -56,8 +58,9 @@ import {
   hasVoted,
   incrStageContrib,
   initPlayer,
-  markTradedToday,
   ownedCount,
+  playerFields,
+  playerRedisKey,
   putCity,
   putPlayer,
   putStockpile,
@@ -66,6 +69,7 @@ import {
   stageContribScore,
   stageContribTotal,
   stageTopContributor,
+  stockpileFields,
 } from './store';
 
 /** Number of Grand Keep stages. */
@@ -569,6 +573,11 @@ const broadcastMarket = async (stockpile: Stockpile): Promise<void> => {
   }
 };
 
+/** True when any good's price differs between two price lists — market
+ * broadcasts are throttled to actual price movements, not every stock tick. */
+const anyPriceChanged = (before: Prices, after: Prices): boolean =>
+  GOODS.some((g) => before[g] !== after[g]);
+
 const broadcastRing = async (bounds: {
   lo: number;
   hi: number;
@@ -926,6 +935,7 @@ export const doUpgrade = async (
   );
 
   const stockChanged = goodsTotal(collected.consumed) > 0;
+  const pricesBefore = pricesFor(stockpile);
   if (stockChanged) {
     for (const g of GOODS) stockpile[g] -= collected.consumed[g] ?? 0;
     await putStockpile(stockpile);
@@ -945,7 +955,9 @@ export const doUpgrade = async (
   }
   await maybeFlair(before, me);
   await broadcastTile(key, upgraded);
-  if (stockChanged) await broadcastMarket(stockpile);
+  if (stockChanged && anyPriceChanged(pricesBefore, pricesFor(stockpile))) {
+    await broadcastMarket(stockpile);
+  }
   return { tile: upgraded, me };
 };
 
@@ -972,6 +984,7 @@ export const doCollect = async (
   const stockpile = await getStockpile();
 
   const adj = adjacencyBonus(grid, x, y, city.festival, now);
+  const pricesBefore = pricesFor(stockpile);
   const result = applyCollect(tile, player, city, now, adj, stockpile);
   const gained = result.gained;
   const banked = gained.coins + goodsTotal(gained.goods);
@@ -997,7 +1010,9 @@ export const doCollect = async (
     await putStockpile(stockpile);
   }
   await broadcastTile(key, result.tile);
-  if (stockChanged) await broadcastMarket(stockpile);
+  if (stockChanged && anyPriceChanged(pricesBefore, pricesFor(stockpile))) {
+    await broadcastMarket(stockpile);
+  }
   return { tile: result.tile, me: result.player, gained };
 };
 
@@ -1013,6 +1028,7 @@ export const doCollectAll = async (
   const now = Date.now();
   const city = await ensureWeather(cityRaw, now);
   const stockpile = await getStockpile();
+  const pricesBefore = pricesFor(stockpile);
 
   const startLevel = initial.level;
   let me = initial;
@@ -1061,7 +1077,9 @@ export const doCollectAll = async (
   for (const { key, tile } of changed) {
     await broadcastTile(key, tile);
   }
-  if (stockChanged) await broadcastMarket(stockpile);
+  if (stockChanged && anyPriceChanged(pricesBefore, pricesFor(stockpile))) {
+    await broadcastMarket(stockpile);
+  }
 
   const tiles: Record<string, TileState> = {};
   for (const { key, tile } of changed) {
@@ -1282,64 +1300,109 @@ export const doContribute = async (
 
 // --- Market: sell / buy -----------------------------------------------------
 
+/**
+ * Run a market trade as an optimistic transaction (the same pattern doClaim
+ * uses): watch the stockpile + player hashes, re-read both inside the watch
+ * window, let `mutate` validate and produce the post-trade states, then write
+ * both hashes atomically. A concurrent write to either key voids the exec and
+ * surfaces a retryable 409.
+ */
+const marketTx = async (
+  userId: string,
+  mutate: (
+    player: PlayerState,
+    stockpile: Stockpile
+  ) => { me: PlayerState; nextStock: Stockpile }
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
+  // Ensure the player hash exists before entering the watch window.
+  await ensurePlayer(userId);
+
+  const tx = await redis.watch(STOCKPILE_KEY, playerRedisKey(userId));
+  // Re-read both inside the watch window; any concurrent mutation of either
+  // hash after this point aborts the exec below.
+  const [player, stockpile] = await Promise.all([
+    getPlayer(userId),
+    getStockpile(),
+  ]);
+  if (!player) {
+    await tx.unwatch();
+    throw new OpError(500, 'Player state unavailable.');
+  }
+
+  let me: PlayerState;
+  let nextStock: Stockpile;
+  try {
+    ({ me, nextStock } = mutate(player, stockpile));
+  } catch (error) {
+    await tx.unwatch();
+    throw error;
+  }
+
+  await tx.multi();
+  await tx.hSet(playerRedisKey(userId), playerFields(me));
+  await tx.hSet(STOCKPILE_KEY, stockpileFields(nextStock));
+  let result: unknown[];
+  try {
+    result = await tx.exec();
+  } catch {
+    throw new OpError(409, 'The market just moved — try again.');
+  }
+  if (!result || result.length === 0) {
+    throw new OpError(409, 'The market just moved — try again.');
+  }
+
+  // Broadcast only when a price actually changed (throttles stock-only ticks).
+  if (anyPriceChanged(pricesFor(stockpile), pricesFor(nextStock))) {
+    await broadcastMarket(nextStock);
+  }
+  return { me, stockpile: nextStock, prices: pricesFor(nextStock) };
+};
+
 export const doSell = async (
   userId: string,
   good: Good,
   qty: number
-): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
-  const [player, stockpile] = await Promise.all([
-    ensurePlayer(userId),
-    getStockpile(),
-  ]);
-  const held = player.wallet[good];
-  if (held <= 0) throw new OpError(400, `You have no ${good} to sell.`);
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> =>
+  marketTx(userId, (player, stockpile) => {
+    const held = player.wallet[good];
+    if (held <= 0) throw new OpError(400, `You have no ${good} to sell.`);
 
-  const amount = Math.min(qty, held);
-  const before = stockpile[good];
-  const coins = sellValue(amount, before, good);
+    const amount = Math.min(qty, held);
+    const before = stockpile[good];
+    const coins = sellValue(amount, before, good);
 
-  // Market income is deliberately NOT counted toward lb:earned (production only).
-  const me: PlayerState = {
-    ...player,
-    coins: player.coins + coins,
-    wallet: { ...player.wallet, [good]: held - amount },
-  };
-  const nextStock: Stockpile = { ...stockpile, [good]: before + amount };
-
-  await putPlayer(me);
-  await putStockpile(nextStock);
-  await broadcastMarket(nextStock);
-  return { me, stockpile: nextStock, prices: pricesFor(nextStock) };
-};
+    // Market income is deliberately NOT counted toward lb:earned (production
+    // only).
+    const me: PlayerState = {
+      ...player,
+      coins: player.coins + coins,
+      wallet: { ...player.wallet, [good]: held - amount },
+    };
+    const nextStock: Stockpile = { ...stockpile, [good]: before + amount };
+    return { me, nextStock };
+  });
 
 export const doBuy = async (
   userId: string,
   good: Good,
   qty: number
-): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
-  const [player, stockpile] = await Promise.all([
-    ensurePlayer(userId),
-    getStockpile(),
-  ]);
-  const before = stockpile[good];
-  if (before < qty) {
-    throw new OpError(400, `The market only has ${before} ${good}.`);
-  }
-  const cost = buyValue(qty, before, good);
-  if (player.coins < cost) throw new OpError(400, 'Not enough coins.');
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> =>
+  marketTx(userId, (player, stockpile) => {
+    const before = stockpile[good];
+    if (before < qty) {
+      throw new OpError(400, `The market only has ${before} ${good}.`);
+    }
+    const cost = buyValue(qty, before, good);
+    if (player.coins < cost) throw new OpError(400, 'Not enough coins.');
 
-  const me: PlayerState = {
-    ...player,
-    coins: player.coins - cost,
-    wallet: { ...player.wallet, [good]: player.wallet[good] + qty },
-  };
-  const nextStock: Stockpile = { ...stockpile, [good]: before - qty };
-
-  await putPlayer(me);
-  await putStockpile(nextStock);
-  await broadcastMarket(nextStock);
-  return { me, stockpile: nextStock, prices: pricesFor(nextStock) };
-};
+    const me: PlayerState = {
+      ...player,
+      coins: player.coins - cost,
+      wallet: { ...player.wallet, [good]: player.wallet[good] + qty },
+    };
+    const nextStock: Stockpile = { ...stockpile, [good]: before - qty };
+    return { me, nextStock };
+  });
 
 // --- Wandering trader -------------------------------------------------------
 
@@ -1376,9 +1439,18 @@ export const doTrade = async (
   const offer = offers[offerIndex];
   if (!offer) throw new OpError(400, 'That trade offer does not exist.');
 
+  // Advisory pre-check (friendly early rejection with the exact reason)…
   const alreadyTraded = await hasTradedToday(today, userId);
   const err = validateTrade(alreadyTraded, player.wallet, offer);
   if (err) throw new OpError(400, err);
+
+  // …then the atomic claim: hSetNX means racing duplicate requests cannot both
+  // pass the once-per-day gate — exactly one wins the flag, the rest reject.
+  // Claimed only after wallet validation so a failed attempt never locks the
+  // player out of their daily trade.
+  if (!(await claimDailyTrade(today, userId))) {
+    throw new OpError(400, 'You have already traded today.');
+  }
 
   const wallet = {
     ...player.wallet,
@@ -1416,7 +1488,6 @@ export const doTrade = async (
 
   const me: PlayerState = { ...player, wallet };
   await putPlayer(me);
-  await markTradedToday(today, userId);
   return { me, ...(cosmeticTile ? { tile: cosmeticTile } : {}) };
 };
 

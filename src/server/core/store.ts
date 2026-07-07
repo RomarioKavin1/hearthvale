@@ -12,8 +12,11 @@ import { GOODS, emptyStockpile } from '../../shared/logic/economy';
 
 const GRID_KEY = 'city:grid';
 const CITY_KEY = 'city:state';
-const STOCKPILE_KEY = 'city:stockpile';
-const playerKey = (userId: string): string => `player:${userId}`;
+/** Exported for optimistic `redis.watch` market transactions in village.ts. */
+export const STOCKPILE_KEY = 'city:stockpile';
+/** Exported for optimistic `redis.watch` market transactions in village.ts. */
+export const playerRedisKey = (userId: string): string => `player:${userId}`;
+const playerKey = playerRedisKey;
 
 const num = (value: string | undefined, fallback: number): number => {
   if (value === undefined || value === '') return fallback;
@@ -139,10 +142,15 @@ export const getStockpile = async (): Promise<Stockpile> => {
   return stock;
 };
 
-export const putStockpile = async (stock: Stockpile): Promise<void> => {
+/** Hash serialization of a stockpile — exported for watch transactions. */
+export const stockpileFields = (stock: Stockpile): Record<string, string> => {
   const fields: Record<string, string> = {};
   for (const g of GOODS) fields[g] = String(stock[g]);
-  await redis.hSet(STOCKPILE_KEY, fields);
+  return fields;
+};
+
+export const putStockpile = async (stock: Stockpile): Promise<void> => {
+  await redis.hSet(STOCKPILE_KEY, stockpileFields(stock));
 };
 
 const parsePlayer = (
@@ -167,7 +175,8 @@ const parsePlayer = (
   lifetimeContributed: num(h.lifetimeContributed, 0),
 });
 
-const playerFields = (p: PlayerState): Record<string, string> => ({
+/** Hash serialization of a player — exported for watch transactions. */
+export const playerFields = (p: PlayerState): Record<string, string> => ({
   id: p.id,
   name: p.name,
   coins: String(p.coins),
@@ -295,12 +304,19 @@ export const hasTradedToday = async (
   return done !== undefined;
 };
 
-export const markTradedToday = async (
+/**
+ * Atomically claim the player's one daily trade via `hSetNX`: returns true when
+ * this call set the flag (the trade is theirs), false when it was already set —
+ * racing duplicate requests cannot both win.
+ */
+export const claimDailyTrade = async (
   day: string,
   userId: string
-): Promise<void> => {
-  await redis.hSet(traderDoneKey(day), { [userId]: '1' });
+): Promise<boolean> => {
+  const set = await redis.hSetNX(traderDoneKey(day), userId, '1');
+  if (set !== 1) return false;
   await redis.expire(traderDoneKey(day), TRADER_TTL_SECONDS);
+  return true;
 };
 
 // ---------------------------------------------------------------------------

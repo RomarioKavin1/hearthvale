@@ -177,8 +177,18 @@ api.post('/boost', async (c) => {
   }
 });
 
-const asQty = (value: unknown): number | null => {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+/** Market trades are priced marginally in an O(qty) loop — bound them. */
+const MAX_TRADE_QTY = 500;
+/** Sanity bound for non-market quantities (keep contributions). */
+const MAX_QTY = 1_000_000;
+
+const asQty = (value: unknown, max: number): number | null => {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > max
+  ) {
     return null;
   }
   return value;
@@ -191,7 +201,7 @@ api.post('/contribute', async (c) => {
     if (!isProcessedGood(body.good)) {
       return c.json(...fail('You can only contribute planks or bricks.', 400));
     }
-    const qty = asQty(body.qty);
+    const qty = asQty(body.qty, MAX_QTY);
     if (qty === null) {
       return c.json(...fail('Contribution must be a whole number of at least 1.', 400));
     }
@@ -209,8 +219,12 @@ api.post('/sell', async (c) => {
     const userId = requireUser();
     const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
     if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
-    const qty = asQty(body.qty);
-    if (qty === null) return c.json(...fail('Quantity must be a whole number of at least 1.', 400));
+    const qty = asQty(body.qty, MAX_TRADE_QTY);
+    if (qty === null) {
+      return c.json(
+        ...fail(`Quantity must be a whole number between 1 and ${MAX_TRADE_QTY}.`, 400)
+      );
+    }
     const result = await doSell(userId, body.good, qty);
     return c.json(result);
   } catch (error) {
@@ -225,8 +239,12 @@ api.post('/buy', async (c) => {
     const userId = requireUser();
     const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
     if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
-    const qty = asQty(body.qty);
-    if (qty === null) return c.json(...fail('Quantity must be a whole number of at least 1.', 400));
+    const qty = asQty(body.qty, MAX_TRADE_QTY);
+    if (qty === null) {
+      return c.json(
+        ...fail(`Quantity must be a whole number between 1 and ${MAX_TRADE_QTY}.`, 400)
+      );
+    }
     const result = await doBuy(userId, body.good, qty);
     return c.json(result);
   } catch (error) {

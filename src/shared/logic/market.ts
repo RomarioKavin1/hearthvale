@@ -16,30 +16,44 @@ export const priceFor = (stock: number, good: Good): number => {
 };
 
 /**
- * Coins earned selling `qty` of a good into the stockpile.
- *
- * SIMPLIFICATION: the price is computed ONCE per trade at the pre-trade stock
- * level (`stockBefore`), not re-derived after each marginal unit. The design
- * doc's "recompute on trade" is honoured at the granularity of a whole trade —
- * the next trade sees the moved price. This keeps the maths legible and the
- * client/server in exact agreement.
+ * Coins earned selling `qty` of a good into the stockpile, priced MARGINALLY:
+ * unit i sells at `priceFor(stockBefore + i, good)`, so the price falls as the
+ * seller floods the market. Marginal pricing (paired with `buyValue` below)
+ * closes the sell-then-buy-back arbitrage a single batch price allowed: a full
+ * round trip sweeps the same marginal stock levels in both directions, with the
+ * buy side carrying a 1.25x ceil markup, so the net is always <= 0 coins.
+ * O(qty) — callers cap qty (the API rejects trades above 500 units).
  */
 export const sellValue = (
   qty: number,
   stockBefore: number,
   good: Good
-): number => priceFor(stockBefore, good) * qty;
+): number => {
+  let total = 0;
+  for (let i = 0; i < qty; i += 1) {
+    total += priceFor(stockBefore + i, good);
+  }
+  return total;
+};
 
 /**
- * Coins it costs to buy `qty` of a good from the stockpile — a 25% markup over
- * the sell price, rounded up per unit. Price is fixed at the pre-trade stock
- * (same simplification as `sellValue`).
+ * Coins it costs to buy `qty` of a good from the stockpile — marginal per-unit
+ * pricing with a 25% markup, rounded up per unit: unit i costs
+ * `ceil(priceFor(stockBefore − 1 − i, good) × 1.25)`, so the price rises as the
+ * buyer drains the market. Requires `stockBefore >= qty` (validated by the
+ * server before quoting). See `sellValue` for the no-arbitrage rationale.
  */
 export const buyValue = (
   qty: number,
   stockBefore: number,
   good: Good
-): number => Math.ceil(priceFor(stockBefore, good) * 1.25) * qty;
+): number => {
+  let total = 0;
+  for (let i = 0; i < qty; i += 1) {
+    total += Math.ceil(priceFor(stockBefore - 1 - i, good) * 1.25);
+  }
+  return total;
+};
 
 /** The full current price list derived from a stockpile. */
 export const pricesFor = (stockpile: Stockpile): Prices => {
