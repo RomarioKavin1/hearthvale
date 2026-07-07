@@ -11,6 +11,7 @@ import {
   doCollect,
   doCollectAll,
   doContribute,
+  doDemolish,
   doNameStage,
   doSell,
   doShare,
@@ -118,6 +119,22 @@ api.post('/upgrade', async (c) => {
     if (error instanceof OpError) return c.json(...fail(error.message, error.status));
     console.error('POST /api/upgrade failed:', error);
     return c.json(...fail('Failed to upgrade.', 500));
+  }
+});
+
+api.post('/demolish', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid tile coordinates.', 400));
+    const result = await doDemolish(userId, x, y);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/demolish failed:', error);
+    return c.json(...fail('Failed to demolish.', 500));
   }
 });
 

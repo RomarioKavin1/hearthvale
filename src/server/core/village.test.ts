@@ -3,6 +3,7 @@ import type { CityState, PlayerState, TileState } from '../../shared/types';
 import { CATALOG, KEEP_STAGE_COSTS } from '../../shared/catalog';
 import { emptyStockpile } from '../../shared/logic/economy';
 import {
+  CHECKIN_XP,
   affordableRuns,
   applyCollect,
   applyKeepContribution,
@@ -11,6 +12,7 @@ import {
   boostsUsedToday,
   canAffordOffer,
   canCheckIn,
+  demolishRefund,
   expansionGate,
   flairTitle,
   landmarkComplete,
@@ -23,6 +25,7 @@ import {
   tallyBallot,
   validateBoost,
   validateBuild,
+  validateDemolish,
   validateNaming,
   validateTrade,
   validateUpgrade,
@@ -125,22 +128,52 @@ describe('validateUpgrade', () => {
 });
 
 describe('applyLevelUp', () => {
-  it('promotes to level 2 at the level-2 xp threshold and keeps 1 plot', () => {
-    const p = applyLevelUp(player({ level: 1, plots: 1, xp: 150 }));
+  it('promotes to level 2 and grants a second plot at the level-2 threshold', () => {
+    // xpFor(2) = 100; PLOT_LEVELS = [1,2,4,7,10] → level 2 unlocks plot #2.
+    const p = applyLevelUp(player({ level: 1, plots: 1, xp: 100 }));
     expect(p.level).toBe(2);
-    expect(p.plots).toBe(1);
+    expect(p.plots).toBe(2);
   });
 
-  it('grants a second plot when crossing the level 2->3 boundary', () => {
-    const p = applyLevelUp(player({ level: 2, plots: 1, xp: 450 }));
-    expect(p.level).toBe(3);
-    expect(p.plots).toBe(2);
+  it('grants a third plot when crossing into level 4', () => {
+    // xpFor(4) = 600; level 4 unlocks plot #3.
+    const p = applyLevelUp(player({ level: 3, plots: 2, xp: 600 }));
+    expect(p.level).toBe(4);
+    expect(p.plots).toBe(3);
   });
 
   it('leaves the player unchanged when no level is gained', () => {
     const p = applyLevelUp(player({ level: 1, plots: 1, xp: 10 }));
     expect(p.level).toBe(1);
     expect(p.plots).toBe(1);
+  });
+});
+
+describe('demolishRefund', () => {
+  it('refunds 50% of the invested cost, floored', () => {
+    // cottage tier costs 40 / 100 / 240 → invested 40 / 140 / 380.
+    expect(demolishRefund(CATALOG.cottage, 1)).toBe(20);
+    expect(demolishRefund(CATALOG.cottage, 2)).toBe(70);
+    expect(demolishRefund(CATALOG.cottage, 3)).toBe(190);
+  });
+});
+
+describe('validateDemolish', () => {
+  it('rejects a tile the player does not own', () => {
+    const t = tile({ owner: 'someoneElse', buildingId: 'cottage' });
+    expect(validateDemolish(player(), t)).not.toBeNull();
+  });
+
+  it('rejects a tile with no building', () => {
+    expect(validateDemolish(player(), tile())).not.toBeNull();
+  });
+
+  it('allows demolishing an owned building, even under construction', () => {
+    const done = tile({ buildingId: 'cottage', readyAt: 0 });
+    expect(validateDemolish(player(), done)).toBeNull();
+    // Under construction is still demolishable (build already deducted the cost).
+    const building = tile({ buildingId: 'cottage', readyAt: 9_999_999_999 });
+    expect(validateDemolish(player(), building)).toBeNull();
   });
 });
 
@@ -221,15 +254,16 @@ describe('applyCollect — raw producers (goods, not lb:earned)', () => {
 
   it('grants a level-up (and plots) when the collected xp crosses a threshold', () => {
     const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
+    // xpFor(3) = 300; starting one wheatfield-cap (90 xp) short of it at level 2.
     const res = applyCollect(
       t,
-      player({ coins: 0, xp: 440, level: 2, plots: 1 }),
+      player({ coins: 0, xp: 250, level: 2, plots: 2 }),
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
       emptyStockpile()
     );
-    expect(res.player.xp).toBe(530);
+    expect(res.player.xp).toBe(340);
     expect(res.player.level).toBe(3);
     expect(res.player.plots).toBe(2);
   });
@@ -508,6 +542,22 @@ describe('check-in streak', () => {
 
   it('starts a first-ever check-in at streak 1', () => {
     expect(nextStreak('', 0, '2026-07-07')).toBe(1);
+  });
+});
+
+describe('check-in xp', () => {
+  it('grants 50 xp per check-in', () => {
+    expect(CHECKIN_XP).toBe(50);
+  });
+
+  it('a check-in that crosses a level threshold grants a plot', () => {
+    // xpFor(2) = 100; a level-1 player one check-in short of it. Crediting the
+    // +50 xp through the level-up helper promotes them and unlocks plot #2.
+    const before = player({ level: 1, plots: 1, xp: 50 });
+    const after = applyLevelUp({ ...before, xp: before.xp + CHECKIN_XP });
+    expect(after.xp).toBe(100);
+    expect(after.level).toBe(2);
+    expect(after.plots).toBe(2);
   });
 });
 

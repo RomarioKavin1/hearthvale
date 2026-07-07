@@ -1,5 +1,5 @@
 import type { BuildingSpec, TierStats } from '../../shared/catalog';
-import { CATALOG, tierStats } from '../../shared/catalog';
+import { CATALOG, DEMOLISH_REFUND, investedCost, tierStats } from '../../shared/catalog';
 import type {
   PlayerState,
   StateResponse,
@@ -280,6 +280,8 @@ const renderMineBuilding = (
     stack.appendChild(
       el('div', { cls: 'hv-fill hv-fill-glow', children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })] })
     );
+    // Demolish is available mid-build too (refund is 50% of the invested cost).
+    renderDemolish(stack, spec, tile, x, y, key);
     body.appendChild(stack);
     return;
   }
@@ -299,6 +301,7 @@ const renderMineBuilding = (
   }
 
   renderUpgrade(stack, me, spec, tile, x, y, key);
+  renderDemolish(stack, spec, tile, x, y, key);
   body.appendChild(stack);
 };
 
@@ -492,6 +495,54 @@ const renderUpgrade = (
   });
   stack.appendChild(btn);
   if (!affordable) stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: `Need ${fmtInt(cost)} coins to upgrade.` }));
+};
+
+// A single-arm confirm for demolish: the first tap on a tile's Demolish button
+// arms it for 3s; a second tap within the window commits. Kept at module scope
+// so it survives the tile sheet's 1s re-render tick.
+let demolishArmed: { key: string; until: number } | null = null;
+
+const renderDemolish = (
+  stack: HTMLElement,
+  spec: BuildingSpec,
+  tile: TileState,
+  x: number,
+  y: number,
+  key: string
+): void => {
+  const refund = Math.floor(DEMOLISH_REFUND * investedCost(spec, tile.tier));
+  const armedLabel = `Tap again to confirm — refund ${fmtInt(refund)} coins`;
+  const isArmed = (): boolean =>
+    demolishArmed?.key === key && demolishArmed.until > Date.now();
+
+  const btn = el('button', {
+    cls: 'hv-btn hv-btn-ghost hv-btn-danger',
+    attrs: { type: 'button' },
+  });
+  btn.textContent = isArmed() ? armedLabel : 'Demolish';
+  if (isArmed()) btn.classList.add('is-armed');
+
+  btn.addEventListener('click', () => {
+    if (isPending('demolish')) return;
+    if (!isArmed()) {
+      demolishArmed = { key, until: Date.now() + 3000 };
+      btn.textContent = armedLabel;
+      btn.classList.add('is-armed');
+      window.setTimeout(() => {
+        if (demolishArmed?.key === key) demolishArmed = null;
+        btn.textContent = 'Demolish';
+        btn.classList.remove('is-armed');
+      }, 3000);
+      return;
+    }
+    demolishArmed = null;
+    void action('demolish', async () => {
+      const res = await api.demolish(x, y);
+      store.applyMutation({ key, tile: res.tile, me: res.me });
+      toast(`+${fmtInt(refund)} coins refunded`, 'gain');
+    });
+  });
+  stack.appendChild(btn);
 };
 
 // ── Variant (e): neighbour's producer → boost ────────────────────────────────

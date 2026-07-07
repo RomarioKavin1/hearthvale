@@ -31,6 +31,7 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 - **Daily weather** — sunny, rain, clear, or a rare harvest moon, each nudging production in a different direction.
 - **Community festivals** — a daily ballot picks which category gets a ×1.5 bonus tomorrow.
 - **Check-in streaks and neighbour boosts** — reward showing up and helping other players' plots.
+- **Demolish and rebuild** — clear any building for a 50% coin refund, so no plot is ever a dead end.
 - **Leaderboards and flair** — village value, lifetime earnings, and Keep contributions, with titles to match.
 - **Mobile-first** — designed for the phone-sized Reddit feed, with a comfortable touch HUD.
 

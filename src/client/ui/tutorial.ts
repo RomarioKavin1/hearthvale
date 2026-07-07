@@ -33,7 +33,7 @@ const STEP_COPY: Record<number, { title: string; body: string; market: boolean }
   },
   2: {
     title: 'Plant your first field',
-    body: "Build a Wheat Field first — grain is the village's lifeblood, and it pays.",
+    body: "Build a Wheat Field first — grain is the village's lifeblood, and it pays. You'll unlock a second plot at level 2, and demolish is always an option too.",
     market: false,
   },
   3: {

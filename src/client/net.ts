@@ -30,7 +30,10 @@ export type CollectAllResult = {
   me: PlayerState;
   gained: Gained;
 };
-export type CheckInResult = { me: PlayerState; gained: { coins: number } };
+export type CheckInResult = {
+  me: PlayerState;
+  gained: { coins: number; xp: number };
+};
 export type ContributeResult = { city: CityState; me: PlayerState };
 export type VoteResult = { counts: Record<FestivalCategory, number> };
 export type LeaderboardsResult = {
@@ -119,6 +122,9 @@ export const api = {
 
   upgrade: (x: number, y: number): Promise<TileResult> =>
     post('/api/upgrade', { x, y }),
+
+  demolish: (x: number, y: number): Promise<TileResult> =>
+    post('/api/demolish', { x, y }),
 
   collect: (x: number, y: number): Promise<CollectResult> =>
     post('/api/collect', { x, y }),

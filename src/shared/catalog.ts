@@ -183,6 +183,24 @@ export const tierStats = (spec: BuildingSpec, tier: Tier): TierStats => {
   };
 };
 
+/**
+ * Total coins a building at `tier` has cost its owner: the sum of every
+ * `tierStats().cost` from tier 1 up to (and including) `tier`. A tier-3 tower
+ * therefore reflects the tier-1 build plus both upgrade payments. Pure — the
+ * demolish refund is derived from this.
+ */
+export const investedCost = (spec: BuildingSpec, tier: Tier): number => {
+  const tiers: Tier[] = [1, 2, 3];
+  let total = 0;
+  for (const t of tiers) {
+    if (t <= tier) total += tierStats(spec, t).cost;
+  }
+  return total;
+};
+
+/** Fraction of a building's invested cost refunded when it is demolished. */
+export const DEMOLISH_REFUND: number = 0.5;
+
 // ---------------------------------------------------------------------------
 // Market pricing.
 // ---------------------------------------------------------------------------
@@ -297,6 +315,6 @@ export const RING_THRESHOLDS: Array<{ pop: number; lo: number; hi: number }> = [
 
 export const GRID_SIZE: number = 18;
 export const MAX_LEVEL: number = 15;
-export const PLOT_LEVELS: number[] = [1, 3, 5, 8, 12];
+export const PLOT_LEVELS: number[] = [1, 2, 4, 7, 10];
 /** Neighbour boosts a player may hand out per UTC day. */
 export const BOOST_DAILY_LIMIT: number = 5;

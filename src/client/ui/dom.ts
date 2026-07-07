@@ -740,6 +740,8 @@ const CSS = `
 .hv-btn.hv-btn-ghost { background: var(--wall); box-shadow: 0 4px 0 var(--wall-shade); }
 .hv-btn.hv-btn-ghost:active { box-shadow: 0 1px 0 var(--wall-shade); }
 .hv-btn.hv-btn-accent { background: var(--accent); color: var(--cream); }
+.hv-btn.hv-btn-danger { color: var(--red); }
+.hv-btn.hv-btn-danger.is-armed { background: var(--red); color: var(--cream); }
 
 .hv-note { font-size: 12.5px; line-height: 1.5; color: var(--ink); opacity: 0.85; }
 .hv-muted { opacity: 0.7; }

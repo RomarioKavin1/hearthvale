@@ -14,7 +14,7 @@ import { CATALOG, MAX_LEVEL, PLOT_LEVELS, tierStats } from '../catalog';
 import { isClaimable, isPlaza, neighbors, tileKey } from './grid';
 import { isRiver } from './expansion';
 
-export const xpFor = (level: number): number => 75 * level * (level - 1);
+export const xpFor = (level: number): number => 50 * level * (level - 1);
 
 export const levelForXp = (xp: number): number => {
   let level = 1;

@@ -308,7 +308,10 @@ const doCheckin = (): void => {
     .checkin()
     .then((res) => {
       store.applyMutation({ me: res.me });
-      toast(`Checked in! Streak ${res.me.streak} — +${fmtInt(res.gained.coins)}`, 'celebrate');
+      toast(
+        `Checked in! Streak ${res.me.streak} — +${fmtInt(res.gained.coins)} coins, +${fmtInt(res.gained.xp)} XP`,
+        'celebrate'
+      );
     })
     .catch((err: unknown) =>
       notifyError(err instanceof Error ? err.message : 'Could not check in.')

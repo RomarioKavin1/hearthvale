@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PlayerState, Stockpile, TileState } from '../types';
+import { CATALOG, investedCost } from '../catalog';
 import {
   accrue,
   adjacencyBonus,
@@ -48,9 +49,10 @@ const stocked = (over: Partial<Stockpile> = {}): Stockpile => ({
 });
 
 describe('xpFor', () => {
-  it('computes 75*L*(L-1)', () => {
-    expect(xpFor(2)).toBe(150);
-    expect(xpFor(3)).toBe(450);
+  it('computes 50*L*(L-1)', () => {
+    expect(xpFor(2)).toBe(100);
+    expect(xpFor(3)).toBe(300);
+    expect(xpFor(4)).toBe(600);
   });
 });
 
@@ -59,10 +61,10 @@ describe('levelForXp', () => {
     expect(levelForXp(0)).toBe(1);
   });
   it('reaches level 2 at exactly the level-2 threshold', () => {
-    expect(levelForXp(150)).toBe(2);
+    expect(levelForXp(100)).toBe(2);
   });
   it('stays at level 2 just below the level-3 threshold', () => {
-    expect(levelForXp(449)).toBe(2);
+    expect(levelForXp(299)).toBe(2);
   });
   it('caps at MAX_LEVEL (15)', () => {
     expect(levelForXp(1_000_000_000)).toBe(15);
@@ -72,8 +74,21 @@ describe('levelForXp', () => {
 describe('plotsForLevel', () => {
   it('counts PLOT_LEVELS entries at or below the given level', () => {
     expect(plotsForLevel(1)).toBe(1);
+    // Second plot now arrives at level 2 (PLOT_LEVELS = [1,2,4,7,10]).
+    expect(plotsForLevel(2)).toBe(2);
     expect(plotsForLevel(3)).toBe(2);
+    expect(plotsForLevel(4)).toBe(3);
+    expect(plotsForLevel(7)).toBe(4);
     expect(plotsForLevel(12)).toBe(5);
+  });
+});
+
+describe('investedCost', () => {
+  it('sums tier costs from 1 up to the given tier', () => {
+    // cottage tier costs: 40, round(40×2.5)=100, round(40×6)=240.
+    expect(investedCost(CATALOG.cottage, 1)).toBe(40);
+    expect(investedCost(CATALOG.cottage, 2)).toBe(140);
+    expect(investedCost(CATALOG.cottage, 3)).toBe(380);
   });
 });
 

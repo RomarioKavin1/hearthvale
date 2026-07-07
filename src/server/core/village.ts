@@ -19,12 +19,14 @@ import type { BuildingId } from '../../shared/types';
 import {
   BOOST_DAILY_LIMIT,
   CATALOG,
+  DEMOLISH_REFUND,
   KEEP_STAGE_COSTS,
   MARKET,
   MAX_LEVEL,
   STAGE_MIN_PAYOUT,
   STAGE_NAME_WORDS,
   STAGE_POT,
+  investedCost,
   tierStats,
 } from '../../shared/catalog';
 import type { BuildingSpec } from '../../shared/catalog';
@@ -122,6 +124,25 @@ export const validateUpgrade = (
   return null;
 };
 
+/**
+ * A tile may be demolished by its owner as long as it holds a building.
+ * Deliberately allows demolishing DURING construction: the build already
+ * deducted the full cost, so refunding 50% of the invested cost is not an
+ * exploit (the player is always down 50%). Returns an error message or null.
+ */
+export const validateDemolish = (
+  player: PlayerState,
+  tile: TileState
+): string | null => {
+  if (tile.owner !== player.id) return 'You do not own this plot.';
+  if (!tile.buildingId) return 'There is no building here to demolish.';
+  return null;
+};
+
+/** Coins refunded on demolish: floor(DEMOLISH_REFUND × invested cost). Pure. */
+export const demolishRefund = (spec: BuildingSpec, tier: Tier): number =>
+  Math.floor(DEMOLISH_REFUND * investedCost(spec, tier));
+
 /** Recompute level/plots from current xp. Only ever advances. */
 export const applyLevelUp = (player: PlayerState): PlayerState => {
   const level = levelForXp(player.xp);
@@ -133,6 +154,9 @@ const creditXp = (player: PlayerState, amount: number): PlayerState =>
   applyLevelUp({ ...player, xp: player.xp + amount });
 
 // --- Check-in streaks -------------------------------------------------------
+
+/** XP granted per daily check-in — a steady trickle toward the next plot. */
+export const CHECKIN_XP = 50;
 
 /** Same-day check-ins are rejected; returns an error message or null. */
 export const canCheckIn = (
@@ -961,6 +985,52 @@ export const doUpgrade = async (
   return { tile: upgraded, me };
 };
 
+/**
+ * Demolish the player's own building. Allowed at any time (including mid-build);
+ * the build already deducted the full cost, so the 50%-of-invested refund is
+ * never an exploit. Clears the building state from the tile but KEEPS the owner
+ * claim, credits the refund to the wallet, and broadcasts the cleared tile.
+ *
+ * Lifetime counters are deliberately left untouched: `valueSpent` (→ lb:value)
+ * and `lifetimeEarned` reflect lifetime activity by design and are not reversed
+ * — demolishing does not launder value off the board.
+ */
+export const doDemolish = async (
+  userId: string,
+  x: number,
+  y: number
+): Promise<{ tile: TileState; me: PlayerState }> => {
+  const key = tileKey(x, y);
+  const [tile, player] = await Promise.all([getTile(key), ensurePlayer(userId)]);
+  if (!tile) throw new OpError(404, 'You must claim this plot first.');
+
+  const err = validateDemolish(player, tile);
+  if (err) throw new OpError(400, err);
+
+  const bid = tile.buildingId;
+  if (!bid) throw new OpError(400, 'There is no building here to demolish.');
+  const refund = demolishRefund(CATALOG[bid], tile.tier);
+
+  // Reset to a bare claimed plot: drops buildingId/boostBy/cosmetic and zeroes
+  // the timers, keeping only the owner claim (tier back to 1).
+  const cleared: TileState = {
+    owner: tile.owner,
+    ownerName: tile.ownerName,
+    tier: 1,
+    builtAt: 0,
+    readyAt: 0,
+    lastCollect: 0,
+    boostUntil: 0,
+  };
+
+  const me: PlayerState = { ...player, coins: player.coins + refund };
+
+  await putTile(key, cleared);
+  await putPlayer(me);
+  await broadcastTile(key, cleared);
+  return { tile: cleared, me };
+};
+
 export const doCollect = async (
   userId: string,
   x: number,
@@ -1165,7 +1235,7 @@ export const loadSummary = async (
 
 export const doCheckIn = async (
   userId: string
-): Promise<{ me: PlayerState; gained: { coins: number } }> => {
+): Promise<{ me: PlayerState; gained: { coins: number; xp: number } }> => {
   const player = await ensurePlayer(userId);
   const today = utcDay(Date.now());
 
@@ -1174,15 +1244,22 @@ export const doCheckIn = async (
 
   const streak = nextStreak(player.lastCheckIn, player.streak, today);
   const coins = streakReward(streak);
-  const me: PlayerState = {
-    ...player,
-    streak,
-    lastCheckIn: today,
-    coins: player.coins + coins,
-  };
+  const before = player.level;
+  // Credit the check-in XP through the level-up helper so a milestone check-in
+  // updates level/plots (and flair below) — the trickle that unlocks plot #2.
+  const me = creditXp(
+    {
+      ...player,
+      streak,
+      lastCheckIn: today,
+      coins: player.coins + coins,
+    },
+    CHECKIN_XP
+  );
 
   await putPlayer(me);
-  return { me, gained: { coins } };
+  await maybeFlair(before, me);
+  return { me, gained: { coins, xp: CHECKIN_XP } };
 };
 
 export const doBoost = async (
