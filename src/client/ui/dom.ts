@@ -4,16 +4,19 @@ import { PAL } from '../../shared/palette';
 import type {
   BuildingId,
   FestivalCategory,
+  Good,
   PlayerState,
   StateResponse,
   TileState,
+  Weather,
 } from '../../shared/types';
 import { BOOST_DAILY_LIMIT } from '../../shared/catalog';
+import type { SpriteKey } from '../art/manifest';
+import { BUILDING_ART, isIconKey, SPRITES } from '../art/manifest';
 import { parseKey } from '../../shared/logic/grid';
 import {
   accrue,
   adjacencyBonus,
-  emptyStockpile,
   goodsTotal,
   utcDay,
 } from '../../shared/logic/economy';
@@ -86,17 +89,86 @@ export const iconUrl = (id: BuildingId): string => {
   return url;
 };
 
+// ── Sprite-icon elements ─────────────────────────────────────────────────────
+// The single way the HUD renders an icon. Game-icons (white PNGs) are drawn as a
+// CSS mask tinted to `currentColor`, so they read correctly on both light chips
+// (ink) and dark toasts (cream) with no per-call colour bookkeeping. Colourful
+// diorama/goods sprites are drawn as plain <img> (image-rendering:auto), used
+// as-is with no tint.
+export const iconEl = (key: SpriteKey, size = 18): HTMLElement => {
+  const path = SPRITES[key];
+  if (isIconKey(key)) {
+    return el('span', {
+      cls: 'hv-icon hv-icon-mask',
+      attrs: {
+        role: 'presentation',
+        style: `width:${size}px;height:${size}px;-webkit-mask-image:url(${path});mask-image:url(${path})`,
+      },
+    });
+  }
+  return el('img', {
+    cls: 'hv-icon hv-icon-img',
+    attrs: { src: path, width: size, height: size, alt: '', 'aria-hidden': 'true' },
+  });
+};
+
+// ── Goods presentation ───────────────────────────────────────────────────────
+// No dedicated good sprites ship in the pack, so each good borrows the closest
+// diorama sprite (used as-is, no tint). Distinct silhouettes at a glance:
+//   wheat → golden cropped field · logs → pine tree · stone → raw rock pile
+//   flour → pale beige block (a flour sack) · planks → wooden fence (cut planks)
+//   bricks → beige stone wall (finished masonry).
+export const GOOD_SPRITE: Record<Good, SpriteKey> = {
+  wheat: 'furrow-crop-wheat',
+  logs: 'tree-pine',
+  stone: 'rocks-dirt',
+  flour: 'building-center-beige',
+  planks: 'fence-wood',
+  bricks: 'building-window-beige',
+};
+
+export const GOOD_LABEL: Record<Good, string> = {
+  wheat: 'Wheat',
+  logs: 'Logs',
+  stone: 'Stone',
+  flour: 'Flour',
+  planks: 'Planks',
+  bricks: 'Bricks',
+};
+
+export const goodIcon = (good: Good, size = 18): HTMLElement =>
+  iconEl(GOOD_SPRITE[good], size);
+
+/** The representative sprite for a building's card icon: a stacked building's
+ * wall base (a recognisable house silhouette) or a flat piece's tier-1 sprite. */
+export const buildingIconKey = (id: BuildingId): SpriteKey => {
+  const art = BUILDING_ART[id];
+  if (art.kind === 'stacked') return art.base;
+  return art.byTier[1][0] ?? 'grass-center';
+};
+
 // ── Category presentation ────────────────────────────────────────────────────
 
-export type CatMeta = { label: string; emoji: string; color: string };
+export type CatMeta = { label: string; icon: SpriteKey; color: string };
 
-// TODO(V4): keyed by festival category; V4 replaces emoji with sprite icons and
-// adds richer chain/market labels.
+/** Festival categories, with v2 display names (raw→Harvest, processed→Craft). */
 export const CATEGORY_META: Record<FestivalCategory, CatMeta> = {
-  coins: { label: 'Coins', emoji: '🪙', color: PAL.roofStraw },
-  raw: { label: 'Raw goods', emoji: '🌾', color: PAL.leaf },
-  processed: { label: 'Crafted', emoji: '🍞', color: PAL.wood },
-  decor: { label: 'Decor', emoji: '✨', color: PAL.accent },
+  coins: { label: 'Coins', icon: 'icon-coin', color: PAL.roofStraw },
+  raw: { label: 'Harvest', icon: 'furrow-crop-wheat', color: PAL.leaf },
+  processed: { label: 'Craft', icon: 'icon-hammer', color: PAL.wood },
+  decor: { label: 'Decor', icon: 'icon-star', color: PAL.accent },
+};
+
+// ── Weather presentation ─────────────────────────────────────────────────────
+// The game-icons pack has no literal weather art, so each weather borrows the
+// closest-reading white icon (documented in the V4 report); the label carries
+// the meaning.
+export type WeatherMeta = { label: string; icon: SpriteKey };
+export const WEATHER_META: Record<Weather, WeatherMeta> = {
+  sunny: { label: 'Sunny', icon: 'icon-star' },
+  rain: { label: 'Rain', icon: 'icon-arrow-down' },
+  clear: { label: 'Clear', icon: 'icon-check' },
+  harvestmoon: { label: 'Harvest Moon', icon: 'icon-trophy' },
 };
 
 // ── Formatting ───────────────────────────────────────────────────────────────
@@ -152,9 +224,7 @@ export const ownedCount = (data: StateResponse, id: string): number => {
 /** Count of the player's own tiles with something ready to collect. */
 export const readyCount = (data: StateResponse, id: string, now: number): number => {
   const fest = data.city.festival;
-  // TODO(V4): the client has no stockpile snapshot yet, so processors read as
-  // idle here; V4 threads the real stockpile + prices into state.
-  const stockpile = emptyStockpile();
+  const stockpile = data.stockpile;
   let n = 0;
   for (const [key, tile] of Object.entries(data.grid)) {
     if (tile.owner !== id || tile.buildingId === undefined) continue;
@@ -220,7 +290,7 @@ export const toast = (text: string, kind: ToastKind = 'info'): void => {
 };
 
 /**
- * A longer-lived toast carrying a single action button (e.g. "Share it? 💬").
+ * A longer-lived toast carrying a single action button (e.g. "Share it?").
  * Auto-dismisses after `timeoutMs`; tapping the button runs `onAction` and
  * closes early. Used for the opt-in share prompt after a milestone.
  */
@@ -308,6 +378,16 @@ const CSS = `
 
 .hv-pixel { image-rendering: pixelated; }
 
+/* ── Sprite icons ────────────────────────────────────────── */
+.hv-icon { flex: 0 0 auto; display: inline-block; vertical-align: middle; }
+.hv-icon-img { image-rendering: auto; object-fit: contain; }
+.hv-icon-mask {
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain;
+}
+
 /* ── Top bar ─────────────────────────────────────────────── */
 .hv-topbar {
   position: absolute;
@@ -333,7 +413,11 @@ const CSS = `
   font-size: 14px;
   letter-spacing: 0.3px;
   line-height: 1;
+  color: var(--ink);
+  font-family: inherit;
+  cursor: pointer;
 }
+.hv-chip:active { transform: translateY(1px); }
 .hv-chip .hv-swatch {
   width: 12px; height: 12px;
   border: 2px solid var(--ink);
@@ -834,6 +918,180 @@ const CSS = `
   cursor: pointer;
 }
 .hv-toast-btn:active { transform: translateY(1px); }
+
+/* ── Wallet drawer ───────────────────────────────────────── */
+.hv-wallet {
+  position: absolute;
+  left: calc(var(--sal) + 8px);
+  right: calc(var(--sar) + 8px);
+  top: calc(var(--sat) + 52px);
+  z-index: 5;
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 8px;
+  background: var(--cream);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 4px 0 rgba(59,51,71,0.35);
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+  transition: opacity 180ms ease-out, transform 180ms cubic-bezier(0.22,1,0.36,1);
+}
+.hv-wallet.is-open { opacity: 1; transform: none; pointer-events: auto; }
+.hv-wallet-row {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 4px 8px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.hv-wallet-row:active { transform: translateY(2px); }
+.hv-wallet-name { font-size: 11px; font-weight: 800; opacity: 0.75; letter-spacing: 0.2px; }
+.hv-wallet-count { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.hv-wallet-main { display: flex; flex-direction: column; line-height: 1.05; }
+
+/* ── Market sheet ────────────────────────────────────────── */
+.hv-callout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--glow);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+.hv-mkt-rows { display: flex; flex-direction: column; gap: 8px; }
+.hv-mkt {
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.hv-mkt-head {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.hv-mkt-head:active { transform: translateY(1px); }
+.hv-mkt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hv-mkt-name { font-size: 14.5px; font-weight: 800; letter-spacing: 0.3px; }
+.hv-mkt-sub { font-size: 11px; opacity: 0.75; line-height: 1.3; }
+.hv-mkt-right { margin-left: auto; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.hv-mkt-price { display: inline-flex; align-items: center; gap: 3px; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.hv-trend-up { color: var(--leaf); }
+.hv-trend-down { opacity: 0.6; }
+.hv-mkt-hold { font-size: 11px; font-weight: 700; opacity: 0.8; }
+.hv-mkt-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.hv-mkt-seg { display: flex; flex-direction: column; gap: 6px; }
+.hv-mkt-seg-label { font-size: 12px; font-weight: 800; letter-spacing: 0.3px; opacity: 0.85; }
+.hv-preview { font-size: 12.5px; font-weight: 700; opacity: 0.9; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ── Trader sheet ────────────────────────────────────────── */
+.hv-trade-cards { display: flex; flex-direction: column; gap: 12px; }
+.hv-trade {
+  padding: 12px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+}
+.hv-trade.is-golden {
+  background: var(--straw);
+  box-shadow: 0 0 0 3px var(--glow), 0 4px 0 var(--wood-dark);
+}
+.hv-trade-deal { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; }
+.hv-trade-side { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 66px; }
+.hv-trade-qty { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.hv-trade-cap { font-size: 10.5px; font-weight: 700; opacity: 0.8; }
+.hv-trade-arrow { display: inline-flex; opacity: 0.7; }
+.hv-badge-dot {
+  position: absolute;
+  top: -4px; right: -4px;
+  width: 14px; height: 14px;
+  background: var(--red);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+}
+.hv-menu-btn { position: relative; }
+
+/* ── Keep sheet ──────────────────────────────────────────── */
+.hv-keep-bars { display: flex; flex-direction: column; gap: 8px; }
+.hv-plaque { display: flex; flex-direction: column; gap: 8px; }
+.hv-plaque-row {
+  padding: 8px 10px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.hv-plaque-name { font-size: 13.5px; font-weight: 800; letter-spacing: 0.3px; }
+.hv-plaque-name.is-unnamed { opacity: 0.6; font-style: italic; font-weight: 700; }
+.hv-plaque-top { font-size: 11.5px; opacity: 0.8; margin-top: 2px; line-height: 1.4; }
+.hv-picker { display: flex; gap: 8px; }
+.hv-picker-col {
+  flex: 1 1 0;
+  max-height: 168px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.hv-picker-opt {
+  pointer-events: auto;
+  min-height: 40px;
+  padding: 0 8px;
+  background: var(--cream);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+  cursor: pointer;
+}
+.hv-picker-opt.is-picked { background: var(--glow); }
+.hv-picker-preview { text-align: center; font-size: 17px; font-weight: 800; letter-spacing: 0.5px; }
+
+/* ── Chain / tile info ───────────────────────────────────── */
+.hv-chain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+.hv-chain .hv-icon { }
+.hv-warn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--red);
+  color: var(--cream);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.35;
+}
 
 /* ── Focus visibility ────────────────────────────────────── */
 #hv-hud :focus-visible {

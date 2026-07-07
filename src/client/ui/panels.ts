@@ -1,59 +1,97 @@
 import type { BuildingSpec, TierStats } from '../../shared/catalog';
 import { CATALOG, tierStats } from '../../shared/catalog';
-import type { PlayerState, StateResponse, Tier, TileState } from '../../shared/types';
-import { isClaimable } from '../../shared/logic/grid';
+import type {
+  PlayerState,
+  StateResponse,
+  Tier,
+  TileState,
+  Weather,
+} from '../../shared/types';
+import { isClaimable, neighbors, tileKey } from '../../shared/logic/grid';
 import {
   accrue,
   adjacencyBonus,
   canClaim,
-  emptyStockpile,
+  CHAIN_PAIRS,
   goodsTotal,
   plotsForLevel,
   roleToFestival,
 } from '../../shared/logic/economy';
+import { isRiver } from '../../shared/logic/expansion';
 import type { HvTileSelected } from '../events';
 import { api } from '../net';
 import { store } from '../state';
 import {
   boostsLeft,
-  CATEGORY_META,
+  buildingIconKey,
   el,
   fmtBuildTime,
   fmtDur,
   fmtInt,
-  iconUrl,
+  GOOD_LABEL,
+  goodIcon,
+  iconEl,
   isPending,
   ownedCount,
   pctStr,
   promptLogin,
 } from './dom';
-import {
-  action,
-  openSheet,
-  setSheetTitle,
-  toast,
-} from './sheet';
+import type { SpriteKey } from '../art/manifest';
+import { action, openSheet, setSheetTitle, toast } from './sheet';
 import {
   openBallotSheet,
   openHowToSheet,
-  openLandmarkSheet,
+  openKeepSheet,
   openLeaderboardsSheet,
+  openMarketSheet,
+  openTraderSheet,
 } from './sheets';
 
 /**
  * The two "hub" sheets: the context-sensitive tile sheet (six variants driven by
- * what was tapped) and the menu that fans out to the four secondary sheets. Both
+ * what was tapped) and the menu that fans out to the secondary sheets. Both
  * recompute from `store` on every render so they track claims/builds/collects and
  * live countdowns without stale closures.
  */
 
+/** Tier pips as monochrome geometric shapes (filled ● / empty ○ — not emoji). */
 const stars = (tier: number): string =>
-  '★★★'.slice(0, tier) + '☆☆☆'.slice(0, Math.max(0, 3 - tier));
+  '●●●'.slice(0, tier) + '○○○'.slice(0, Math.max(0, 3 - tier));
 
 const line = (label: string, value: string): HTMLElement =>
   el('div', {
     cls: 'hv-row-line',
     children: [el('span', { text: label }), el('b', { text: value })],
+  });
+
+/** The icon for whatever a building outputs (a good, or coins). */
+const outputIcon = (spec: BuildingSpec, size = 16): HTMLElement => {
+  if (spec.role === 'raw' && spec.good) return goodIcon(spec.good, size);
+  if (spec.role === 'processor' && spec.output && spec.output !== 'coins') {
+    return goodIcon(spec.output, size);
+  }
+  return iconEl('icon-coin', size);
+};
+
+/** A short economics label for a build-grid card. */
+const buildSub = (spec: BuildingSpec): string => {
+  if (spec.role === 'decor') return '+10% / tier';
+  if (spec.role === 'raw' && spec.good) {
+    return `${GOOD_LABEL[spec.good]} ${spec.ratePerMin}/min`;
+  }
+  if (spec.role === 'processor' && spec.input && spec.output) {
+    if (spec.output === 'coins') {
+      return `${spec.input.per} ${GOOD_LABEL[spec.input.good]} → ${spec.coinsPerFlour ?? 0} coins`;
+    }
+    return `${spec.input.per} ${GOOD_LABEL[spec.input.good]} → 1 ${GOOD_LABEL[spec.output]}`;
+  }
+  return `${spec.ratePerMin}/min coins`;
+};
+
+const coinCost = (cost: number, broke: boolean): HTMLElement =>
+  el('div', {
+    cls: `hv-card-cost${broke ? ' is-broke' : ''}`,
+    children: [iconEl('icon-coin', 12), el('span', { text: fmtInt(cost) })],
   });
 
 // ── Tile sheet ───────────────────────────────────────────────────────────────
@@ -112,7 +150,7 @@ const renderClaim = (
 
   const btn = el('button', {
     cls: 'hv-btn',
-    text: '🏡 Settle here',
+    text: 'Settle here',
     attrs: { type: 'button' },
   });
   if (reason !== null || isPending('claim')) btn.disabled = true;
@@ -120,7 +158,7 @@ const renderClaim = (
     void action('claim', async () => {
       const res = await api.claim(x, y);
       store.applyMutation({ key, tile: res.tile, me: res.me });
-      toast('Settled a new plot! 🏡', 'celebrate');
+      toast('Settled a new plot!', 'celebrate');
     });
   });
   stack.appendChild(btn);
@@ -157,18 +195,10 @@ const renderBuildGrid = (
   const cards = el('div', { cls: 'hv-cards' });
 
   for (const spec of Object.values(CATALOG)) {
-    const meta = CATEGORY_META[roleToFestival(spec.role)];
     const locked = me.level < spec.unlockLevel;
     const broke = me.coins < spec.cost;
 
-    const img = el('img', {
-      cls: 'hv-pixel',
-      attrs: { alt: spec.name, src: iconUrl(spec.id) },
-    });
-    const sub =
-      spec.role === 'decor'
-        ? `+10%/tier ✨`
-        : `${spec.ratePerMin}/min ${meta.emoji}`;
+    const img = iconEl(buildingIconKey(spec.id), 40);
 
     const card = el('button', {
       cls: `hv-card${locked ? ' is-locked' : ''}`,
@@ -176,14 +206,11 @@ const renderBuildGrid = (
       children: [
         img,
         el('div', { cls: 'hv-card-name', text: spec.name }),
-        el('div', { cls: 'hv-card-sub', text: sub }),
-        el('div', {
-          cls: `hv-card-cost${broke ? ' is-broke' : ''}`,
-          text: `${fmtInt(spec.cost)} 🪙`,
-        }),
+        el('div', { cls: 'hv-card-sub', text: buildSub(spec) }),
+        coinCost(spec.cost, broke),
         locked
           ? el('div', { cls: 'hv-lock', text: `Lv ${spec.unlockLevel}` })
-          : el('div', { cls: 'hv-card-sub', text: `⏱ ${fmtBuildTime(spec.buildSeconds)}` }),
+          : el('div', { cls: 'hv-card-sub', text: fmtBuildTime(spec.buildSeconds) }),
       ],
     });
 
@@ -193,7 +220,7 @@ const renderBuildGrid = (
         void action(`build:${spec.id}`, async () => {
           const res = await api.build(x, y, spec.id);
           store.applyMutation({ key, tile: res.tile, me: res.me });
-          toast(`Built ${spec.name}! 🔨`, 'gain');
+          toast(`Built ${spec.name}!`, 'gain');
         });
       });
     }
@@ -216,7 +243,6 @@ const renderMineBuilding = (
   const bid = tile.buildingId;
   if (bid === undefined) return;
   const spec = CATALOG[bid];
-  const meta = CATEGORY_META[roleToFestival(spec.role)];
   const now = store.serverNow();
   setSheetTitle(spec.name);
 
@@ -248,18 +274,51 @@ const renderMineBuilding = (
   if (spec.role === 'decor') {
     stack.appendChild(el('p', { cls: 'hv-note', text: `Boosts each neighbouring producer by +${10 * tile.tier}%.` }));
   } else {
-    renderProducerStats(stack, data, spec, statsT, tile, x, y, now, meta.emoji, key);
+    renderProducerStats(stack, data, spec, statsT, tile, x, y, now, key);
   }
 
   if (tile.boostUntil > now) {
     stack.appendChild(
-      el('div', { cls: 'hv-row-line', children: [el('span', { text: '⚡ Boosted ×2' }), el('b', { text: `${fmtDur(tile.boostUntil - now)} left` })] })
+      el('div', { cls: 'hv-row-line', children: [el('span', { text: 'Boosted ×2' }), el('b', { text: `${fmtDur(tile.boostUntil - now)} left` })] })
     );
   }
 
   renderUpgrade(stack, me, spec, tile, x, y, key);
   body.appendChild(stack);
 };
+
+/** Weather line for a producer, or null when today's weather doesn't apply. */
+const weatherLine = (weather: Weather, spec: BuildingSpec): string | null => {
+  if (weather === 'sunny') return 'Sunny +10%';
+  if (weather === 'harvestmoon') return 'Harvest Moon +50%';
+  if (weather === 'rain') {
+    return spec.good === 'wheat' || spec.good === 'logs' ? 'Rain +30%' : null;
+  }
+  return null;
+};
+
+const chainPartnerOf = (a: string, b: string): boolean =>
+  CHAIN_PAIRS.some(([p, q]) => (a === p && b === q) || (a === q && b === p));
+
+/** Name of an adjacent, completed chain-partner building, if any. */
+const chainHint = (
+  grid: Record<string, TileState>,
+  x: number,
+  y: number,
+  selfId: string,
+  now: number
+): string | null => {
+  for (const n of neighbors(x, y)) {
+    const t = grid[tileKey(n.x, n.y)];
+    if (t?.buildingId && t.readyAt <= now && chainPartnerOf(selfId, t.buildingId)) {
+      return `Next to ${CATALOG[t.buildingId].name} (+25%)`;
+    }
+  }
+  return null;
+};
+
+const riverAdjacent = (x: number, y: number): boolean =>
+  neighbors(x, y).some((n) => isRiver(n.x, n.y));
 
 const renderProducerStats = (
   stack: HTMLElement,
@@ -270,7 +329,6 @@ const renderProducerStats = (
   x: number,
   y: number,
   now: number,
-  emoji: string,
   key: string
 ): void => {
   const fest = data.city.festival;
@@ -278,13 +336,58 @@ const renderProducerStats = (
   const festing = fest === roleToFestival(spec.role);
   const effRate = statsT.ratePerMin * (festing ? 1.5 : 1) * (1 + adj);
 
-  stack.appendChild(line('Output', `${effRate.toFixed(1)}/min ${emoji}`));
-  stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Base ${statsT.ratePerMin}/min` }));
-  if (festing) stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: '× 1.5 festival bonus today' }));
-  if (adj > 0) stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `+ ${Math.round(adj * 100)}% from nearby decor` }));
+  stack.appendChild(
+    el('div', {
+      cls: 'hv-row-line',
+      children: [
+        el('span', { text: 'Output' }),
+        el('b', {
+          cls: 'hv-chain',
+          children: [el('span', { text: `${effRate.toFixed(1)}/min` }), outputIcon(spec, 16)],
+        }),
+      ],
+    })
+  );
+  stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Base ${statsT.ratePerMin.toFixed(1)}/min` }));
+  if (festing) stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: '×1.5 festival bonus today' }));
 
-  // TODO(V4): thread the real stockpile in so processor previews are accurate.
-  const { gained } = accrue(tile, now, fest, adj, data.city.weather, emptyStockpile());
+  const wl = weatherLine(data.weather, spec);
+  if (wl) stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: wl }));
+
+  const selfId = spec.id;
+  const ch = chainHint(data.grid, x, y, selfId, now);
+  if (ch) stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: ch }));
+  if (spec.role === 'raw' && riverAdjacent(x, y)) {
+    stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: 'River-side (+50%)' }));
+  }
+  if (adj > 0) {
+    stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Placement bonus +${Math.round(adj * 100)}%` }));
+  }
+  if (data.city.landmarkStage > 0) {
+    stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Grand Keep +${3 * data.city.landmarkStage}%` }));
+  }
+
+  // Processor starvation: no input in the village stockpile.
+  if (spec.role === 'processor' && spec.input && data.stockpile[spec.input.good] < spec.input.per) {
+    const input = spec.input.good;
+    const warn = el('div', {
+      cls: 'hv-warn',
+      children: [
+        goodIcon(input, 18),
+        el('span', { text: `The stockpile has no ${GOOD_LABEL[input]} — sell some or build fields.` }),
+      ],
+    });
+    stack.appendChild(warn);
+    const openMkt = el('button', {
+      cls: 'hv-btn hv-btn-ghost',
+      text: 'Open market',
+      attrs: { type: 'button' },
+      on: { click: () => openMarketSheet(input) },
+    });
+    stack.appendChild(openMkt);
+  }
+
+  const { gained } = accrue(tile, now, fest, adj, data.weather, data.stockpile);
   const accrued = gained.coins + goodsTotal(gained.goods);
   const frac = statsT.cap > 0 ? accrued / statsT.cap : 0;
   stack.appendChild(
@@ -294,8 +397,8 @@ const renderProducerStats = (
 
   const collect = el('button', {
     cls: 'hv-btn',
-    text: `Collect ${fmtInt(accrued)} ${emoji}`,
     attrs: { type: 'button' },
+    children: [el('span', { text: `Collect ${fmtInt(accrued)}` }), outputIcon(spec, 16)],
   });
   if (accrued <= 0 || isPending('collect')) collect.disabled = true;
   collect.addEventListener('click', () => {
@@ -303,7 +406,7 @@ const renderProducerStats = (
       const res = await api.collect(x, y);
       store.applyMutation({ key, tile: res.tile, me: res.me });
       const got = res.gained.coins + goodsTotal(res.gained.goods);
-      toast(`+${fmtInt(got)} ${emoji}`, 'gain');
+      toast(`+${fmtInt(got)}`, 'gain');
     });
   });
   stack.appendChild(collect);
@@ -319,7 +422,7 @@ const renderUpgrade = (
   key: string
 ): void => {
   if (tile.tier >= 3) {
-    stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: 'Max tier ★★★' }));
+    stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: `Max tier ${stars(3)}` }));
     return;
   }
   const nextTier: Tier = tile.tier === 1 ? 2 : 3;
@@ -328,19 +431,23 @@ const renderUpgrade = (
 
   const btn = el('button', {
     cls: 'hv-btn hv-btn-ghost',
-    text: `Upgrade to ${stars(nextTier)} — ${fmtInt(cost)} 🪙`,
     attrs: { type: 'button' },
+    children: [
+      el('span', { text: `Upgrade to ${stars(nextTier)} —` }),
+      iconEl('icon-coin', 14),
+      el('span', { text: fmtInt(cost) }),
+    ],
   });
   if (!affordable || isPending('upgrade')) btn.disabled = true;
   btn.addEventListener('click', () => {
     void action('upgrade', async () => {
       const res = await api.upgrade(x, y);
       store.applyMutation({ key, tile: res.tile, me: res.me });
-      toast(`Upgraded to tier ${nextTier}! ⭐`, 'celebrate');
+      toast(`Upgraded to tier ${nextTier}!`, 'celebrate');
     });
   });
   stack.appendChild(btn);
-  if (!affordable) stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: `Need ${fmtInt(cost)} 🪙 to upgrade.` }));
+  if (!affordable) stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: `Need ${fmtInt(cost)} coins to upgrade.` }));
 };
 
 // ── Variant (e): neighbour's producer → boost ────────────────────────────────
@@ -375,7 +482,7 @@ const renderNeighbour = (
 
   const btn = el('button', {
     cls: 'hv-btn hv-btn-accent',
-    text: me ? '⚡ Boost ×2 for 30m' : 'Sign in to boost',
+    text: me ? 'Boost ×2 for 30m' : 'Sign in to boost',
     attrs: { type: 'button' },
   });
   if ((me !== null && reason !== null) || isPending('boost')) btn.disabled = true;
@@ -387,7 +494,7 @@ const renderNeighbour = (
     void action('boost', async () => {
       const res = await api.boost(x, y);
       store.applyMutation({ key: `${x},${y}`, tile: res.tile, me: res.me });
-      toast(`Boosted ${tile.ownerName}’s ${spec.name}! ⚡`, 'gain');
+      toast(`Boosted ${tile.ownerName}’s ${spec.name}!`, 'gain');
     });
   });
   stack.appendChild(btn);
@@ -413,33 +520,60 @@ const renderPlaza = (body: HTMLElement): void => {
   body.appendChild(
     el('p', {
       cls: 'hv-note',
-      text: 'The village square 🌳 — a shared gathering place at the heart of Hearthvale. The clocktower rises here; plots can’t be claimed on the plaza.',
+      text: 'The village square — a shared gathering place at the heart of Hearthvale. The Grand Keep rises here; plots can’t be claimed on the plaza.',
     })
   );
 };
 
 // ── Menu sheet ───────────────────────────────────────────────────────────────
 
-type MenuItem = { emoji: string; label: string; open: () => void };
+type MenuItem = {
+  icon: SpriteKey;
+  label: string;
+  open: () => void;
+  badge?: () => boolean;
+};
 
 const MENU: MenuItem[] = [
-  { emoji: '🏰', label: 'Clocktower', open: openLandmarkSheet },
-  { emoji: '🗳️', label: 'Festival ballot', open: openBallotSheet },
-  { emoji: '🏆', label: 'Leaderboards', open: openLeaderboardsSheet },
-  { emoji: '📖', label: 'How to play', open: openHowToSheet },
+  { icon: 'icon-cart', label: 'Market', open: () => openMarketSheet() },
+  {
+    icon: 'icon-scroll',
+    label: 'Wandering Trader',
+    open: openTraderSheet,
+    badge: () => store.data?.trader.done === false,
+  },
+  { icon: 'castle-tower', label: 'Grand Keep', open: openKeepSheet },
+  { icon: 'icon-star', label: 'Festival ballot', open: openBallotSheet },
+  { icon: 'icon-trophy', label: 'Leaderboards', open: openLeaderboardsSheet },
+  { icon: 'icon-question', label: 'How to play', open: openHowToSheet },
 ];
 
 export const openMenuSheet = (): void => {
   openSheet({
     title: 'Menu',
     render: (body) => {
+      const data = store.data;
+      const stack = el('div', { cls: 'hv-stack' });
+
+      // Expansion status line.
+      if (data) {
+        const { population, nextThreshold } = data.ring;
+        const text =
+          nextThreshold === null
+            ? `Village: ${fmtInt(population)} villagers · fully settled`
+            : `Village: ${fmtInt(population)} villagers · next land at ${fmtInt(nextThreshold)}`;
+        stack.appendChild(el('p', { cls: 'hv-note', text }));
+      }
+
       const menu = el('div', { cls: 'hv-menu' });
       for (const item of MENU) {
+        const iconSlot = el('span', { cls: 'hv-menu-emoji', children: [iconEl(item.icon, 22)] });
+        if (item.badge?.()) iconSlot.appendChild(el('span', { cls: 'hv-badge-dot' }));
         const btn = el('button', {
           cls: 'hv-menu-btn',
           attrs: { type: 'button' },
           children: [
-            el('span', { cls: 'hv-menu-emoji', text: item.emoji }),
+            iconSlot,
             el('span', { text: item.label }),
             el('span', { cls: 'hv-menu-arrow', text: '›' }),
           ],
@@ -447,7 +581,8 @@ export const openMenuSheet = (): void => {
         btn.addEventListener('click', () => item.open());
         menu.appendChild(btn);
       }
-      body.appendChild(menu);
+      stack.appendChild(menu);
+      body.appendChild(stack);
     },
   });
 };

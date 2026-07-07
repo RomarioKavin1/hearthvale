@@ -1,7 +1,7 @@
 import type { Game } from 'phaser';
 import { MAX_LEVEL, PLOT_LEVELS } from '../../shared/catalog';
-import type { PlayerState, StateResponse } from '../../shared/types';
-import { goodsTotal, xpFor } from '../../shared/logic/economy';
+import type { Good, PlayerState, StateResponse } from '../../shared/types';
+import { GOODS, goodsTotal, xpFor } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
 import { HV_TILE_SELECTED } from '../events';
 import { api } from '../net';
@@ -11,6 +11,9 @@ import {
   clearPending,
   el,
   fmtInt,
+  GOOD_LABEL,
+  goodIcon,
+  iconEl,
   injectStyles,
   isPending,
   markPending,
@@ -23,17 +26,19 @@ import {
   toast,
   toastAction,
   todayUtc,
+  WEATHER_META,
 } from './dom';
 import type { ShareKind } from '../net';
 import { mountSheetRoot } from './sheet';
 import { openMenuSheet, openTileSheet } from './panels';
+import { openMarketSheet } from './sheets';
 
 /**
- * The persistent HUD chrome: the top resource bar, the bottom-right FAB stack,
- * the toast host, the onboarding overlay, and `initHud` — the entry point
- * `game.ts` calls once Phaser has booted. Everything reads from `store` and
- * re-renders on `'change'`; nothing here is torn down (it lives for the whole
- * session), so there are no listener leaks to chase.
+ * The persistent HUD chrome: the top resource bar, the wallet drawer, the
+ * bottom-right FAB stack, the toast host, the onboarding overlay, and `initHud`
+ * — the entry point `game.ts` calls once Phaser has booted. Everything reads from
+ * `store` and re-renders on `'change'`; nothing here is torn down (it lives for
+ * the whole session), so there are no listener leaks to chase.
  */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -41,17 +46,22 @@ const RING_R = 16;
 const RING_C = 2 * Math.PI * RING_R;
 
 // Persistent element references (built once, updated on each render).
-let coinsChip: HTMLElement;
+let coinsChip: HTMLButtonElement;
 let coinsNum: HTMLElement;
-let suppliesChip: HTMLElement;
-let suppliesNum: HTMLElement;
 let ring: HTMLElement;
 let ringProgress: SVGCircleElement;
 let ringLevel: HTMLElement;
+let weatherChip: HTMLElement;
+let weatherIcon: HTMLElement;
+let weatherLabel: HTMLElement;
 let festChip: HTMLElement;
-let festEmoji: HTMLElement;
+let festIcon: HTMLElement;
 let festLabel: HTMLElement;
 let signinPill: HTMLElement;
+
+let walletDrawer: HTMLElement;
+let walletOpen = false;
+const walletCounts = new Map<Good, HTMLElement>();
 
 let collectFab: HTMLButtonElement;
 let collectBadge: HTMLElement;
@@ -64,7 +74,6 @@ let onboardDismissed = false;
 // Count-up animation + level-up tracking.
 const rafMap = new Map<HTMLElement, number>();
 let lastCoins = 0;
-let lastSupplies = 0;
 let prevLevel: number | null = null;
 let prevStage: number | null = null;
 
@@ -79,6 +88,7 @@ export const initHud = (game: Game): void => {
   host.appendChild(hud);
 
   hud.appendChild(buildTopBar());
+  hud.appendChild(buildWalletDrawer());
   hud.appendChild(buildFabs());
   hud.appendChild(buildOnboarding());
   mountSheetRoot(hud);
@@ -99,19 +109,6 @@ export const initHud = (game: Game): void => {
 };
 
 // ── Top bar ──────────────────────────────────────────────────────────────────
-
-const buildChip = (swatchColor: string, emoji: string): { chip: HTMLElement; num: HTMLElement } => {
-  const num = el('span', { cls: 'hv-chip-num', text: '0' });
-  const chip = el('div', {
-    cls: 'hv-chip',
-    children: [
-      el('span', { cls: 'hv-swatch', attrs: { style: `background:${swatchColor}` } }),
-      el('span', { cls: 'hv-chip-emoji', text: emoji }),
-      num,
-    ],
-  });
-  return { chip, num };
-};
 
 const buildRing = (): void => {
   const svg = document.createElementNS(SVG_NS, 'svg');
@@ -149,65 +146,116 @@ const buildRing = (): void => {
 };
 
 const buildTopBar = (): HTMLElement => {
-  const coins = buildChip('var(--straw)', '🪙');
-  coinsChip = coins.chip;
-  coinsNum = coins.num;
-  const supplies = buildChip('var(--leaf)', '🌿');
-  suppliesChip = supplies.chip;
-  suppliesNum = supplies.num;
+  coinsNum = el('span', { cls: 'hv-chip-num', text: '0' });
+  coinsChip = el('button', {
+    cls: 'hv-chip',
+    attrs: { type: 'button', title: 'Coins — tap for your goods' },
+    children: [iconEl('icon-coin', 16), coinsNum],
+    on: { click: () => toggleWallet() },
+  });
 
   buildRing();
 
-  festEmoji = el('span', { cls: 'hv-chip-emoji', text: '🪙' });
+  weatherIcon = iconEl('icon-star', 15);
+  weatherLabel = el('span', { cls: 'hv-fest-label', text: 'Sunny' });
+  weatherChip = el('div', {
+    cls: 'hv-fest',
+    attrs: { title: 'Today’s weather' },
+    children: [weatherIcon, weatherLabel],
+  });
+
+  festIcon = iconEl('icon-coin', 15);
   festLabel = el('span', { cls: 'hv-fest-label', text: 'Festival' });
   festChip = el('div', {
     cls: 'hv-fest',
     attrs: { title: 'Today’s festival' },
-    children: [festEmoji, festLabel],
+    children: [festIcon, festLabel],
   });
 
   signinPill = el('button', {
     cls: 'hv-signin-pill',
     attrs: { type: 'button' },
-    text: '👋 Sign in to start building',
+    children: [iconEl('icon-home', 15), el('span', { text: 'Sign in to build' })],
     on: { click: () => promptLogin() },
   });
 
   return el('div', {
     cls: 'hv-topbar',
-    children: [coinsChip, suppliesChip, ring, festChip, signinPill],
+    children: [coinsChip, ring, weatherChip, festChip, signinPill],
   });
+};
+
+// ── Wallet drawer ────────────────────────────────────────────────────────────
+
+const buildWalletDrawer = (): HTMLElement => {
+  walletDrawer = el('div', { cls: 'hv-wallet' });
+  for (const good of GOODS) {
+    const count = el('span', { cls: 'hv-wallet-count', text: '0' });
+    walletCounts.set(good, count);
+    const row = el('button', {
+      cls: 'hv-wallet-row',
+      attrs: { type: 'button' },
+      children: [
+        goodIcon(good, 24),
+        el('div', {
+          cls: 'hv-wallet-main',
+          children: [
+            el('span', { cls: 'hv-wallet-name', text: GOOD_LABEL[good] }),
+            count,
+          ],
+        }),
+      ],
+      on: {
+        click: () => {
+          setWallet(false);
+          openMarketSheet(good);
+        },
+      },
+    });
+    walletDrawer.appendChild(row);
+  }
+  return walletDrawer;
+};
+
+const setWallet = (open: boolean): void => {
+  walletOpen = open;
+  walletDrawer.classList.toggle('is-open', open);
+};
+
+const toggleWallet = (): void => {
+  if (!store.data?.me) {
+    promptLogin();
+    return;
+  }
+  setWallet(!walletOpen);
 };
 
 // ── FAB stack ────────────────────────────────────────────────────────────────
 
 const buildFab = (
-  emoji: string,
+  icon: HTMLElement,
   caption: string,
   primary: boolean
 ): HTMLButtonElement => {
   return el('button', {
     cls: `hv-fab${primary ? ' hv-primary' : ''}`,
     attrs: { type: 'button' },
-    children: [
-      el('span', { cls: 'hv-fab-emoji', text: emoji }),
-      el('span', { cls: 'hv-fab-cap', text: caption }),
-    ],
+    children: [icon, el('span', { cls: 'hv-fab-cap', text: caption })],
   });
 };
 
 const buildFabs = (): HTMLElement => {
-  collectFab = buildFab('🧺', 'Collect', true);
+  collectFab = buildFab(iconEl('icon-cart', 24), 'Collect', true);
   collectBadge = el('span', { cls: 'hv-fab-badge' });
   collectFab.appendChild(collectBadge);
   collectFab.addEventListener('click', doCollectAll);
 
-  checkinFab = buildFab('🔥', 'Check in', false);
+  checkinFab = buildFab(iconEl('icon-streak', 24), 'Check in', false);
   checkinStreak = el('span', { cls: 'hv-streak' });
   checkinFab.appendChild(checkinStreak);
   checkinFab.addEventListener('click', doCheckin);
 
-  const menuFab = buildFab('☰', 'Menu', false);
+  const menuFab = buildFab(iconEl('icon-gear', 24), 'Menu', false);
   menuFab.addEventListener('click', () => openMenuSheet());
 
   return el('div', {
@@ -226,7 +274,7 @@ const doCollectAll = (): void => {
       const tiles = Object.entries(res.tiles).map(([key, tile]) => ({ key, tile }));
       store.applyMutation({ tiles, me: res.me });
       const got = res.gained.coins + goodsTotal(res.gained.goods);
-      if (got > 0) toast(`Collected +${fmtInt(got)} 🪙🌿`, 'gain');
+      if (got > 0) toast(`Collected +${fmtInt(got)}`, 'gain');
     })
     .catch((err: unknown) =>
       notifyError(err instanceof Error ? err.message : 'Could not collect.')
@@ -245,7 +293,7 @@ const doCheckin = (): void => {
     .checkin()
     .then((res) => {
       store.applyMutation({ me: res.me });
-      toast(`Checked in! 🔥${res.me.streak} — +${fmtInt(res.gained.coins)} 🪙`, 'celebrate');
+      toast(`Checked in! Streak ${res.me.streak} — +${fmtInt(res.gained.coins)}`, 'celebrate');
     })
     .catch((err: unknown) =>
       notifyError(err instanceof Error ? err.message : 'Could not check in.')
@@ -261,8 +309,8 @@ const doCheckin = (): void => {
 const buildOnboarding = (): HTMLElement => {
   const dismiss = el('button', {
     cls: 'hv-onboard-dismiss',
-    text: '✕',
     attrs: { type: 'button', 'aria-label': 'Dismiss' },
+    children: [iconEl('icon-cross', 12)],
     on: {
       click: () => {
         onboardDismissed = true;
@@ -274,8 +322,10 @@ const buildOnboarding = (): HTMLElement => {
     cls: 'hv-onboard-card',
     children: [
       dismiss,
-      el('h3', { text: 'Welcome to Hearthvale 🏡' }),
-      el('p', { text: 'Tap any open grass tile to settle your first plot.' }),
+      el('h3', { text: 'Welcome to Hearthvale' }),
+      el('p', {
+        text: 'Tap any open grass tile to settle your first plot — then plant a Wheat Field. The village always needs grain.',
+      }),
       el('div', { cls: 'hv-onboard-arrow', text: '⌄' }),
     ],
   });
@@ -306,36 +356,49 @@ const animateCount = (span: HTMLElement, from: number, to: number): void => {
 
 /** Offer an opt-in "share this milestone to the comments" toast button. */
 const promptShare = (kind: ShareKind, value: number): void => {
-  toastAction('Share it? 💬', 'Share', () => {
+  toastAction('Share it?', 'Share', () => {
     void api
       .share(kind, value)
-      .then(() => toast('Shared to comments! 💬', 'celebrate'))
+      .then(() => toast('Shared to comments!', 'celebrate'))
       .catch((err: unknown) =>
         notifyError(err instanceof Error ? err.message : 'Could not share.')
       );
   });
 };
 
+const swapIcon = (slot: HTMLElement, next: HTMLElement): HTMLElement => {
+  slot.replaceWith(next);
+  return next;
+};
+
+const renderWeather = (data: StateResponse): void => {
+  const meta = WEATHER_META[data.weather];
+  weatherIcon = swapIcon(weatherIcon, iconEl(meta.icon, 15));
+  weatherLabel.textContent = meta.label;
+};
+
 const renderFestival = (data: StateResponse): void => {
   const meta = CATEGORY_META[data.city.festival];
-  festEmoji.textContent = meta.emoji;
+  festIcon = swapIcon(festIcon, iconEl(meta.icon, 15));
   festLabel.textContent = meta.label;
   festChip.style.borderColor = meta.color;
 };
 
+const renderWallet = (me: PlayerState): void => {
+  for (const good of GOODS) {
+    const span = walletCounts.get(good);
+    if (span) span.textContent = fmtInt(me.wallet[good]);
+  }
+};
+
 const renderPlayer = (me: PlayerState): void => {
   coinsChip.style.display = '';
-  suppliesChip.style.display = '';
   ring.style.display = '';
   signinPill.style.display = 'none';
 
-  // TODO(V4): the supplies chip is a v1 stopgap showing a flat wallet total;
-  // V4 replaces it with a per-good wallet drawer.
-  const walletTotal = goodsTotal(me.wallet);
   animateCount(coinsNum, lastCoins, me.coins);
-  animateCount(suppliesNum, lastSupplies, walletTotal);
   lastCoins = me.coins;
-  lastSupplies = walletTotal;
+  renderWallet(me);
 
   const cur = xpFor(me.level);
   const next = xpFor(me.level + 1);
@@ -348,7 +411,7 @@ const renderPlayer = (me: PlayerState): void => {
   if (prevLevel !== null && me.level > prevLevel) {
     const unlocked = PLOT_LEVELS.includes(me.level);
     toast(
-      `Level ${me.level}!${unlocked ? ' New plot unlocked 🎉' : ' 🎉'}`,
+      `Level ${me.level}!${unlocked ? ' New plot unlocked' : ''}`,
       'celebrate'
     );
     if (me.level >= 2) promptShare('levelup', me.level);
@@ -358,9 +421,9 @@ const renderPlayer = (me: PlayerState): void => {
 
 const renderLoggedOut = (): void => {
   coinsChip.style.display = 'none';
-  suppliesChip.style.display = 'none';
   ring.style.display = 'none';
   signinPill.style.display = '';
+  setWallet(false);
 };
 
 const renderFabs = (data: StateResponse, me: PlayerState | null): void => {
@@ -395,6 +458,7 @@ const renderHud = (): void => {
   if (!data) return;
   const me = data.me;
 
+  renderWeather(data);
   renderFestival(data);
   if (me) renderPlayer(me);
   else renderLoggedOut();

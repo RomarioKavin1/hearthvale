@@ -120,7 +120,6 @@ const isVillageMessage = (v: JsonValue): v is VillageMessage => {
       );
     case 'stage':
       return typeof v.stage === 'number';
-    // TODO(V4): market prices/stockpile drive the HUD board, not the scene.
     case 'market':
       return isRecord(v.prices) && isRecord(v.stockpile);
     case 'ring':
@@ -905,6 +904,10 @@ export class Village extends Scene {
         store.setFestival(msg.festival);
         break;
       }
+      case 'market': {
+        store.patchMarket(msg.prices, msg.stockpile);
+        break;
+      }
       case 'ring': {
         this.onRingUnlock(msg.bounds.lo, msg.bounds.hi);
         break;
@@ -949,6 +952,9 @@ export class Village extends Scene {
       }
     }
     if (fresh.length === 0) return;
+
+    // Only celebrate genuine growth (skip the initial paint from -1/-1 bounds).
+    if (old.lo !== -1) toast('New land unlocked!', 'celebrate');
 
     // Gentle zoom-out to reveal the bigger village.
     const cam = this.cameras.main;

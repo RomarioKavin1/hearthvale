@@ -185,7 +185,9 @@ export const accrue = (
 // Adjacency.
 // ---------------------------------------------------------------------------
 
-const CHAIN_PAIRS: Array<[BuildingId, BuildingId]> = [
+/** Building pairs whose orthogonal adjacency grants +0.25 to each (the chain
+ * synergy the tile sheet surfaces as a "+25% next to X" hint). */
+export const CHAIN_PAIRS: Array<[BuildingId, BuildingId]> = [
   ['wheatfield', 'windmill'],
   ['windmill', 'bakery'],
   ['grove', 'sawmill'],

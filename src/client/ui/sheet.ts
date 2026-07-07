@@ -4,6 +4,7 @@ import {
   clearNode,
   clearPending,
   el,
+  iconEl,
   isPending,
   markPending,
   notifyError,
@@ -87,8 +88,8 @@ export const mountSheetRoot = (parent: HTMLElement): void => {
   titleEl = el('h2', { cls: 'hv-sheet-title' });
   const close = el('button', {
     cls: 'hv-sheet-close',
-    text: '✕',
     attrs: { type: 'button', 'aria-label': 'Close' },
+    children: [iconEl('icon-cross', 14)],
     on: { click: () => closeSheet() },
   });
   const head = el('div', { cls: 'hv-sheet-head', children: [titleEl, close] });
