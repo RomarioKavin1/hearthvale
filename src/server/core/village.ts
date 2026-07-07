@@ -627,7 +627,7 @@ export const doCollect = async (
 
 export const doCollectAll = async (
   userId: string
-): Promise<{ tiles: TileState[]; me: PlayerState; gained: Gained }> => {
+): Promise<{ tiles: Record<string, TileState>; me: PlayerState; gained: Gained }> => {
   const [grid, initial, city] = await Promise.all([
     getGrid(),
     ensurePlayer(userId),
@@ -671,7 +671,12 @@ export const doCollectAll = async (
     await broadcastTile(key, tile);
   }
 
-  return { tiles: changed.map((c) => c.tile), me, gained: total };
+  const tiles: Record<string, TileState> = {};
+  for (const { key, tile } of changed) {
+    tiles[key] = tile;
+  }
+
+  return { tiles, me, gained: total };
 };
 
 export const loadSummary = async (

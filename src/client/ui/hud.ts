@@ -219,12 +219,11 @@ const doCollectAll = (): void => {
   renderHud();
   void api
     .collectAll()
-    .then(async (res) => {
-      store.applyMutation({ me: res.me });
+    .then((res) => {
+      const tiles = Object.entries(res.tiles).map(([key, tile]) => ({ key, tile }));
+      store.applyMutation({ tiles, me: res.me });
       const got = res.gained.coins + res.gained.supplies;
       if (got > 0) toast(`Collected +${fmtInt(got)} 🪙🌿`, 'gain');
-      // Returned tiles carry no keys, so resync the grid to clear ready pips.
-      await store.refresh();
     })
     .catch((err: unknown) =>
       notifyError(err instanceof Error ? err.message : 'Could not collect.')

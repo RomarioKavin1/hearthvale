@@ -22,7 +22,7 @@ import type {
 export type TileResult = { tile: TileState; me: PlayerState };
 export type CollectResult = { tile: TileState; me: PlayerState; gained: Gained };
 export type CollectAllResult = {
-  tiles: TileState[];
+  tiles: Record<string, TileState>;
   me: PlayerState;
   gained: Gained;
 };
