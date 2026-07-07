@@ -4,12 +4,22 @@
 // alpha/colour footprint of every sprite — see .superpowers/sdd/task-v3-report.md):
 //   • a full block's TOP-FACE diamond centre sits at image row 95 (the widest
 //     opaque row); the diamond is ~2:1 and ~62 px tall (top vertex ≈ row 64).
-//   • every roof PNG's own base "footprint" diamond centre sits at image row 140.
+//   • every "rests on a surface" sprite (roofs, trees, rocks, crops, well) has its
+//     resting footprint centred at image row ≈ 140 — one block-height step (45 px)
+//     below the top-face row.
 // So anchoring a block at origin (0.5, 95/176) and placing it at the iso
 // projection point (sx, sy) drops the tile's top-face centre exactly on (sx, sy);
 // neighbours then tessellate on the decreed pitch TILE_W=128 / TILE_H=64
-// (sx=(x−y)·64, sy=(x+y)·32). A roof lifted by ROOF_DY = −(140−95) = −45 lands its
-// footprint on the base's top face.
+// (sx=(x−y)·64, sy=(x+y)·32).
+//
+// CRITICAL (playtest-confirmed): anything sitting ON a terrain tile — building
+// base blocks, castle blocks, scaffolds, decor objects, crops — must be lifted a
+// full block-height step (BASE_DY = −45) or its walls render inside the terrain
+// block and get overdrawn by the front-neighbour ground tiles (only the roof
+// poking above ground level stays visible). Roofs then stack at BASE_DY + ROOF_DY
+// (= −90 from the ground anchor); castle tower caps at BASE_DY + CASTLE_TOP_DY.
+// Verified with the off-Phaser compositing harness (base at 0 reproduces the
+// roof-only bug; −45 shows walls flush between grass top and roof).
 
 import type { GameObjects, Scene } from 'phaser';
 import type { SpriteKey } from './manifest';
@@ -32,24 +42,41 @@ export const BLOCK_TOP_CENTER_Y = 95;
 /** Origin.y that puts the top-face centre on the placement point. */
 export const BLOCK_ORIGIN_Y = BLOCK_TOP_CENTER_Y / IMG_H; // ≈ 0.5398
 
-/** Image row of a roof PNG's own footprint diamond centre. */
-export const ROOF_FOOTPRINT_Y = 140;
-/** Lift a roof so its footprint aligns with the base block's top face. */
-export const ROOF_DY = -(ROOF_FOOTPRINT_Y - BLOCK_TOP_CENTER_Y); // −45
+/** Image row where a sits-on-surface sprite's footprint rests (roofs, trees,
+ * rocks, crops, well — all ≈ 140). */
+export const REST_ROW_Y = 140;
 
-/** Nest a castle tower-top cap into the tower's crenellation ring. */
+/** One block-height step: lift for ANYTHING sitting on a terrain tile (building
+ * bases, castle blocks, scaffolds, decor objects, crops). Without this lift the
+ * piece renders inside the terrain block and front-neighbour ground overdraws it. */
+export const BASE_DY = -(REST_ROW_Y - BLOCK_TOP_CENTER_Y); // −45
+
+/** Roof offset relative to the BASE it caps (not the ground anchor). A roof over
+ * a lifted base therefore renders at BASE_DY + ROOF_DY = −90 from the ground. */
+export const ROOF_DY = BASE_DY; // −45 (same one-block step)
+
+/** Tower-top cap offset relative to the castle tower it caps (nests into the
+ * crenellation ring). From the ground anchor: BASE_DY + CASTLE_TOP_DY = −70. */
 export const CASTLE_TOP_DY = -25;
 
-/**
- * Standing objects (trees / rocks / well / crops) are bottom-anchored; this drops
- * their base onto the tile's top-face so they read as "planted". Tuned in ArtDebug.
- */
-export const OBJECT_FOOT_DY = 8;
+/** Locked land renders only this many tiles beyond the unlocked ring; deeper
+ * locked tiles are left as background void. */
+export const LOCKED_BAND = 2;
 
-/** Plaza path ring lives on the border of the [6,11]² square (one tile out from
- * the [7,10]² plaza block). */
-export const PATH_LO = 6;
-export const PATH_HI = 11;
+/** Tint + alpha for the locked-band grass (heavy dark desaturation). */
+export const LOCKED_TINT = 0x3a3550;
+export const LOCKED_ALPHA = 0.4;
+
+/** Path ring: the 12 tiles on the border of [7,10]² immediately surrounding the
+ * keep pad [8,9]² (shrunk from the v1 [6,11] ring — playtest: the old 36-tile
+ * dirt centre read as an orange pit, not a village green). */
+export const PATH_LO = 7;
+export const PATH_HI = 10;
+
+/** The keep pad: only these 2×2 tiles render as dirt. The rest of the shared
+ * `isPlaza` [7,10]² footprint renders as grass but stays unclaimable. */
+export const isKeepPad = (x: number, y: number): boolean =>
+  x >= 8 && x <= 9 && y >= 8 && y <= 9;
 
 // ── Placement helpers (shared by Village + ArtDebug) ────────────────────────
 
@@ -63,26 +90,14 @@ export const addBlock = (
 ): GameObjects.Image =>
   scene.add.image(sx, sy + dy, key).setOrigin(0.5, BLOCK_ORIGIN_Y);
 
-/** Place a standing object sprite: bottom-centre anchored onto the tile face. */
-export const addObject = (
+/** Place anything resting ON a tile's top face (decor object, crop, rock pile):
+ * block-anchored and lifted one block step so it stands on the surface. */
+export const addSurface = (
   scene: Scene,
   key: SpriteKey,
   sx: number,
-  sy: number,
-  dy = OBJECT_FOOT_DY
-): GameObjects.Image =>
-  scene.add.image(sx, sy + dy, key).setOrigin(0.5, 1);
-
-/** Sprites that carry a full block footprint even inside a `flat` composition,
- * so they must be block-anchored (not bottom-anchored) when stacked. */
-const BLOCK_FOOTPRINT_KEYS: ReadonlySet<SpriteKey> = new Set<SpriteKey>([
-  'structure-low',
-  'structure-high',
-  'structure-arch',
-]);
-
-export const isBlockFootprint = (key: SpriteKey): boolean =>
-  BLOCK_FOOTPRINT_KEYS.has(key);
+  sy: number
+): GameObjects.Image => addBlock(scene, key, sx, sy, BASE_DY);
 
 // ── Ground routing ──────────────────────────────────────────────────────────
 

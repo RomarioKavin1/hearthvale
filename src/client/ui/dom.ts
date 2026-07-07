@@ -452,7 +452,8 @@ const CSS = `
   gap: 5px;
   height: 34px;
   padding: 0 10px;
-  border: 3px solid var(--ink);
+  background: var(--cream);
+  border: 2px solid var(--ink);
   border-radius: 6px;
   font-weight: 700;
   font-size: 12px;
@@ -460,7 +461,8 @@ const CSS = `
   color: var(--ink);
   box-shadow: 0 2px 0 rgba(59,51,71,0.35);
 }
-.hv-fest .hv-fest-label { opacity: 0.85; font-weight: 800; }
+.hv-fest .hv-fest-label { font-weight: 800; }
+.hv-fest .hv-icon-mask { color: var(--accent); }
 
 .hv-signin-pill {
   pointer-events: auto;

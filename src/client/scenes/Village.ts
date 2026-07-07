@@ -27,13 +27,17 @@ import { BUILDING_ART } from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
-  addObject,
+  addSurface,
+  BASE_DY,
   BG,
   castleParts,
   CASTLE_TOP_DY,
   decorSprinkle,
-  isBlockFootprint,
+  isKeepPad,
   isPathRing,
+  LOCKED_ALPHA,
+  LOCKED_BAND,
+  LOCKED_TINT,
   pathPiece,
   riverPiece,
   ROOF_DY,
@@ -300,10 +304,12 @@ export class Village extends Scene {
     }
   }
 
-  /** Paint (or repaint) one ground tile per the current ring + routing rules. */
-  private paintGround(x: number, y: number): Phaser.GameObjects.Image {
+  /** Paint (or repaint) one ground tile per the current ring + routing rules.
+   * Returns undefined for deep-locked tiles, which render as background void. */
+  private paintGround(x: number, y: number): Phaser.GameObjects.Image | undefined {
     const key = tileKey(x, y);
     this.groundImgs.get(key)?.destroy();
+    this.groundImgs.delete(key);
     this.decorImgs.get(key)?.destroy();
     this.decorImgs.delete(key);
 
@@ -311,25 +317,36 @@ export class Village extends Scene {
     let img: Phaser.GameObjects.Image;
 
     if (!this.isUnlockedTile(x, y)) {
-      // Locked land: sunken dirt block, dimmed + darkened, no interactivity.
-      img = addBlock(this, 'dirt-low', sx, sy).setAlpha(0.55).setTint(0x8a7f95);
+      // Locked land: a soft desaturated grass band just beyond the ring; deeper
+      // locked tiles are not rendered at all (background void). Not interactive.
+      const { lo, hi } = this.ringLoHi();
+      const inBand =
+        x >= lo - LOCKED_BAND &&
+        x <= hi + LOCKED_BAND &&
+        y >= lo - LOCKED_BAND &&
+        y <= hi + LOCKED_BAND;
+      if (!inBand) return undefined;
+      img = addBlock(this, 'grass-center', sx, sy)
+        .setAlpha(LOCKED_ALPHA)
+        .setTint(LOCKED_TINT);
     } else if (isRiver(x, y)) {
       const p = riverPiece(x, y);
       img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
-    } else if (isPlaza(x, y)) {
+    } else if (isKeepPad(x, y)) {
+      // Dirt only under the keep 2×2 — the rest of the plaza square is grass.
       img = addBlock(this, 'dirt-center', sx, sy);
     } else if (isPathRing(x, y)) {
       const p = pathPiece(x, y);
       img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
     } else {
       img = addBlock(this, 'grass-center', sx, sy);
-      // Sparse deterministic decor on currently-unowned open tiles.
-      if (store.data?.grid[key] === undefined) {
+      // Sparse deterministic decor on unowned, non-plaza open tiles.
+      if (store.data?.grid[key] === undefined && !isPlaza(x, y)) {
         const d = decorSprinkle(x, y);
         if (d) {
           this.decorImgs.set(
             key,
-            addObject(this, d, sx, sy).setDepth(sy + 0.5)
+            addSurface(this, d, sx, sy).setDepth(sy + 0.5)
           );
         }
       }
@@ -353,8 +370,8 @@ export class Village extends Scene {
     for (const part of castleParts(stage)) {
       const { sx, sy } = isoToScreen(part.x, part.y, TILE_W, TILE_H);
       const img = part.roof
-        ? addBlock(this, part.key, sx, sy, CASTLE_TOP_DY)
-        : addBlock(this, part.key, sx, sy);
+        ? addBlock(this, part.key, sx, sy, BASE_DY + CASTLE_TOP_DY)
+        : addBlock(this, part.key, sx, sy, BASE_DY);
       img.setDepth(sy + (part.roof ? 2 : 1));
       this.landmarkParts.push(img);
     }
@@ -429,7 +446,7 @@ export class Village extends Scene {
         this.buildBuilding(view, tile, x, y, sx, sy, constructing);
       } else {
         // Claimed but empty — a small staked fence marker.
-        view.claim = addObject(this, 'fence-wood', sx, sy)
+        view.claim = addSurface(this, 'fence-wood', sx, sy)
           .setDepth(sy + 0.5)
           .setAlpha(0.9);
       }
@@ -469,14 +486,16 @@ export class Village extends Scene {
     constructing: boolean
   ): void {
     if (constructing || tile.buildingId === undefined) {
-      const scaffold = addBlock(this, 'structure-low', sx, sy).setDepth(sy + 1);
+      const scaffold = addBlock(this, 'structure-low', sx, sy, BASE_DY).setDepth(
+        sy + 1
+      );
       view.primary = scaffold;
       view.parts.push(scaffold);
       view.barBg = this.add
-        .rectangle(sx, sy - TILE_H, BAR_W + 2, BAR_H + 2, C_INK)
+        .rectangle(sx, sy - TILE_H * 1.5, BAR_W + 2, BAR_H + 2, C_INK)
         .setDepth(sy + 3);
       view.bar = this.add
-        .rectangle(sx - BAR_W / 2, sy - TILE_H, BAR_W, BAR_H, C_GLOW)
+        .rectangle(sx - BAR_W / 2, sy - TILE_H * 1.5, BAR_W, BAR_H, C_GLOW)
         .setOrigin(0, 0.5)
         .setDepth(sy + 4);
       return;
@@ -484,14 +503,19 @@ export class Village extends Scene {
 
     const art = BUILDING_ART[tile.buildingId];
     if (art.kind === 'stacked') {
-      const base = addBlock(this, art.base, sx, sy).setDepth(sy + 1);
-      const roof = addBlock(this, art.roofByTier[tile.tier], sx, sy, ROOF_DY).setDepth(
-        sy + 2
-      );
+      // Base lifted one block step onto the tile face; roof one more step up.
+      const base = addBlock(this, art.base, sx, sy, BASE_DY).setDepth(sy + 1);
+      const roof = addBlock(
+        this,
+        art.roofByTier[tile.tier],
+        sx,
+        sy,
+        BASE_DY + ROOF_DY
+      ).setDepth(sy + 2);
       if (tile.cosmetic === 'golden-roof') {
         roof.setTint(GOLD);
         view.goldPip = this.add
-          .image(sx, sy - TILE_H * 1.4, 'icon-star')
+          .image(sx, sy - TILE_H * 2.1, 'icon-star')
           .setScale(0.18)
           .setTint(C_GLOW)
           .setDepth(sy + 3);
@@ -520,9 +544,7 @@ export class Village extends Scene {
     }
     let d = sy + 1;
     for (const k of keys) {
-      const img = isBlockFootprint(k)
-        ? addBlock(this, k, sx, sy)
-        : addObject(this, k, sx, sy);
+      const img = addSurface(this, k, sx, sy);
       img.setDepth(d);
       d += 0.1;
       view.parts.push(img);
@@ -615,7 +637,7 @@ export class Village extends Scene {
         ready = gained.coins + goodsTotal(gained.goods) > 0;
       }
       if (ready && !view.pip) {
-        view.pip = this.spawnPip(sx, sy - TILE_H * 0.95, 'icon-coin', C_GLOW);
+        view.pip = this.spawnPip(sx, sy - TILE_H * 1.7, 'icon-coin', C_GLOW);
       } else if (!ready && view.pip) {
         this.tweens.killTweensOf(view.pip);
         view.pip.destroy();
@@ -625,7 +647,7 @@ export class Village extends Scene {
       // Boost pip (any boosted tile shows an up-arrow).
       const boosted = tile.boostUntil > now && tile.buildingId !== undefined;
       if (boosted && !view.boostPip) {
-        view.boostPip = this.spawnPip(sx, sy - TILE_H * 1.25, 'icon-arrow-up', C_ACCENT);
+        view.boostPip = this.spawnPip(sx, sy - TILE_H * 2.0, 'icon-arrow-up', C_ACCENT);
       } else if (!boosted && view.boostPip) {
         this.tweens.killTweensOf(view.boostPip);
         view.boostPip.destroy();
@@ -948,13 +970,37 @@ export class Village extends Scene {
     if (lo === old.lo && hi === old.hi) return;
     this.paintedRing = { lo, hi };
 
-    // Tiles whose locked/unlocked membership changed (normally only growth).
+    // Visual state per tile: unlocked (2) / locked band (1) / void (0). Repaint
+    // every tile whose state changed; animate only freshly-unlocked ones.
+    const state = (
+      x: number,
+      y: number,
+      b: { lo: number; hi: number }
+    ): number => {
+      if (x >= b.lo && x <= b.hi && y >= b.lo && y <= b.hi) return 2;
+      if (
+        b.lo !== -1 &&
+        x >= b.lo - LOCKED_BAND &&
+        x <= b.hi + LOCKED_BAND &&
+        y >= b.lo - LOCKED_BAND &&
+        y <= b.hi + LOCKED_BAND
+      ) {
+        return 1;
+      }
+      return 0;
+    };
+
     const fresh: Array<{ x: number; y: number }> = [];
+    const now = { lo, hi };
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
-        const isIn = x >= lo && x <= hi && y >= lo && y <= hi;
-        const wasIn = x >= old.lo && x <= old.hi && y >= old.lo && y <= old.hi;
-        if (isIn !== wasIn) fresh.push({ x, y });
+        const s = state(x, y, now);
+        if (s === state(x, y, old)) continue;
+        if (s === 2) {
+          fresh.push({ x, y });
+        } else {
+          this.paintGround(x, y); // band appears / void clears, no fanfare
+        }
       }
     }
     if (fresh.length === 0) return;
@@ -971,10 +1017,11 @@ export class Village extends Scene {
       ease: 'Sine.inOut',
     });
 
-    // Staggered pop-in of the changed terrain.
+    // Staggered pop-in of the freshly-unlocked terrain.
     fresh.forEach((t, i) => {
       this.time.delayedCall(i * 20, () => {
         const img = this.paintGround(t.x, t.y);
+        if (!img) return;
         img.setScale(0);
         this.tweens.add({
           targets: img,

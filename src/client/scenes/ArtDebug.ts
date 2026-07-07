@@ -5,11 +5,13 @@ import { BUILDING_ART, SPRITES } from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
-  addObject,
+  addSurface,
+  BASE_DY,
   BG,
   castleParts,
   CASTLE_TOP_DY,
-  isBlockFootprint,
+  LOCKED_ALPHA,
+  LOCKED_TINT,
   ROOF_DY,
   TILE_H,
 } from '../art/render';
@@ -67,13 +69,12 @@ export class ArtDebug extends Scene {
     this.ground(cx, cy);
     const art = BUILDING_ART[id];
     if (art.kind === 'stacked') {
-      addBlock(this, art.base, cx, cy).setDepth(cy + 1);
-      addBlock(this, art.roofByTier[tier], cx, cy, ROOF_DY).setDepth(cy + 2);
+      addBlock(this, art.base, cx, cy, BASE_DY).setDepth(cy + 1);
+      addBlock(this, art.roofByTier[tier], cx, cy, BASE_DY + ROOF_DY).setDepth(cy + 2);
     } else {
       let d = cy + 1;
       for (const k of art.byTier[tier]) {
-        if (isBlockFootprint(k)) addBlock(this, k, cx, cy).setDepth(d);
-        else addObject(this, k, cx, cy).setDepth(d);
+        addSurface(this, k, cx, cy).setDepth(d);
         d += 0.1;
       }
     }
@@ -85,7 +86,9 @@ export class ArtDebug extends Scene {
 
   create(): void {
     const COL = 128;
-    const ROW = 150;
+    // Compositions are now a full block-step taller (BASE_DY lift), so rows
+    // need extra breathing room to avoid overlap.
+    const ROW = 200;
     let y = 40;
 
     this.label(16, y - 24, 'HEARTHVALE ART DEBUG — Sketch Town diorama renderer', 15);
@@ -95,7 +98,7 @@ export class ArtDebug extends Scene {
     const terrain: Array<[string, SpriteKey, boolean]> = [
       ['grass', 'grass-center', false],
       ['dirt', 'dirt-center', false],
-      ['locked', 'dirt-low', false],
+      ['locked', 'grass-center', false],
       ['path', 'grass-path', false],
       ['path/flip', 'grass-path', true],
       ['cross', 'grass-path-crossing', false],
@@ -105,8 +108,11 @@ export class ArtDebug extends Scene {
     ];
     terrain.forEach(([name, key, flip], i) => {
       const cx = 90 + i * COL;
-      if (key === 'dirt-low') {
-        addBlock(this, key, cx, y + 60).setDepth(y).setAlpha(0.55).setTint(0x8a7f95);
+      if (name === 'locked') {
+        addBlock(this, key, cx, y + 60)
+          .setDepth(y)
+          .setAlpha(LOCKED_ALPHA)
+          .setTint(LOCKED_TINT);
       } else {
         this.tile(key, cx, y + 60, flip);
       }
@@ -128,21 +134,23 @@ export class ArtDebug extends Scene {
     // Wheatfield growth states + construction scaffold + golden roof.
     this.label(16, y + 40, 'states', 12);
     this.ground(150, y + 60);
-    addObject(this, 'furrow-crop', 150, y + 60).setDepth(y + 61);
+    addSurface(this, 'furrow-crop', 150, y + 60).setDepth(y + 61);
     this.label(120, y + 100, 'growing', 10);
     this.ground(150 + COL, y + 60);
-    addObject(this, 'furrow-crop-wheat', 150 + COL, y + 60).setDepth(y + 61);
+    addSurface(this, 'furrow-crop-wheat', 150 + COL, y + 60).setDepth(y + 61);
     this.label(120 + COL, y + 100, 'ripe', 10);
     this.ground(150 + 2 * COL, y + 60);
-    addBlock(this, 'structure-low', 150 + 2 * COL, y + 60).setDepth(y + 61);
+    addBlock(this, 'structure-low', 150 + 2 * COL, y + 60, BASE_DY).setDepth(y + 61);
     this.label(120 + 2 * COL, y + 100, 'building', 10);
     // Golden-roof cottage.
     const gx = 150 + 3 * COL;
     this.ground(gx, y + 60);
-    addBlock(this, 'building-door', gx, y + 60).setDepth(y + 61);
-    addBlock(this, 'roof-gable-brown', gx, y + 60, ROOF_DY).setDepth(y + 62).setTint(0xffd700);
+    addBlock(this, 'building-door', gx, y + 60, BASE_DY).setDepth(y + 61);
+    addBlock(this, 'roof-gable-brown', gx, y + 60, BASE_DY + ROOF_DY)
+      .setDepth(y + 62)
+      .setTint(0xffd700);
     this.label(gx - 30, y + 100, 'golden-roof', 10);
-    y += ROW;
+    y += ROW + 45;
 
     // Grand Keep stages 0..5 — composed on the 2×2 footprint, offset per cell.
     this.label(16, y + 40, 'keep stages 0..5', 12);
@@ -164,8 +172,11 @@ export class ArtDebug extends Scene {
         const ly = (part.x - 8) + (part.y - 8);
         const px = ox + lx * TILE_H;
         const py = oy + ly * (TILE_H / 2);
-        if (part.roof) addBlock(this, part.key, px, py, CASTLE_TOP_DY).setDepth(py + 2);
-        else addBlock(this, part.key, px, py).setDepth(py + 1);
+        if (part.roof) {
+          addBlock(this, part.key, px, py, BASE_DY + CASTLE_TOP_DY).setDepth(py + 2);
+        } else {
+          addBlock(this, part.key, px, py, BASE_DY).setDepth(py + 1);
+        }
       }
       this.label(ox - 6, y + 150, `${stage}`, 11);
     }
