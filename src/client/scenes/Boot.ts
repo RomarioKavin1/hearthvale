@@ -1,15 +1,13 @@
 import { Scene } from 'phaser';
 
+/**
+ * The village renders entirely from runtime-generated pixel textures (see
+ * `src/client/art`), so there are no external assets to preload here. Boot
+ * simply hands off to the Preloader, which registers those textures.
+ */
 export class Boot extends Scene {
   constructor() {
     super('Boot');
-  }
-
-  preload() {
-    //  The Boot Scene is typically used to load in any assets you require for your Preloader, such as a game logo or background.
-    //  The smaller the file size of the assets, the better, as the Boot Scene itself has no preloader.
-
-    this.load.image('background', '../assets/bg.png');
   }
 
   create() {
