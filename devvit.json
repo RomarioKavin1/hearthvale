@@ -1,6 +1,22 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "<% name %>",
+  "name": "hearthvale",
+  "permissions": {
+    "redis": true,
+    "realtime": true,
+    "reddit": {
+      "enable": true,
+      "asUser": ["SUBMIT_COMMENT"]
+    }
+  },
+  "scheduler": {
+    "tasks": {
+      "daily-cycle": {
+        "endpoint": "/internal/scheduler/daily-cycle",
+        "cron": "0 12 * * *"
+      }
+    }
+  },
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -21,22 +37,12 @@
     "items": [
       {
         "label": "Create a new post",
-        "description": "<% name %>",
+        "description": "hearthvale",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
-      },
-      {
-        "label": "Example form",
-        "description": "Show a simple form",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/example-form"
       }
     ]
-  },
-  "forms": {
-    "exampleForm": "/internal/form/example-submit"
   },
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install"
