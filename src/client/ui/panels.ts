@@ -147,7 +147,21 @@ const renderClaim = (
 
   const stack = el('div', { cls: 'hv-stack' });
   stack.appendChild(el('p', { cls: 'hv-note', text: 'A patch of open grass, waiting for a home.' }));
-  stack.appendChild(line('Plots used', `${owned} / ${max}`));
+  stack.appendChild(
+    el('div', {
+      cls: 'hv-callout hv-plots',
+      children: [
+        iconEl('icon-home', 22),
+        el('span', {
+          cls: 'hv-plots-count',
+          children: [
+            el('b', { text: `${owned} / ${max}` }),
+            el('span', { cls: 'hv-plots-label', text: 'plots settled' }),
+          ],
+        }),
+      ],
+    })
+  );
 
   const btn = el('button', {
     cls: 'hv-btn',

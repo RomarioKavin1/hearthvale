@@ -343,6 +343,13 @@ export const injectStyles = (): void => {
 };
 
 const CSS = `
+@font-face {
+  font-family: 'Fredoka';
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('/fonts/fredoka.woff2') format('woff2');
+}
+
 :root {
   --ink: ${PAL.ink};
   --cream: ${PAL.cream};
@@ -369,7 +376,7 @@ const CSS = `
   inset: 0;
   z-index: 10;
   pointer-events: none;
-  font-family: ui-rounded, -apple-system, "Segoe UI Rounded", "Segoe UI", system-ui, sans-serif;
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -388,27 +395,46 @@ const CSS = `
   -webkit-mask-size: contain; mask-size: contain;
 }
 
-/* ── Top bar ─────────────────────────────────────────────── */
+/* ── Top bar (full-width ink bar) ────────────────────────── */
 .hv-topbar {
+  pointer-events: auto;
   position: absolute;
   top: 0; left: 0; right: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: calc(var(--sat) + 8px) calc(var(--sar) + 8px) 8px calc(var(--sal) + 8px);
-  flex-wrap: wrap;
+  min-height: 52px;
+  padding: calc(var(--sat) + 6px) calc(var(--sar) + 10px) 6px calc(var(--sal) + 10px);
+  background: rgba(59,51,71,0.92);
+  border-bottom: 2px solid rgba(255,243,217,0.14);
+  backdrop-filter: blur(3px);
 }
+.hv-tb-left, .hv-tb-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.hv-tb-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .hv-chip {
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 34px;
-  padding: 0 10px;
+  padding: 0 11px;
   background: var(--cream);
-  border: 3px solid var(--ink);
-  border-radius: 6px;
-  box-shadow: 0 2px 0 rgba(59,51,71,0.35);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.28);
   font-weight: 700;
   font-size: 14px;
   letter-spacing: 0.3px;
@@ -418,14 +444,26 @@ const CSS = `
   cursor: pointer;
 }
 .hv-chip:active { transform: translateY(1px); }
-.hv-chip .hv-swatch {
-  width: 12px; height: 12px;
-  border: 2px solid var(--ink);
-  border-radius: 2px;
-  flex: 0 0 auto;
-}
-.hv-chip-emoji { font-size: 15px; }
 .hv-chip-num { font-variant-numeric: tabular-nums; }
+.hv-chip .hv-icon-mask { color: var(--wood-dark); }
+
+.hv-caret {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 34px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--cream);
+  cursor: pointer;
+}
+.hv-caret .hv-icon-mask { color: var(--cream); }
+.hv-caret .hv-icon { transition: transform 180ms ease-out; }
+.hv-caret.is-open .hv-icon { transform: rotate(180deg); }
+.hv-caret:active { transform: translateY(1px); }
 
 .hv-ring {
   pointer-events: auto;
@@ -442,48 +480,54 @@ const CSS = `
   justify-content: center;
   font-size: 13px;
   font-weight: 800;
-  color: var(--ink);
+  color: var(--cream);
 }
 
-.hv-fest {
-  pointer-events: auto;
+/* Weather + festival: cream-on-ink chips that truncate gracefully. */
+.hv-tb-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 34px;
+  min-width: 0;
+  height: 32px;
   padding: 0 10px;
-  background: var(--cream);
-  border: 2px solid var(--ink);
-  border-radius: 6px;
+  background: rgba(255,243,217,0.09);
+  border: 1px solid rgba(255,243,217,0.16);
+  border-radius: 8px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 12.5px;
   letter-spacing: 0.3px;
-  color: var(--ink);
-  box-shadow: 0 2px 0 rgba(59,51,71,0.35);
+  color: var(--cream);
 }
-.hv-fest .hv-fest-label { font-weight: 800; }
-.hv-fest .hv-icon-mask { color: var(--accent); }
+.hv-tb-chip .hv-tb-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hv-tb-chip .hv-icon-mask { color: var(--glow); }
+.hv-tb-chip.hv-tb-fest .hv-icon-mask { color: var(--accent); }
 
 .hv-signin-pill {
   pointer-events: auto;
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 34px;
   padding: 0 14px;
   background: var(--glow);
-  border: 3px solid var(--ink);
-  border-radius: 6px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
   font-weight: 800;
   font-size: 13px;
   letter-spacing: 0.3px;
+  color: var(--ink);
   cursor: pointer;
   box-shadow: 0 3px 0 var(--wood-dark);
 }
+.hv-signin-pill .hv-icon-mask { color: var(--wood-dark); }
 .hv-signin-pill:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark); }
 
-/* ── FAB stack ───────────────────────────────────────────── */
+/* ── FAB rail ─────────────────────────────────────────────── */
 .hv-fabs {
   position: absolute;
   right: calc(var(--sar) + 12px);
@@ -496,7 +540,7 @@ const CSS = `
 .hv-fab {
   pointer-events: auto;
   position: relative;
-  width: 60px; height: 60px;
+  width: 56px; height: 56px;
   min-width: 44px; min-height: 44px;
   display: inline-flex;
   flex-direction: column;
@@ -505,18 +549,25 @@ const CSS = `
   gap: 1px;
   background: var(--cream);
   border: 3px solid var(--ink);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: 0 4px 0 var(--wood-dark);
   cursor: pointer;
   font-weight: 800;
   color: var(--ink);
   letter-spacing: 0.3px;
 }
-.hv-fab .hv-fab-emoji { font-size: 22px; line-height: 1; }
+.hv-fab .hv-icon-mask { color: var(--wood-dark); }
 .hv-fab .hv-fab-cap { font-size: 9px; letter-spacing: 0.2px; }
 .hv-fab.hv-primary { background: var(--glow); }
 .hv-fab:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--wood-dark); }
-.hv-fab[disabled] { opacity: 0.5; cursor: not-allowed; box-shadow: 0 4px 0 var(--wood-dark); transform: none; }
+.hv-fab[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: 0 3px 0 var(--wood-dark); transform: none; }
+.hv-fab.is-checked { background: var(--wall-shade); }
+.hv-fab.is-checked .hv-icon-mask { color: var(--ink); opacity: 0.6; }
+/* Below a short viewport, drop the labels for icon-only FABs. */
+@media (max-height: 399px) {
+  .hv-fab { width: 52px; height: 52px; }
+  .hv-fab .hv-fab-cap { display: none; }
+}
 .hv-fab-badge {
   position: absolute;
   top: -6px; right: -6px;
@@ -546,6 +597,38 @@ const CSS = `
   border-radius: 11px;
   font-size: 11px;
   font-weight: 800;
+}
+/* Market "prices are high" pulsing dot. */
+.hv-fab-pulse {
+  position: absolute;
+  top: -5px; right: -5px;
+  width: 14px; height: 14px;
+  background: var(--red);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+}
+.hv-fab-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 9px;
+  border: 2px solid var(--red);
+  animation: hv-pulse-ring 1.6s ease-out infinite;
+}
+@keyframes hv-pulse-ring {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+/* Tutorial: highlight the Market FAB with a pulsing ring. */
+.hv-fab.is-tut-highlight { box-shadow: 0 4px 0 var(--wood-dark), 0 0 0 3px var(--glow); }
+.hv-fab.is-tut-highlight::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 18px;
+  border: 3px solid var(--glow);
+  animation: hv-pulse-ring 1.5s ease-out infinite;
+  pointer-events: none;
 }
 
 /* ── Sheets ──────────────────────────────────────────────── */
@@ -602,9 +685,10 @@ const CSS = `
   padding: 2px 14px 10px;
 }
 .hv-sheet-title {
-  font-size: 17px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
   margin: 0;
 }
 .hv-sheet-close {
@@ -642,6 +726,7 @@ const CSS = `
   padding: 0 16px;
   background: var(--glow);
   border: 3px solid var(--ink);
+  border-bottom-width: 4px;
   border-radius: 10px;
   box-shadow: 0 4px 0 var(--wood-dark);
   font-size: 15px;
@@ -821,53 +906,74 @@ const CSS = `
 .hv-how-txt { font-size: 13.5px; line-height: 1.4; }
 .hv-how-txt b { display: block; font-size: 14.5px; letter-spacing: 0.3px; }
 
-/* ── Onboarding + login ──────────────────────────────────── */
-.hv-onboard {
+/* ── First-run tutorial (coach-mark card) ────────────────── */
+.hv-tut {
   position: absolute;
-  inset: 0;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  background: radial-gradient(120% 60% at 50% 40%, rgba(46,40,55,0) 30%, rgba(46,40,55,0.6) 100%);
-}
-.hv-onboard-card {
-  margin-top: calc(var(--sat) + 64px);
-  max-width: 300px;
-  padding: 14px 16px;
+  left: 50%;
+  bottom: calc(var(--sab) + 18px);
+  transform: translateX(-50%) translateY(8px);
+  width: min(360px, calc(100vw - 24px));
+  padding: 12px 14px 11px;
   background: var(--cream);
   border: 3px solid var(--ink);
+  border-bottom-width: 4px;
   border-radius: 14px;
-  box-shadow: 0 4px 0 var(--wood-dark);
-  text-align: center;
-  position: relative;
+  box-shadow: 0 5px 0 var(--wood-dark);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease-out, transform 200ms cubic-bezier(0.22,1,0.36,1);
 }
-.hv-onboard-card h3 { margin: 0 0 6px; font-size: 16px; letter-spacing: 0.5px; }
-.hv-onboard-card p { margin: 0; font-size: 13px; line-height: 1.4; }
-.hv-onboard-dismiss {
+.hv-tut.is-in { opacity: 1; transform: translateX(-50%) translateY(0); }
+.hv-tut-head { display: flex; align-items: flex-start; gap: 8px; }
+.hv-tut-title {
+  flex: 1 1 auto;
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  line-height: 1.15;
+}
+.hv-tut-skip {
   pointer-events: auto;
-  position: absolute;
-  top: -10px; right: -10px;
-  width: 30px; height: 30px;
-  border-radius: 15px;
+  flex: 0 0 auto;
+  padding: 3px 9px;
   background: var(--wall);
-  border: 3px solid var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 11.5px;
   font-weight: 800;
-  cursor: pointer;
+  letter-spacing: 0.3px;
   color: var(--ink);
+  cursor: pointer;
 }
-.hv-onboard-arrow {
-  margin-top: 8px;
-  font-size: 34px;
-  color: var(--glow);
-  text-shadow: 0 2px 0 var(--ink);
-  animation: hv-bounce 1s ease-in-out infinite;
+.hv-tut-skip:active { transform: translateY(1px); }
+.hv-tut-body { margin: 6px 0 9px; font-size: 13px; line-height: 1.4; color: var(--ink); }
+.hv-tut-foot { display: flex; align-items: center; gap: 8px; }
+.hv-tut-dots { display: flex; gap: 5px; flex: 1 1 auto; }
+.hv-tut-dot {
+  width: 7px; height: 7px;
+  border-radius: 4px;
+  background: var(--wall-shade);
+  border: 1px solid var(--ink);
 }
-@keyframes hv-bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(10px); }
+.hv-tut-dot.is-on { background: var(--glow); }
+.hv-tut-dot.is-done { background: var(--leaf); }
+.hv-tut-done {
+  pointer-events: auto;
+  padding: 6px 16px;
+  background: var(--glow);
+  border: 2px solid var(--ink);
+  border-bottom-width: 3px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: var(--ink);
+  cursor: pointer;
 }
+.hv-tut-done:active { transform: translateY(1px); }
 
 /* ── Toasts ──────────────────────────────────────────────── */
 .hv-toast-host {
@@ -882,6 +988,11 @@ const CSS = `
   pointer-events: none;
   width: max-content;
   max-width: 90vw;
+  transition: bottom 200ms ease-out;
+}
+/* Lift the toast stack clear of the tutorial card when both are on screen. */
+#hv-hud.hv-has-tutorial .hv-toast-host {
+  bottom: calc(var(--sab) + 150px);
 }
 .hv-toast {
   padding: 9px 16px;
@@ -926,7 +1037,7 @@ const CSS = `
   position: absolute;
   left: calc(var(--sal) + 8px);
   right: calc(var(--sar) + 8px);
-  top: calc(var(--sat) + 52px);
+  top: calc(var(--sat) + 60px);
   z-index: 5;
   pointer-events: none;
   display: grid;
@@ -973,6 +1084,11 @@ const CSS = `
   font-weight: 800;
   letter-spacing: 0.2px;
 }
+.hv-plots { gap: 12px; }
+.hv-plots-count { display: flex; flex-direction: column; line-height: 1.1; }
+.hv-plots-count b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.hv-plots-label { font-size: 11px; font-weight: 700; opacity: 0.8; letter-spacing: 0.3px; }
+
 .hv-mkt-rows { display: flex; flex-direction: column; gap: 8px; }
 .hv-mkt {
   background: var(--wall);
@@ -1102,17 +1218,20 @@ const CSS = `
 }
 
 @media (max-width: 380px) {
-  .hv-chip { height: 32px; font-size: 13px; padding: 0 8px; }
-  .hv-fab { width: 54px; height: 54px; }
-  .hv-sheet-title { font-size: 16px; }
+  .hv-chip { height: 32px; font-size: 13px; padding: 0 9px; }
+  .hv-tb-chip .hv-tb-label { display: none; }
+  .hv-tb-chip { padding: 0 8px; }
+  .hv-sheet-title { font-size: 18px; }
 }
 
 /* ── Reduced motion: still the bob, drop transition easing ──── */
 @media (prefers-reduced-motion: reduce) {
-  .hv-onboard-arrow { animation: none; }
   .hv-toast { transition: opacity 120ms linear; transform: none; }
   .hv-toast.is-in { transform: none; }
   .hv-sheet { transition: none; }
   .hv-fill > i { transition: none; }
+  .hv-fab-pulse::after,
+  .hv-fab.is-tut-highlight::before { animation: none; }
+  .hv-tut { transition: opacity 120ms linear; }
 }
 `;

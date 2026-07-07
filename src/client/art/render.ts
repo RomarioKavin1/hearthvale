@@ -175,15 +175,69 @@ const hash2 = (x: number, y: number): number => {
   return h >>> 0;
 };
 
+/** Weighted decor palette (trees ~4:1 over rocks) for a lusher village green.
+ * Repeats bias the pick; a plain modulo over the array does the weighting. */
+const DECOR_WEIGHTED: readonly SpriteKey[] = [
+  'tree-single',
+  'tree-single',
+  'tree-multiple',
+  'tree-multiple',
+  'tree-pine',
+  'tree-pine',
+  'tree-single',
+  'tree-multiple',
+  'rocks-grass',
+  'rocks-dirt',
+];
+
+/** Decor sprite keys that are trees — the scene gives these a gentle idle sway. */
+export const TREE_DECOR: ReadonlySet<SpriteKey> = new Set<SpriteKey>([
+  'tree-single',
+  'tree-multiple',
+  'tree-pine',
+  'tree-pine-large',
+]);
+
+export const isTreeDecor = (key: SpriteKey): boolean => TREE_DECOR.has(key);
+
 /**
- * Sparse (~7%) deterministic decoration for unowned open grass tiles. Returns a
- * standing-object sprite key or null. Purely cosmetic — never affects hit-testing
+ * Deterministic decoration (~14%) for unowned open grass tiles, weighted toward
+ * trees with a rock here and there. Purely cosmetic — never affects hit-testing
  * (the scene hit-tests by maths, not sprite picking).
  */
 export const decorSprinkle = (x: number, y: number): SpriteKey | null => {
   const h = hash2(x, y);
-  if (h % 100 >= 7) return null;
-  return (h >>> 7) % 2 === 0 ? 'tree-single' : 'rocks-grass';
+  if (h % 100 >= 14) return null;
+  return DECOR_WEIGHTED[(h >>> 7) % DECOR_WEIGHTED.length] ?? null;
+};
+
+// ── Plaza dressing: village-square fence + well ──────────────────────────────
+
+/** The single fixed plaza-adjacent tile the decorative well stands on (a corner
+ * of the path ring). Non-claimable already (it's inside the plaza block). */
+export const WELL_TILE: { x: number; y: number } = { x: PATH_LO, y: PATH_LO };
+
+export type FencePiece = { x: number; y: number; key: SpriteKey };
+
+/**
+ * A low wooden fence hugging the outer edge of the path ring — the 12 border
+ * tiles of the [7,10]² plaza block, corners as `fence-wood-corner`, edges as
+ * `fence-wood`. The well's corner (WELL_TILE) is skipped so the two don't stack.
+ * Deterministic + decorative; these tiles never take a building (plaza block).
+ */
+export const plazaFencePieces = (): FencePiece[] => {
+  const pieces: FencePiece[] = [];
+  for (let x = PATH_LO; x <= PATH_HI; x++) {
+    for (let y = PATH_LO; y <= PATH_HI; y++) {
+      const onBorder = x === PATH_LO || x === PATH_HI || y === PATH_LO || y === PATH_HI;
+      if (!onBorder) continue;
+      if (x === WELL_TILE.x && y === WELL_TILE.y) continue;
+      const corner =
+        (x === PATH_LO || x === PATH_HI) && (y === PATH_LO || y === PATH_HI);
+      pieces.push({ x, y, key: corner ? 'fence-wood-corner' : 'fence-wood' });
+    }
+  }
+  return pieces;
 };
 
 // ── Castle (Grand Keep) composition ─────────────────────────────────────────

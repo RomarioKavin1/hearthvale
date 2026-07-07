@@ -35,14 +35,17 @@ import {
   decorSprinkle,
   isKeepPad,
   isPathRing,
+  isTreeDecor,
   LOCKED_ALPHA,
   LOCKED_BAND,
   LOCKED_TINT,
   pathPiece,
+  plazaFencePieces,
   riverPiece,
   ROOF_DY,
   TILE_H,
   TILE_W,
+  WELL_TILE,
 } from '../art/render';
 import { store } from '../state';
 import { api } from '../net';
@@ -156,12 +159,19 @@ const BAR_W = 60;
 const BAR_H = 5;
 const EFFECT_DEPTH = 100000;
 const PIP_DEPTH = 50000;
+/** Drifting cloud shadows sit above the diorama but below pips/effects. */
+const CLOUD_DEPTH = 40000;
 
 export class Village extends Scene {
   private views: Map<string, TileView> = new Map();
   private groundImgs: Map<string, Phaser.GameObjects.Image> = new Map();
   private decorImgs: Map<string, Phaser.GameObjects.Image> = new Map();
   private landmarkParts: Phaser.GameObjects.Image[] = [];
+  private dressingParts: Phaser.GameObjects.Image[] = [];
+  private clouds: Phaser.GameObjects.Ellipse[] = [];
+  private reducedMotion =
+    typeof matchMedia === 'function' &&
+    matchMedia('(prefers-reduced-motion: reduce)').matches;
   private highlight: Phaser.GameObjects.Graphics | undefined;
   private conn: ReturnType<typeof connectRealtime> | undefined;
   private me: string | null = null;
@@ -202,7 +212,7 @@ export class Village extends Scene {
 
     this.loading = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'Loading village…', {
-        fontFamily: 'Georgia, serif',
+        fontFamily: 'Fredoka, ui-rounded, system-ui, sans-serif',
         fontSize: '16px',
         color: PAL.cream,
       })
@@ -253,6 +263,8 @@ export class Village extends Scene {
 
     this.buildGround();
     this.buildLandmark();
+    this.buildDressing();
+    this.buildClouds();
 
     // Selection highlight (a glowing top-face diamond, hidden until a tile is tapped).
     this.highlight = this.add
@@ -310,8 +322,12 @@ export class Village extends Scene {
     const key = tileKey(x, y);
     this.groundImgs.get(key)?.destroy();
     this.groundImgs.delete(key);
-    this.decorImgs.get(key)?.destroy();
-    this.decorImgs.delete(key);
+    const oldDecor = this.decorImgs.get(key);
+    if (oldDecor) {
+      this.tweens.killTweensOf(oldDecor);
+      oldDecor.destroy();
+      this.decorImgs.delete(key);
+    }
 
     const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
     let img: Phaser.GameObjects.Image;
@@ -344,10 +360,19 @@ export class Village extends Scene {
       if (store.data?.grid[key] === undefined && !isPlaza(x, y)) {
         const d = decorSprinkle(x, y);
         if (d) {
-          this.decorImgs.set(
-            key,
-            addSurface(this, d, sx, sy).setDepth(sy + 0.5)
-          );
+          const sprite = addSurface(this, d, sx, sy).setDepth(sy + 0.5);
+          this.decorImgs.set(key, sprite);
+          if (isTreeDecor(d) && !this.reducedMotion) {
+            this.tweens.add({
+              targets: sprite,
+              angle: { from: -1.2, to: 1.2 },
+              duration: 3000,
+              delay: this.swayPhase(x, y),
+              yoyo: true,
+              repeat: -1,
+              ease: 'Sine.inOut',
+            });
+          }
         }
       }
     }
@@ -355,6 +380,12 @@ export class Village extends Scene {
     img.setDepth(sy);
     this.groundImgs.set(key, img);
     return img;
+  }
+
+  /** Deterministic per-tile tween phase (ms) so trees don't sway in lockstep. */
+  private swayPhase(x: number, y: number): number {
+    const h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0;
+    return h % 3000;
   }
 
   // ── Grand Keep (castle composition) ─────────────────────────────────────────
@@ -379,6 +410,51 @@ export class Village extends Scene {
 
   private updateLandmark(): void {
     this.renderCastle();
+  }
+
+  // ── World dressing (fence ring, well, drifting cloud shadows) ────────────────
+
+  /** Static plaza dressing: a wooden fence hugging the path ring + a corner well.
+   * Plaza tiles are always unlocked and never take a building, so these are built
+   * once and never reconciled. */
+  private buildDressing(): void {
+    for (const p of plazaFencePieces()) {
+      const { sx, sy } = isoToScreen(p.x, p.y, TILE_W, TILE_H);
+      this.dressingParts.push(
+        addSurface(this, p.key, sx, sy).setDepth(sy + 0.4)
+      );
+    }
+    const w = isoToScreen(WELL_TILE.x, WELL_TILE.y, TILE_W, TILE_H);
+    this.dressingParts.push(
+      addSurface(this, 'well', w.sx, w.sy).setDepth(w.sy + 0.4)
+    );
+  }
+
+  /** 3 soft dark ellipses sweeping across the map on slow loops — subtle life.
+   * Above the diorama but below pips; standing still under reduced motion. */
+  private buildClouds(): void {
+    const spanX = (GRID_SIZE - 1) * TILE_W;
+    const midY = ((GRID_SIZE - 1) * TILE_H) / 2;
+    const travel = spanX * 1.8;
+    const defs = [
+      { startX: -spanX, y: midY - 190, w: 300, h: 132, dur: 66000 },
+      { startX: -spanX * 0.35, y: midY + 30, w: 360, h: 150, dur: 84000 },
+      { startX: spanX * 0.3, y: midY + 250, w: 260, h: 118, dur: 74000 },
+    ];
+    for (const d of defs) {
+      const cloud = this.add
+        .ellipse(d.startX, d.y, d.w, d.h, C_INK, 0.06)
+        .setDepth(CLOUD_DEPTH);
+      this.clouds.push(cloud);
+      if (this.reducedMotion) continue;
+      this.tweens.add({
+        targets: cloud,
+        x: { from: d.startX, to: d.startX + travel },
+        duration: d.dur,
+        repeat: -1,
+        ease: 'Linear',
+      });
+    }
   }
 
   // ── Incremental reconciliation ────────────────────────────────────────────
@@ -435,6 +511,7 @@ export class Village extends Scene {
     // A claimed tile never keeps a loose decor sprinkle beneath it.
     const decor = this.decorImgs.get(key);
     if (decor) {
+      this.tweens.killTweensOf(decor);
       decor.destroy();
       this.decorImgs.delete(key);
     }
@@ -1136,7 +1213,7 @@ export class Village extends Scene {
     const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
     const label = this.add
       .text(sx, sy - TILE_H, text, {
-        fontFamily: 'Georgia, serif',
+        fontFamily: 'Fredoka, ui-rounded, system-ui, sans-serif',
         fontSize: '12px',
         color: PAL.cream,
         backgroundColor: PAL.ink,

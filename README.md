@@ -56,6 +56,7 @@ The daily post puts that change right in the feed — a market report, the day's
 ## Credits
 
 - **Art:** Kenney (kenney.nl) — CC0.
+- **Font:** Fredoka (OFL).
 
 ## Playing / installing
 

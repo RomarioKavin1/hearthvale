@@ -9,6 +9,13 @@
  * motion is CSS keyframes (no rAF), and it all stands down under reduced motion.
  */
 
+@font-face {
+  font-family: 'Fredoka';
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('/fonts/fredoka.woff2') format('woff2');
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -32,8 +39,7 @@ body {
   flex-direction: column;
   cursor: pointer;
   overflow: hidden;
-  font-family: ui-rounded, "SF Pro Rounded", -apple-system, "Segoe UI Rounded",
-    "Segoe UI", system-ui, sans-serif;
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   /* Soft warm sky: pale cream up top settling into a sunset glow at the horizon. */

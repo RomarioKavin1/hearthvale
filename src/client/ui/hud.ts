@@ -1,5 +1,5 @@
 import type { Game } from 'phaser';
-import { MAX_LEVEL, PLOT_LEVELS } from '../../shared/catalog';
+import { MARKET, MAX_LEVEL, PLOT_LEVELS } from '../../shared/catalog';
 import type { Good, PlayerState, StateResponse } from '../../shared/types';
 import { GOODS, goodsTotal, xpFor } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
@@ -19,7 +19,6 @@ import {
   markPending,
   mountToasts,
   notifyError,
-  ownedCount,
   promptLogin,
   readyCount,
   setGame,
@@ -32,10 +31,11 @@ import type { ShareKind } from '../net';
 import { mountSheetRoot } from './sheet';
 import { openMenuSheet, openTileSheet } from './panels';
 import { openMarketSheet } from './sheets';
+import { mountTutorial } from './tutorial';
 
 /**
  * The persistent HUD chrome: the top resource bar, the wallet drawer, the
- * bottom-right FAB stack, the toast host, the onboarding overlay, and `initHud`
+ * bottom-right FAB rail, the toast host, the first-run tutorial, and `initHud`
  * — the entry point `game.ts` calls once Phaser has booted. Everything reads from
  * `store` and re-renders on `'change'`; nothing here is torn down (it lives for
  * the whole session), so there are no listener leaks to chase.
@@ -58,6 +58,7 @@ let festChip: HTMLElement;
 let festIcon: HTMLElement;
 let festLabel: HTMLElement;
 let signinPill: HTMLElement;
+let walletCaret: HTMLButtonElement;
 
 let walletDrawer: HTMLElement;
 let walletOpen = false;
@@ -65,11 +66,10 @@ const walletCounts = new Map<Good, HTMLElement>();
 
 let collectFab: HTMLButtonElement;
 let collectBadge: HTMLElement;
+let marketFab: HTMLButtonElement;
+let marketPulse: HTMLElement;
 let checkinFab: HTMLButtonElement;
 let checkinStreak: HTMLElement;
-
-let onboard: HTMLElement;
-let onboardDismissed = false;
 
 // Count-up animation + level-up tracking.
 const rafMap = new Map<HTMLElement, number>();
@@ -90,7 +90,7 @@ export const initHud = (game: Game): void => {
   hud.appendChild(buildTopBar());
   hud.appendChild(buildWalletDrawer());
   hud.appendChild(buildFabs());
-  hud.appendChild(buildOnboarding());
+  mountTutorial(hud, { marketFab });
   mountSheetRoot(hud);
   mountToasts(hud);
 
@@ -146,6 +146,7 @@ const buildRing = (): void => {
 };
 
 const buildTopBar = (): HTMLElement => {
+  // Left: coins chip + a caret that toggles the goods wallet drawer.
   coinsNum = el('span', { cls: 'hv-chip-num', text: '0' });
   coinsChip = el('button', {
     cls: 'hv-chip',
@@ -153,36 +154,42 @@ const buildTopBar = (): HTMLElement => {
     children: [iconEl('icon-coin', 16), coinsNum],
     on: { click: () => toggleWallet() },
   });
+  walletCaret = el('button', {
+    cls: 'hv-caret',
+    attrs: { type: 'button', 'aria-label': 'Toggle goods wallet' },
+    children: [iconEl('icon-arrow-down', 16)],
+    on: { click: () => toggleWallet() },
+  });
+  const left = el('div', { cls: 'hv-tb-left', children: [coinsChip, walletCaret] });
 
+  // Right: level ring (logged in) or the sign-in pill (logged out).
   buildRing();
-
-  weatherIcon = iconEl('icon-star', 15);
-  weatherLabel = el('span', { cls: 'hv-fest-label', text: 'Sunny' });
-  weatherChip = el('div', {
-    cls: 'hv-fest',
-    attrs: { title: 'Today’s weather' },
-    children: [weatherIcon, weatherLabel],
-  });
-
-  festIcon = iconEl('icon-coin', 15);
-  festLabel = el('span', { cls: 'hv-fest-label', text: 'Festival' });
-  festChip = el('div', {
-    cls: 'hv-fest',
-    attrs: { title: 'Today’s festival' },
-    children: [festIcon, festLabel],
-  });
-
   signinPill = el('button', {
     cls: 'hv-signin-pill',
     attrs: { type: 'button' },
     children: [iconEl('icon-home', 15), el('span', { text: 'Sign in to build' })],
     on: { click: () => promptLogin() },
   });
+  const right = el('div', { cls: 'hv-tb-right', children: [ring, signinPill] });
 
-  return el('div', {
-    cls: 'hv-topbar',
-    children: [coinsChip, ring, weatherChip, festChip, signinPill],
+  // Center: weather + festival, cream-on-ink, truncating on narrow screens.
+  weatherIcon = iconEl('icon-star', 14);
+  weatherLabel = el('span', { cls: 'hv-tb-label', text: 'Sunny' });
+  weatherChip = el('div', {
+    cls: 'hv-tb-chip',
+    attrs: { title: 'Today’s weather' },
+    children: [weatherIcon, weatherLabel],
   });
+  festIcon = iconEl('icon-coin', 14);
+  festLabel = el('span', { cls: 'hv-tb-label', text: 'Festival' });
+  festChip = el('div', {
+    cls: 'hv-tb-chip hv-tb-fest',
+    attrs: { title: 'Today’s festival' },
+    children: [festIcon, festLabel],
+  });
+  const center = el('div', { cls: 'hv-tb-center', children: [weatherChip, festChip] });
+
+  return el('div', { cls: 'hv-topbar', children: [left, center, right] });
 };
 
 // ── Wallet drawer ────────────────────────────────────────────────────────────
@@ -220,6 +227,7 @@ const buildWalletDrawer = (): HTMLElement => {
 const setWallet = (open: boolean): void => {
   walletOpen = open;
   walletDrawer.classList.toggle('is-open', open);
+  walletCaret.classList.toggle('is-open', open);
 };
 
 const toggleWallet = (): void => {
@@ -239,16 +247,23 @@ const buildFab = (
 ): HTMLButtonElement => {
   return el('button', {
     cls: `hv-fab${primary ? ' hv-primary' : ''}`,
-    attrs: { type: 'button' },
+    attrs: { type: 'button', 'aria-label': caption },
     children: [icon, el('span', { cls: 'hv-fab-cap', text: caption })],
   });
 };
 
 const buildFabs = (): HTMLElement => {
-  collectFab = buildFab(iconEl('icon-cart', 24), 'Collect', true);
+  // Order top→bottom: Collect · Market · Check in · Menu.
+  collectFab = buildFab(iconEl('icon-coin', 24), 'Collect', true);
   collectBadge = el('span', { cls: 'hv-fab-badge' });
   collectFab.appendChild(collectBadge);
   collectFab.addEventListener('click', doCollectAll);
+
+  marketFab = buildFab(iconEl('icon-cart', 24), 'Market', false);
+  marketPulse = el('span', { cls: 'hv-fab-pulse' });
+  marketPulse.style.display = 'none';
+  marketFab.appendChild(marketPulse);
+  marketFab.addEventListener('click', () => openMarketSheet());
 
   checkinFab = buildFab(iconEl('icon-streak', 24), 'Check in', false);
   checkinStreak = el('span', { cls: 'hv-streak' });
@@ -260,7 +275,7 @@ const buildFabs = (): HTMLElement => {
 
   return el('div', {
     cls: 'hv-fabs',
-    children: [collectFab, checkinFab, menuFab],
+    children: [collectFab, marketFab, checkinFab, menuFab],
   });
 };
 
@@ -304,36 +319,6 @@ const doCheckin = (): void => {
     });
 };
 
-// ── Onboarding overlay ───────────────────────────────────────────────────────
-
-const buildOnboarding = (): HTMLElement => {
-  const dismiss = el('button', {
-    cls: 'hv-onboard-dismiss',
-    attrs: { type: 'button', 'aria-label': 'Dismiss' },
-    children: [iconEl('icon-cross', 12)],
-    on: {
-      click: () => {
-        onboardDismissed = true;
-        renderHud();
-      },
-    },
-  });
-  const card = el('div', {
-    cls: 'hv-onboard-card',
-    children: [
-      dismiss,
-      el('h3', { text: 'Welcome to Hearthvale' }),
-      el('p', {
-        text: 'Tap any open grass tile to settle your first plot — then plant a Wheat Field. The village always needs grain.',
-      }),
-      el('div', { cls: 'hv-onboard-arrow', text: '⌄' }),
-    ],
-  });
-  onboard = el('div', { cls: 'hv-onboard', children: [card] });
-  onboard.style.display = 'none';
-  return onboard;
-};
-
 // ── Render ───────────────────────────────────────────────────────────────────
 
 const animateCount = (span: HTMLElement, from: number, to: number): void => {
@@ -373,15 +358,14 @@ const swapIcon = (slot: HTMLElement, next: HTMLElement): HTMLElement => {
 
 const renderWeather = (data: StateResponse): void => {
   const meta = WEATHER_META[data.weather];
-  weatherIcon = swapIcon(weatherIcon, iconEl(meta.icon, 15));
+  weatherIcon = swapIcon(weatherIcon, iconEl(meta.icon, 14));
   weatherLabel.textContent = meta.label;
 };
 
 const renderFestival = (data: StateResponse): void => {
   const meta = CATEGORY_META[data.city.festival];
-  festIcon = swapIcon(festIcon, iconEl(meta.icon, 15));
+  festIcon = swapIcon(festIcon, iconEl(meta.icon, 14));
   festLabel.textContent = meta.label;
-  festChip.style.borderColor = meta.color;
 };
 
 const renderWallet = (me: PlayerState): void => {
@@ -393,6 +377,7 @@ const renderWallet = (me: PlayerState): void => {
 
 const renderPlayer = (me: PlayerState): void => {
   coinsChip.style.display = '';
+  walletCaret.style.display = '';
   ring.style.display = '';
   signinPill.style.display = 'none';
 
@@ -421,12 +406,24 @@ const renderPlayer = (me: PlayerState): void => {
 
 const renderLoggedOut = (): void => {
   coinsChip.style.display = 'none';
+  walletCaret.style.display = 'none';
   ring.style.display = 'none';
   signinPill.style.display = '';
   setWallet(false);
 };
 
+/** True when any good's market price has climbed to ≥1.5× its base. */
+const anyPriceHot = (data: StateResponse): boolean => {
+  for (const g of GOODS) {
+    if (data.prices[g] >= MARKET[g].base * 1.5) return true;
+  }
+  return false;
+};
+
 const renderFabs = (data: StateResponse, me: PlayerState | null): void => {
+  // Market FAB is public (prices are visible logged out); pulse when goods are hot.
+  marketPulse.style.display = anyPriceHot(data) ? '' : 'none';
+
   if (!me) {
     collectFab.style.display = 'none';
     checkinFab.style.display = 'none';
@@ -443,14 +440,9 @@ const renderFabs = (data: StateResponse, me: PlayerState | null): void => {
   checkinFab.style.display = '';
   const checkedIn = me.lastCheckIn === todayUtc();
   checkinFab.disabled = checkedIn || isPending('checkin');
+  checkinFab.classList.toggle('is-checked', checkedIn);
   checkinStreak.textContent = me.streak > 0 ? String(me.streak) : '';
   checkinStreak.style.display = me.streak > 0 ? '' : 'none';
-};
-
-const renderOnboarding = (data: StateResponse, me: PlayerState | null): void => {
-  const show =
-    me !== null && !onboardDismissed && ownedCount(data, me.id) === 0;
-  onboard.style.display = show ? '' : 'none';
 };
 
 const renderHud = (): void => {
@@ -463,7 +455,6 @@ const renderHud = (): void => {
   if (me) renderPlayer(me);
   else renderLoggedOut();
   renderFabs(data, me);
-  renderOnboarding(data, me);
 
   // A landmark stage the whole village just raised together — offer a share.
   const stage = data.city.landmarkStage;

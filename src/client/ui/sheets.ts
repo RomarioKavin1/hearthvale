@@ -23,6 +23,7 @@ import {
   todayUtc,
 } from './dom';
 import { action, openSheet, refreshSheet, toast } from './sheet';
+import { markTutorialSell } from './tutorial';
 
 /**
  * The v2 "menu" sheets: the village Market (moving prices + sell/buy steppers),
@@ -146,6 +147,7 @@ const renderMarketBody = (good: Good): HTMLElement => {
       const res = await api.sell(good, sQty);
       store.applyMutation({ me: res.me, stockpile: res.stockpile, prices: res.prices });
       toast(`Sold ${fmtInt(sQty)} ${GOOD_LABEL[good]} for +${fmtInt(sGain)}`, 'gain');
+      markTutorialSell();
     });
   });
   sellSeg.appendChild(sellBtn);

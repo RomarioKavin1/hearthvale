@@ -24,7 +24,7 @@ export class Preloader extends Scene {
     const cy = this.scale.height / 2;
     this.add
       .text(cx, cy - 26, 'Hearthvale', {
-        fontFamily: 'Georgia, serif',
+        fontFamily: 'Fredoka, ui-rounded, system-ui, sans-serif',
         fontSize: '22px',
         color: PAL.cream,
       })
