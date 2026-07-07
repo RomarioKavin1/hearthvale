@@ -1,86 +1,297 @@
+/*
+ * Inline feed splash for Hearthvale.
+ *
+ * Pure DOM + CSS — no Phaser, no external assets. Every colour resolves from a
+ * CSS custom property injected at runtime from `PAL` (see splash.ts), so this
+ * file contains no hex literals of its own. The village is drawn with the
+ * box-shadow pixel-art technique; the only motion is CSS keyframes (no rAF).
+ */
+
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
-  color: #000000;
 }
 
-.app {
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--night);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#splash-root {
+  position: fixed;
+  inset: 0;
   display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  overflow: hidden;
+  font-family: ui-rounded, "SF Pro Rounded", -apple-system, "Segoe UI Rounded",
+    "Segoe UI", system-ui, sans-serif;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  /* Warm dusk sky: night up top settling into a glow at the horizon. */
+  background: linear-gradient(
+    180deg,
+    var(--night) 0%,
+    var(--night) 34%,
+    var(--dusk) 60%,
+    var(--horizon) 86%,
+    var(--horizon-lo) 100%
+  );
+}
+
+/* ── Scene (sky band with the village silhouette) ─────────────── */
+.hv-scene {
   position: relative;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-  margin: 0;
-  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* A soft hearth glow blooming from behind the clocktower. */
+  --px: 4px;
 }
-
-.snoo {
-  object-fit: contain;
-  width: 50%;
-  max-width: 250px;
-  margin: 0 auto;
-}
-
-.content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
-
-.title {
-  font-size: 1.5em;
-  font-weight: bold;
-  text-align: center;
-}
-
-.description {
-  font-size: 1em;
-  text-align: center;
-  color: #5c6c74;
-}
-
-.code {
-  background-color: #e5ebee;
-  padding: 2px 4px;
-  border-radius: 4px;
-}
-
-.start-button {
-  background-color: #d93900;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  border: none;
-  padding: 6px 16px;
-  height: 28px;
-  font-size: 1.1em;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.footer {
+.hv-scene::after {
+  content: "";
   position: absolute;
-  bottom: 16px;
   left: 50%;
+  bottom: 0;
+  width: 70%;
+  height: 90%;
   transform: translateX(-50%);
-  display: flex;
-  gap: 12px;
-  font-size: 0.8em;
-  color: #666666;
+  background: radial-gradient(
+    60% 70% at 50% 100%,
+    var(--glow-soft) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
 }
 
-.docs-link {
+.hv-village {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: calc(var(--px) * 2.5);
+  padding: 0 var(--px);
+}
+
+/* Each sprite is a fixed-size box; its pixels are box-shadows on an inner dot. */
+.hv-sprite {
+  position: relative;
+  flex: 0 0 auto;
+}
+.hv-px {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--px);
+  height: var(--px);
+  image-rendering: pixelated;
+}
+
+/* Grass strip the village sits on. */
+.hv-grass {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--px) * 2.5);
+  background: linear-gradient(
+    180deg,
+    var(--grass-light) 0%,
+    var(--grass) 45%,
+    var(--grass-dark) 100%
+  );
+  border-top: var(--px) solid var(--grass-light);
+}
+
+/* Twinkling stars / lit windows. */
+.hv-twinkle {
+  position: absolute;
+  width: var(--px);
+  height: var(--px);
+  background: var(--glow);
+  border-radius: 1px;
+  opacity: 0.35;
+  animation: hv-twinkle 3.2s ease-in-out infinite;
+}
+.hv-twinkle.t1 {
+  left: 20%;
+  top: 22%;
+  animation-delay: 0s;
+}
+.hv-twinkle.t2 {
+  left: 68%;
+  top: 16%;
+  animation-delay: 1s;
+  transform: scale(0.75);
+}
+.hv-twinkle.t3 {
+  left: 44%;
+  top: 30%;
+  animation-delay: 2.1s;
+  transform: scale(0.6);
+}
+@keyframes hv-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── Content (title, stats, CTA) ──────────────────────────────── */
+.hv-content {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
+  text-align: center;
+  background: linear-gradient(180deg, transparent, var(--horizon-lo) 34%);
+}
+
+.hv-greet {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--ink);
+  opacity: 0.85;
+}
+
+.hv-title {
+  font-size: clamp(26px, 8vw, 40px);
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  color: var(--cream);
+  text-shadow: 0 2px 0 var(--wood-dark), 0 4px 0 rgba(0, 0, 0, 0.18);
+}
+
+.hv-tagline {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ink);
+  opacity: 0.78;
+}
+
+.hv-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.hv-stats .hv-dot {
+  opacity: 0.45;
+}
+.hv-stats.is-hidden {
+  display: none;
+}
+
+/* Skeleton shimmer shown until /api/summary resolves. */
+.hv-skel {
+  display: inline-block;
+  width: 78px;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--skel-a) 25%,
+    var(--skel-b) 37%,
+    var(--skel-a) 63%
+  );
+  background-size: 320px 100%;
+  animation: hv-shimmer 1.3s linear infinite;
+}
+@keyframes hv-shimmer {
+  0% {
+    background-position: 160px 0;
+  }
+  100% {
+    background-position: -160px 0;
+  }
+}
+
+.hv-hook {
+  min-height: 16px;
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: var(--ink);
+}
+.hv-hook.is-ready {
+  color: var(--wood-dark);
+  text-shadow: 0 0 8px var(--glow-soft);
+}
+.hv-hook.is-hidden {
+  display: none;
+}
+
+.hv-cta {
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 22px;
+  background: var(--glow);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 4px 0 var(--wood-dark);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
   cursor: pointer;
 }
+.hv-cta:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--wood-dark);
+}
+#splash-root:focus-visible,
+.hv-cta:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
 
-.divider {
-  color: rgba(0, 0, 0, 0.1);
+/* ── Short-height feed units: shed the tagline, tighten spacing ── */
+@media (max-height: 220px) {
+  .hv-tagline {
+    display: none;
+  }
+  .hv-content {
+    gap: 4px;
+    padding-top: 4px;
+  }
+  .hv-scene {
+    --px: 3px;
+  }
+  .hv-cta {
+    min-height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hv-twinkle,
+  .hv-skel {
+    animation: none;
+  }
 }
