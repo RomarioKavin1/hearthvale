@@ -6,7 +6,9 @@
     "realtime": true,
     "reddit": {
       "enable": true,
-      "asUser": ["SUBMIT_COMMENT"]
+      "asUser": [
+        "SUBMIT_COMMENT"
+      ]
     }
   },
   "scheduler": {
@@ -50,5 +52,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch"
+  },
+  "dev": {
+    "subreddit": "hearthvale_dev"
   }
 }
