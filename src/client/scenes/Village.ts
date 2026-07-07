@@ -146,6 +146,8 @@ export class Village extends Scene {
 
   private pollTimer: number | null = null;
   private lastBarTick = 0;
+  /** Tile keys with a collect POST currently in flight (double-tap guard). */
+  private collecting: Set<string> = new Set();
 
   private dragging = false;
   private startX = 0;
@@ -542,15 +544,21 @@ export class Village extends Scene {
   }
 
   private collectTile(x: number, y: number): void {
+    const key = tileKey(x, y);
+    if (this.collecting.has(key)) return; // a collect is already in flight
+    this.collecting.add(key);
     void api
       .collect(x, y)
       .then((res) => {
-        store.applyMutation({ key: tileKey(x, y), tile: res.tile, me: res.me });
+        store.applyMutation({ key, tile: res.tile, me: res.me });
         this.coinBurst(x, y);
       })
       .catch(() => {
         // Collection failed (e.g. nothing ready yet after a race) — ignore;
         // the next refresh reconciles the true state.
+      })
+      .finally(() => {
+        this.collecting.delete(key);
       });
   }
 
