@@ -1,10 +1,5 @@
 import { reddit } from '@devvit/web/server';
-import type {
-  FestivalCategory,
-  Prices,
-  TraderOffer,
-  Weather,
-} from '../../shared/types';
+import type { FestivalCategory, Prices, Weather } from '../../shared/types';
 import { GOODS } from '../../shared/logic/economy';
 
 export const createPost = async () => {
@@ -48,18 +43,13 @@ export const createDailyPost = async (
   });
 };
 
-/** A one-line market report: current price of every good, then trader offers. */
-export const marketReportText = (
-  prices: Prices,
-  offers: TraderOffer[]
-): string => {
-  const priceLine = GOODS.map((g) => `${g} ${prices[g]}`).join(' · ');
-  const offerLine = offers
-    .map((o) =>
-      'cosmetic' in o.get
-        ? `${o.give.qty} ${o.give.good} for a golden roof`
-        : `${o.give.qty} ${o.give.good} for ${o.get.qty} ${o.get.good}`
-    )
-    .join(' | ');
-  return `Market report: ${priceLine} | Trader offers: ${offerLine}`;
+/**
+ * The daily market-report comment: today's price for every good, the weather,
+ * and a nudge that the trader has refreshed — e.g.
+ * `Market report — wheat 3, logs 4, stone 5, flour 9, planks 12, bricks 15.
+ * Weather: Sunny. The trader has new offers.`
+ */
+export const marketReportText = (prices: Prices, weather: Weather): string => {
+  const priceLine = GOODS.map((g) => `${g} ${prices[g]}`).join(', ');
+  return `Market report — ${priceLine}. Weather: ${weatherName(weather)}. The trader has new offers.`;
 };

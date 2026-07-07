@@ -45,7 +45,7 @@ scheduler.post('/daily-cycle', async (c) => {
     );
   }
 
-  const { festival, weather, dayNumber, prices, offers } = rotation;
+  const { festival, weather, dayNumber, prices } = rotation;
   let post: Awaited<ReturnType<typeof createDailyPost>>;
   try {
     post = await createDailyPost(festival, dayNumber, weather);
@@ -64,7 +64,7 @@ scheduler.post('/daily-cycle', async (c) => {
   try {
     await reddit.submitComment({
       id: post.id,
-      text: marketReportText(prices, offers),
+      text: marketReportText(prices, weather),
       runAs: 'APP',
     });
   } catch (error) {
