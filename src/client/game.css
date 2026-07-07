@@ -1,17 +1,27 @@
+html,
 body {
   margin: 0;
   padding: 0;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #0f0f0f;
+  height: 100%;
+  overflow: hidden;
+  background-color: #2e2837;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #app {
+  position: fixed;
+  inset: 0;
   width: 100%;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
 #game-container {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  touch-action: none;
 }

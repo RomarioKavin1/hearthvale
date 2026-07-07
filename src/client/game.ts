@@ -5,6 +5,7 @@ import { ArtDebug } from './scenes/ArtDebug';
 import { Boot } from './scenes/Boot';
 import { Preloader } from './scenes/Preloader';
 import { Village } from './scenes/Village';
+import { initHud } from './ui/hud';
 
 // Dev-only art verification surface, opt-in via the `?artdebug` query string.
 const ART_DEBUG =
@@ -25,10 +26,11 @@ const config: Phaser.Types.Core.GameConfig = {
     : [Boot, Preloader, Village],
 };
 
-const StartGame = (parent: string) => {
+const StartGame = (parent: string): Game => {
   return new Game({ ...config, parent });
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  StartGame('game-container');
+  const game = StartGame('game-container');
+  initHud(game);
 });
