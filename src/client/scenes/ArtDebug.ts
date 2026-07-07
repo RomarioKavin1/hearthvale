@@ -1,9 +1,9 @@
 import { Input, Scene } from 'phaser';
 import { PAL } from '../../shared/palette';
-import { registerBuildings } from '../art/buildings';
+import { registerBuildings, TIERS } from '../art/buildings';
 import { registerLandmark } from '../art/landmark';
 import { registerTiles, TILE_H, TILE_W } from '../art/tiles';
-import type { BuildingId, Tier } from '../../shared/types';
+import type { BuildingId } from '../../shared/types';
 
 const IDS: BuildingId[] = [
   'cottage',
@@ -71,7 +71,7 @@ export class ArtDebug extends Scene {
     // Buildings — one row per id, three tiers + icon
     for (const id of IDS) {
       label(16, y + 6, id, 12);
-      ([1, 2, 3] as Tier[]).forEach((tier, i) => {
+      TIERS.forEach((tier, i) => {
         this.add.image(150 + i * 96, y + 96, `bld_${id}_${tier}`).setOrigin(0.5, 1);
         label(150 + i * 96 - 8, y + 100, `t${tier}`, 9);
       });

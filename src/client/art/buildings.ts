@@ -37,6 +37,8 @@ const H = 32;
 const CX = 12;
 const BASE = 30;
 
+export const TIERS: Tier[] = [1, 2, 3];
+
 const IDS: BuildingId[] = [
   'cottage',
   'bakery',
@@ -254,9 +256,12 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
   },
 
   sawmill(tier) {
-    const p = new Painter(W, H);
+    // Wider canvas than the other buildings so the saw blade (which hangs off
+    // the shed's right side) always fits fully, teeth and outline included.
+    const p = new Painter(30, H);
+    const cx = 14;
     const halfW = 6 + (tier - 1);
-    const left = CX - halfW;
+    const left = cx - halfW;
     const wide = 2 * halfW;
     const wallH = 10 + (tier - 1) * 3;
     const wallTop = BASE - wallH;
@@ -265,20 +270,26 @@ const BUILDERS: Record<BuildingId, (tier: Tier) => Painter> = {
     // plank lines
     for (let y = wallTop + 2; y < BASE; y += 3) p.hline(left, y, wide - 3, 'd');
     // slanted wood roof
-    p.gable(CX, wallTop - 5, wallTop, 1, halfW + 2, 'd', 'd');
+    p.gable(cx, wallTop - 5, wallTop, 1, halfW + 2, 'd', 'd');
     p.hline(left - 2, wallTop, wide + 4, 'd');
     // circular saw blade on the right
-    disc(p, left + wide + 1, BASE - 6, 3 + (tier === 3 ? 1 : 0), 'T', 't');
-    p.set(left + wide + 1, BASE - 6, tier === 3 ? 'O' : 't'); // hub
+    const bladeX = left + wide + 1;
+    const bladeR = 3 + (tier === 3 ? 1 : 0);
+    disc(p, bladeX, BASE - 6, bladeR, 'T', 't');
+    p.set(bladeX, BASE - 6, tier === 3 ? 'O' : 't'); // hub
     for (let a = 0; a < 8; a++) {
       const ang = (a / 8) * Math.PI * 2;
-      p.set(Math.round(left + wide + 1 + Math.cos(ang) * 4), Math.round(BASE - 6 + Math.sin(ang) * 4), 'T');
+      p.set(
+        Math.round(bladeX + Math.cos(ang) * (bladeR + 1)),
+        Math.round(BASE - 6 + Math.sin(ang) * (bladeR + 1)),
+        'T'
+      );
     }
     // log pile
     p.set(left - 2, BASE - 1, 'D');
     p.set(left - 1, BASE - 1, 'd');
     p.set(left - 2, BASE - 2, 'D');
-    if (tier >= 2) win(p, CX - 1, wallTop + 3);
+    if (tier >= 2) win(p, cx - 1, wallTop + 3);
     if (tier === 3) goldTrim(p, left - 1, wallTop - 1, wide + 2);
     return p;
   },
@@ -522,12 +533,29 @@ function constructionGrid(): PixelGrid {
   return p.outline('K').rows();
 }
 
+/**
+ * Apply the 1px ink outline cohesion rule to an icon literal, in place within
+ * its 8×8 canvas (transparent neighbours of opaque pixels become ink).
+ */
+function outlinedIcon(rows: PixelGrid): PixelGrid {
+  const h = rows.length;
+  const w = rows[0]?.length ?? 0;
+  const p = new Painter(w, h);
+  rows.forEach((row, y) => {
+    for (let x = 0; x < w; x++) {
+      const ch = row[x];
+      if (ch !== undefined && ch !== '.') p.set(x, y, ch);
+    }
+  });
+  return p.outline('K').rows();
+}
+
 export function registerBuildings(scene: Scene): void {
   for (const id of IDS) {
-    for (const tier of [1, 2, 3] as Tier[]) {
+    for (const tier of TIERS) {
       drawPixelTexture(scene, `bld_${id}_${tier}`, finish(BUILDERS[id](tier)), BL);
     }
-    drawPixelTexture(scene, `icon_${id}`, ICONS[id], BL);
+    drawPixelTexture(scene, `icon_${id}`, outlinedIcon(ICONS[id]), BL);
   }
   drawPixelTexture(scene, 'bld_construction', constructionGrid(), BL);
 }

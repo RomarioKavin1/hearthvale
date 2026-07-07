@@ -17,13 +17,10 @@ const L: Legend = {
   P: PAL.pathDark,
   s: PAL.stone,
   S: PAL.stoneDark,
-  w: PAL.water,
-  W: PAL.water,
   o: PAL.glow,
   c: PAL.cream,
   a: PAL.accent,
   f: PAL.leaf,
-  k: PAL.ink,
 };
 
 const inDiamond = (x: number, y: number): boolean =>
