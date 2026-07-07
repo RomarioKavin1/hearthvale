@@ -10,10 +10,12 @@ import {
   doCollect,
   doCollectAll,
   doContribute,
+  doShare,
   doUpgrade,
   doVote,
   isBuildingId,
   isCategory,
+  isShareKind,
   loadLeaderboards,
   loadState,
   loadSummary,
@@ -202,6 +204,24 @@ api.post('/vote', async (c) => {
     if (error instanceof OpError) return c.json(...fail(error.message, error.status));
     console.error('POST /api/vote failed:', error);
     return c.json(...fail('Failed to record vote.', 500));
+  }
+});
+
+api.post('/share', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ kind?: unknown; value?: unknown }>();
+    if (!isShareKind(body.kind)) {
+      return c.json(...fail('Unknown share kind.', 400));
+    }
+    const value = asCoord(body.value);
+    if (value === null) return c.json(...fail('Invalid milestone value.', 400));
+    const result = await doShare(userId, body.kind, value);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/share failed:', error);
+    return c.json(...fail('Failed to share.', 500));
   }
 });
 

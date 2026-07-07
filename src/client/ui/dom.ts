@@ -207,6 +207,46 @@ export const toast = (text: string, kind: ToastKind = 'info'): void => {
   }, 2500);
 };
 
+/**
+ * A longer-lived toast carrying a single action button (e.g. "Share it? 💬").
+ * Auto-dismisses after `timeoutMs`; tapping the button runs `onAction` and
+ * closes early. Used for the opt-in share prompt after a milestone.
+ */
+export const toastAction = (
+  text: string,
+  actionLabel: string,
+  onAction: () => void,
+  timeoutMs = 5000
+): void => {
+  if (!toastHost) return;
+  const btn = el('button', {
+    cls: 'hv-toast-btn',
+    text: actionLabel,
+    attrs: { type: 'button' },
+  });
+  const t = el('div', {
+    cls: 'hv-toast hv-toast-action',
+    children: [el('span', { text }), btn],
+  });
+  toastHost.appendChild(t);
+
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    t.classList.remove('is-in');
+    window.setTimeout(() => t.remove(), 260);
+  };
+  btn.addEventListener('click', () => {
+    onAction();
+    close();
+  });
+
+  void t.offsetWidth;
+  t.classList.add('is-in');
+  window.setTimeout(close, timeoutMs);
+};
+
 // ── Stylesheet (colours interpolated from PAL) ───────────────────────────────
 
 let stylesInjected = false;
@@ -762,6 +802,26 @@ const CSS = `
 .hv-toast.is-in { opacity: 1; transform: translateY(0) scale(1); }
 .hv-toast-gain { border-color: var(--glow); }
 .hv-toast-celebrate { border-color: var(--accent); background: var(--wood-dark); }
+.hv-toast-action {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.hv-toast-btn {
+  pointer-events: auto;
+  padding: 5px 12px;
+  background: var(--glow);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+}
+.hv-toast-btn:active { transform: translateY(1px); }
 
 /* ── Focus visibility ────────────────────────────────────── */
 #hv-hud :focus-visible {
@@ -773,5 +833,14 @@ const CSS = `
   .hv-chip { height: 32px; font-size: 13px; padding: 0 8px; }
   .hv-fab { width: 54px; height: 54px; }
   .hv-sheet-title { font-size: 16px; }
+}
+
+/* ── Reduced motion: still the bob, drop transition easing ──── */
+@media (prefers-reduced-motion: reduce) {
+  .hv-onboard-arrow { animation: none; }
+  .hv-toast { transition: opacity 120ms linear; transform: none; }
+  .hv-toast.is-in { transform: none; }
+  .hv-sheet { transition: none; }
+  .hv-fill > i { transition: none; }
 }
 `;

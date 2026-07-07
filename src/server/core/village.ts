@@ -15,6 +15,7 @@ import {
   BOOST_DAILY_LIMIT,
   CATALOG,
   LANDMARK_THRESHOLDS,
+  MAX_LEVEL,
   tierStats,
 } from '../../shared/catalog';
 import type { BuildingSpec } from '../../shared/catalog';
@@ -267,6 +268,39 @@ export const computePayout = (
     if (contributed(n)) coins += stageReward(n);
   }
   return coins;
+};
+
+// --- Sharing -----------------------------------------------------------------
+
+export type ShareKind = 'levelup' | 'stage';
+
+/** Max shares a single villager can post to the comments per day. */
+export const SHARE_DAILY_LIMIT = 3;
+
+/**
+ * The flair-title band for a level, matching the milestone tiers surfaced in
+ * share comments: Settler (<3), Builder (3-5), Architect (6-8), Alderman
+ * (9-11), Founder (12+).
+ */
+export const flairTitle = (level: number): string => {
+  if (level >= 12) return 'Founder';
+  if (level >= 9) return 'Alderman';
+  if (level >= 6) return 'Architect';
+  if (level >= 3) return 'Builder';
+  return 'Settler';
+};
+
+/** The comment body posted for a share milestone. Pure — unit-tested. */
+export const shareText = (
+  kind: ShareKind,
+  value: number,
+  name: string,
+  subredditName: string
+): string => {
+  if (kind === 'levelup') {
+    return `🏡 u/${name} just reached Level ${value} in Hearthvale — ${flairTitle(value)}!`;
+  }
+  return `🕰 The Grand Clocktower reached Stage ${value}/${LANDMARK_THRESHOLDS.length} — built together by the villagers of r/${subredditName}!`;
 };
 
 export const applyCollect = (
@@ -911,8 +945,78 @@ export const runFestivalRotation = async (
   return { festival, dayNumber };
 };
 
+const shareKey = (userId: string, day: string): string =>
+  `share:${userId}:${day}`;
+
+/**
+ * Post a milestone to the village post's comments. Validates the claim against
+ * the player's real progress (no bragging about a level or stage not reached),
+ * rate-limits to `SHARE_DAILY_LIMIT` per user per day, then submits the comment
+ * as the user — falling back to an app-authored comment (prefixed with the
+ * villager's handle) if the user-authored attempt is not permitted.
+ */
+export const doShare = async (
+  userId: string,
+  kind: ShareKind,
+  value: number
+): Promise<{ ok: true }> => {
+  const [player, city] = await Promise.all([ensurePlayer(userId), getCity()]);
+
+  if (kind === 'levelup') {
+    if (value < 2 || value > MAX_LEVEL) {
+      throw new OpError(400, 'That is not a level you can share.');
+    }
+    if (value > player.level) {
+      throw new OpError(400, 'You have not reached that level yet.');
+    }
+  } else {
+    if (value < 1 || value > LANDMARK_THRESHOLDS.length) {
+      throw new OpError(400, 'That is not a clocktower stage you can share.');
+    }
+    if (value > city.landmarkStage) {
+      throw new OpError(400, 'That stage has not been built yet.');
+    }
+  }
+
+  const postId = context.postId;
+  if (!postId) throw new OpError(400, 'There is no village post to share to.');
+
+  const day = utcDay(Date.now());
+  const key = shareKey(userId, day);
+  const current = await redis.get(key);
+  const count = current ? Number(current) : 0;
+  if (count >= SHARE_DAILY_LIMIT) {
+    throw new OpError(429, "You've shared enough for today 😄");
+  }
+  await redis.incrBy(key, 1);
+  await redis.expire(key, 172800);
+
+  const text = shareText(kind, value, player.name, context.subredditName);
+
+  try {
+    await reddit.submitComment({ id: postId, text, runAs: 'USER' });
+  } catch (userError) {
+    console.error('submitComment (runAs USER) failed:', userError);
+    try {
+      await reddit.submitComment({
+        id: postId,
+        text: `(on behalf of u/${player.name}) ${text}`,
+        runAs: 'APP',
+      });
+    } catch (appError) {
+      console.error('submitComment (runAs APP) failed:', appError);
+      throw new OpError(502, 'Could not post your share right now — try again later.');
+    }
+  }
+
+  return { ok: true };
+};
+
 export const isBuildingId = (value: unknown): value is BuildingId =>
   typeof value === 'string' && value in CATALOG;
+
+export const isShareKind = (value: unknown): value is ShareKind =>
+  value === 'levelup' || value === 'stage';
 
 export const isCategory = (value: unknown): value is BuildingCategory =>
   value === 'coins' || value === 'supplies' || value === 'decor';

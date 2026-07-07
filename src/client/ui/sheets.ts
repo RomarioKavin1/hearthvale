@@ -315,7 +315,7 @@ export const openLeaderboardsSheet = (): void => {
       } else {
         const rows = board[activeTab];
         if (rows.length === 0) {
-          stack.appendChild(el('div', { cls: 'hv-empty', text: 'No entries yet — be the first!' }));
+          stack.appendChild(el('div', { cls: 'hv-empty', text: 'No villagers on the board yet — be the first!' }));
         } else {
           const list = el('div', { cls: 'hv-lb-rows' });
           rows.forEach((row, i) => {

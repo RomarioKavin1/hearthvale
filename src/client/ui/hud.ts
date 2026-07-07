@@ -21,8 +21,10 @@ import {
   readyCount,
   setGame,
   toast,
+  toastAction,
   todayUtc,
 } from './dom';
+import type { ShareKind } from '../net';
 import { mountSheetRoot } from './sheet';
 import { openMenuSheet, openTileSheet } from './panels';
 
@@ -64,6 +66,7 @@ const rafMap = new Map<HTMLElement, number>();
 let lastCoins = 0;
 let lastSupplies = 0;
 let prevLevel: number | null = null;
+let prevStage: number | null = null;
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
@@ -301,6 +304,18 @@ const animateCount = (span: HTMLElement, from: number, to: number): void => {
   rafMap.set(span, requestAnimationFrame(step));
 };
 
+/** Offer an opt-in "share this milestone to the comments" toast button. */
+const promptShare = (kind: ShareKind, value: number): void => {
+  toastAction('Share it? 💬', 'Share', () => {
+    void api
+      .share(kind, value)
+      .then(() => toast('Shared to comments! 💬', 'celebrate'))
+      .catch((err: unknown) =>
+        notifyError(err instanceof Error ? err.message : 'Could not share.')
+      );
+  });
+};
+
 const renderFestival = (data: StateResponse): void => {
   const meta = CATEGORY_META[data.city.festival];
   festEmoji.textContent = meta.emoji;
@@ -333,6 +348,7 @@ const renderPlayer = (me: PlayerState): void => {
       `Level ${me.level}!${unlocked ? ' New plot unlocked 🎉' : ' 🎉'}`,
       'celebrate'
     );
+    if (me.level >= 2) promptShare('levelup', me.level);
   }
   prevLevel = me.level;
 };
@@ -381,4 +397,11 @@ const renderHud = (): void => {
   else renderLoggedOut();
   renderFabs(data, me);
   renderOnboarding(data, me);
+
+  // A landmark stage the whole village just raised together — offer a share.
+  const stage = data.city.landmarkStage;
+  if (prevStage !== null && stage > prevStage && stage >= 1) {
+    promptShare('stage', stage);
+  }
+  prevStage = stage;
 };

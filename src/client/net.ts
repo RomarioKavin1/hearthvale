@@ -34,6 +34,8 @@ export type LeaderboardsResult = {
   earned: LeaderRow[];
   contrib: LeaderRow[];
 };
+export type ShareKind = 'levelup' | 'stage';
+export type ShareResult = { ok: true };
 export type SummaryResult = {
   buildings: number;
   players: number;
@@ -126,6 +128,9 @@ export const api = {
 
   vote: (category: BuildingCategory): Promise<VoteResult> =>
     post('/api/vote', { category }),
+
+  share: (kind: ShareKind, value: number): Promise<ShareResult> =>
+    post('/api/share', { kind, value }),
 
   leaderboards: (): Promise<LeaderboardsResult> =>
     request('/api/leaderboards', undefined, 'Failed to load leaderboards.'),

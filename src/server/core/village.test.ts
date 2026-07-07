@@ -8,9 +8,11 @@ import {
   boostsUsedToday,
   canCheckIn,
   computePayout,
+  flairTitle,
   landmarkComplete,
   nextFestival,
   nextStreak,
+  shareText,
   stageReward,
   tallyBallot,
   validateBoost,
@@ -414,5 +416,32 @@ describe('stage payout', () => {
   it('pays nothing when paidStage already covers the current stage', () => {
     const contributed = (): boolean => true;
     expect(computePayout(3, 3, contributed)).toBe(0);
+  });
+});
+
+describe('sharing', () => {
+  it('maps levels to flair-title bands', () => {
+    expect(flairTitle(1)).toBe('Settler');
+    expect(flairTitle(2)).toBe('Settler');
+    expect(flairTitle(3)).toBe('Builder');
+    expect(flairTitle(5)).toBe('Builder');
+    expect(flairTitle(6)).toBe('Architect');
+    expect(flairTitle(8)).toBe('Architect');
+    expect(flairTitle(9)).toBe('Alderman');
+    expect(flairTitle(11)).toBe('Alderman');
+    expect(flairTitle(12)).toBe('Founder');
+    expect(flairTitle(15)).toBe('Founder');
+  });
+
+  it('builds a level-up comment with the villager and their title', () => {
+    expect(shareText('levelup', 6, 'ada', 'cozytown')).toBe(
+      '🏡 u/ada just reached Level 6 in Hearthvale — Architect!'
+    );
+  });
+
+  it('builds a stage comment crediting the subreddit', () => {
+    expect(shareText('stage', 3, 'ada', 'cozytown')).toBe(
+      `🕰 The Grand Clocktower reached Stage 3/${LANDMARK_THRESHOLDS.length} — built together by the villagers of r/cozytown!`
+    );
   });
 });
