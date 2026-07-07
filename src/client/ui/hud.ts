@@ -329,10 +329,13 @@ const renderPlayer = (me: PlayerState): void => {
   ring.style.display = '';
   signinPill.style.display = 'none';
 
+  // TODO(V4): the supplies chip is a v1 stopgap showing a flat wallet total;
+  // V4 replaces it with a per-good wallet drawer.
+  const walletTotal = goodsTotal(me.wallet);
   animateCount(coinsNum, lastCoins, me.coins);
-  animateCount(suppliesNum, lastSupplies, me.supplies);
+  animateCount(suppliesNum, lastSupplies, walletTotal);
   lastCoins = me.coins;
-  lastSupplies = me.supplies;
+  lastSupplies = walletTotal;
 
   const cur = xpFor(me.level);
   const next = xpFor(me.level + 1);

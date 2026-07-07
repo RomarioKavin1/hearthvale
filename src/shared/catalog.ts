@@ -215,6 +215,72 @@ export const KEEP_STAGE_COSTS: Array<{ planks: number; bricks: number }> = [
  * units (minimum 25 per contributor). */
 export const STAGE_POT: number = 400;
 
+/** Minimum pro-rata payout a stage contributor receives. */
+export const STAGE_MIN_PAYOUT: number = 25;
+
+/**
+ * Word lists for the stage-naming picker. The top contributor of a completed
+ * stage picks one adjective + one noun (by index) to name their stage; the two
+ * words are joined with a space and stored on the city's `stageNames`.
+ */
+export const STAGE_NAME_WORDS: {
+  adjectives: string[];
+  nouns: string[];
+} = {
+  adjectives: [
+    'Ancient',
+    'Golden',
+    'Silver',
+    'Iron',
+    'Stone',
+    'Emerald',
+    'Crimson',
+    'Azure',
+    'Radiant',
+    'Shadowed',
+    'Verdant',
+    'Gilded',
+    'Hallowed',
+    'Mighty',
+    'Serene',
+    'Noble',
+    'Rustic',
+    'Bright',
+    'Frosted',
+    'Amber',
+    'Cobalt',
+    'Ivory',
+    'Scarlet',
+    'Twilight',
+  ],
+  nouns: [
+    'Keep',
+    'Bastion',
+    'Spire',
+    'Hold',
+    'Rampart',
+    'Citadel',
+    'Tower',
+    'Bulwark',
+    'Gate',
+    'Watch',
+    'Hearth',
+    'Haven',
+    'Bastille',
+    'Redoubt',
+    'Sanctum',
+    'Beacon',
+    'Vault',
+    'Turret',
+    'Palisade',
+    'Garrison',
+    'Donjon',
+    'Barbican',
+    'Crown',
+    'Refuge',
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // Land expansion rings.
 // ---------------------------------------------------------------------------

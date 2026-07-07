@@ -4,27 +4,35 @@ import type {
   CityState,
   FestivalCategory,
   Gained,
+  Good,
   LeaderRow,
   PlayerState,
+  Prices,
   StateResponse,
   Stockpile,
+  Summary,
   Tier,
   TileState,
-  Weather,
+  TraderOffer,
 } from '../../shared/types';
 import type { BuildingId } from '../../shared/types';
 import {
   BOOST_DAILY_LIMIT,
   CATALOG,
+  KEEP_STAGE_COSTS,
+  MARKET,
   MAX_LEVEL,
+  STAGE_MIN_PAYOUT,
+  STAGE_NAME_WORDS,
+  STAGE_POT,
   tierStats,
 } from '../../shared/catalog';
 import type { BuildingSpec } from '../../shared/catalog';
 import {
+  GOODS,
   accrue,
   adjacencyBonus,
   canClaim,
-  emptyStockpile,
   goodsTotal,
   mergeGoods,
   levelForXp,
@@ -33,36 +41,35 @@ import {
   streakReward,
   utcDay,
 } from '../../shared/logic/economy';
-
-// TODO(V2): The Grand Keep now costs planks+bricks per stage (KEEP_STAGE_COSTS)
-// and pays a pro-rata pot. Until Task V2 reworks contribution, the server keeps
-// v1 landmark semantics against this legacy supply-threshold ladder so gates
-// stay green; `supplies` on PlayerState is the (deprecated) contribution store.
-export const LANDMARK_THRESHOLDS: number[] = [300, 900, 2000, 4000, 7500];
-
-// TODO(V2): the daily weather roll + village stockpile are not yet server-side.
-// accrue is fed a neutral 'clear' weather and an empty stockpile, so processors
-// produce nothing and raw producers/coins buildings behave as in v1. Task V2
-// wires the real stockpile + weather through collect.
-const STOPGAP_WEATHER: Weather = 'clear';
-const stopgapStockpile = (): Stockpile => emptyStockpile();
+import { buyValue, priceFor, pricesFor, sellValue } from '../../shared/logic/market';
+import { isUnlocked, nextThreshold, ringBounds } from '../../shared/logic/expansion';
+import { offersForDay, weatherForDay } from '../../shared/logic/trader';
 import { parseKey, tileKey } from '../../shared/logic/grid';
 import {
   getBallot,
   getCity,
   getGrid,
   getPlayer,
+  getStockpile,
   getTile,
+  hasTradedToday,
   hasVoted,
   incrStageContrib,
   initPlayer,
+  markTradedToday,
   ownedCount,
   putCity,
   putPlayer,
+  putStockpile,
   putTile,
   recordVote,
   stageContribScore,
+  stageContribTotal,
+  stageTopContributor,
 } from './store';
+
+/** Number of Grand Keep stages. */
+export const KEEP_STAGES: number = KEEP_STAGE_COSTS.length;
 
 const GRID_KEY = 'city:grid';
 const LB_VALUE = 'lb:value';
@@ -169,72 +176,105 @@ export const validateBoost = (
   return null;
 };
 
-// --- Landmark contributions -------------------------------------------------
+// --- Grand Keep contributions -----------------------------------------------
 
 export type StageSplit = { stage: number; amount: number };
 
-export type ContributeResult = {
-  /** Total supplies actually consumed (after clamp + excess discard). */
+export type KeepContributeResult = {
+  /** Units of the good actually poured into stages (excludes any refund). */
   applied: number;
+  /** Units returned to the player's wallet (see the refund rule below). */
+  refunded: number;
   /** Per-stage portions to record in `contrib:stage:{stage}` zsets. */
   splits: StageSplit[];
   /** New 0-indexed stage under construction. */
   landmarkStage: number;
-  /** Progress toward the new stage's threshold. */
-  landmarkProgress: number;
+  /** Planks progress toward the new current stage. */
+  stagePlanks: number;
+  /** Bricks progress toward the new current stage. */
+  stageBricks: number;
   /** New stage numbers reached (one per completion) for `{t:'stage'}`. */
   completed: number[];
 };
 
-/** True once every landmark stage is built (stage index === threshold count). */
-export const landmarkComplete = (
-  city: CityState,
-  thresholds: number[]
-): boolean => city.landmarkStage >= thresholds.length;
+/** True once every Grand Keep stage is built (stage index === stage count). */
+export const landmarkComplete = (city: CityState): boolean =>
+  city.landmarkStage >= KEEP_STAGES;
 
 /**
- * Apply a supply contribution to the landmark. The amount is clamped to the
- * player's `supplies`, then poured stage-by-stage: each stage fills up to its
- * threshold, completes, and carries the remainder into the next. Any excess
- * left once the final stage completes is discarded.
+ * Pour a single-good contribution into the Grand Keep. Each stage requires BOTH
+ * planks and bricks (`KEEP_STAGE_COSTS[stage]`); a contribution fills only the
+ * requirement for the good given (`planks` or `bricks`). Rules:
  *
- * `contrib:stage:{n}` records contributions toward the stage that was under
- * construction (n = 0-indexed) at the time — so stage n's zset funds the
- * n->n+1 transition and pays out (n+1)*100 on completion.
+ * - Units flow into the current stage's requirement for that good; a stage
+ *   completes only when BOTH goods have met their requirement.
+ * - When this contribution completes both goods for a stage, the stage advances
+ *   and any remaining units CARRY into the next stage's requirement for the same
+ *   good.
+ * - When this good's requirement for the current stage is met but the OTHER
+ *   good's is not, the stage cannot advance — so any leftover units of this good
+ *   are REFUNDED to the wallet rather than carried (you cannot pre-pay a good for
+ *   a stage the village has not otherwise funded).
+ *
+ * Pure: `costs` is passed in (KEEP_STAGE_COSTS) so it is unit-testable.
  */
-export const applyContribution = (
+export const applyKeepContribution = (
   city: CityState,
-  supplies: number,
-  amount: number,
-  thresholds: number[]
-): ContributeResult => {
-  const clamped = Math.min(amount, supplies);
+  good: 'planks' | 'bricks',
+  qty: number,
+  costs: Array<{ planks: number; bricks: number }>
+): KeepContributeResult => {
   let stage = city.landmarkStage;
-  let progress = city.landmarkProgress;
-  let remaining = clamped;
+  let planks = city.stagePlanks;
+  let bricks = city.stageBricks;
+  let remaining = Math.max(0, Math.floor(qty));
+  let applied = 0;
+  let refunded = 0;
   const splits: StageSplit[] = [];
   const completed: number[] = [];
 
-  while (remaining > 0 && stage < thresholds.length) {
-    const threshold = thresholds[stage];
-    if (threshold === undefined) break;
-    const need = threshold - progress;
-    const put = Math.min(remaining, need);
-    splits.push({ stage, amount: put });
-    progress += put;
-    remaining -= put;
-    if (progress >= threshold) {
-      stage += 1;
-      progress = 0;
-      completed.push(stage);
+  while (remaining > 0 && stage < costs.length) {
+    const cost = costs[stage];
+    if (!cost) break;
+    const filled = good === 'planks' ? planks : bricks;
+    const need = cost[good] - filled;
+    if (need > 0) {
+      const put = Math.min(remaining, need);
+      if (good === 'planks') planks += put;
+      else bricks += put;
+      remaining -= put;
+      applied += put;
+      splits.push({ stage, amount: put });
+    }
+
+    const thisFilled = good === 'planks' ? planks : bricks;
+    const otherFilled = good === 'planks' ? bricks : planks;
+    const otherCost = good === 'planks' ? cost.bricks : cost.planks;
+    if (thisFilled >= cost[good]) {
+      if (otherFilled >= otherCost) {
+        // Both goods met — stage completes; leftover carries to the next stage.
+        stage += 1;
+        planks = 0;
+        bricks = 0;
+        completed.push(stage);
+      } else {
+        // This good is full but the stage cannot advance — refund the rest.
+        refunded += remaining;
+        remaining = 0;
+      }
     }
   }
 
+  // Fully expanded / all stages built: any remaining units are refunded.
+  refunded += remaining;
+
   return {
-    applied: clamped - remaining,
+    applied,
+    refunded,
     splits,
     landmarkStage: stage,
-    landmarkProgress: progress,
+    stagePlanks: planks,
+    stageBricks: bricks,
     completed,
   };
 };
@@ -267,24 +307,59 @@ export const tallyBallot = (
 
 // --- Stage payout -----------------------------------------------------------
 
-/** Reward for a contributor when stage index n completes. */
-export const stageReward = (n: number): number => (n + 1) * 100;
+/** The coin pot for completing stage index `n` (0-indexed): `(n+1) × 400`. */
+export const stagePot = (n: number): number => (n + 1) * STAGE_POT;
 
 /**
- * Sum the payouts owed to a player for completed-but-unpaid stages. Stages
- * [paidStage, landmarkStage) are complete; the player is paid stageReward(n)
- * for each such stage they funded.
+ * A contributor's pro-rata share of a stage pot: `floor(pot × myUnits / total)`,
+ * with a floor of `STAGE_MIN_PAYOUT` for anyone who contributed at all. Returns
+ * 0 for non-contributors (or an empty stage).
  */
-export const computePayout = (
-  paidStage: number,
-  landmarkStage: number,
-  contributed: (n: number) => boolean
+export const proRataPayout = (
+  pot: number,
+  playerUnits: number,
+  totalUnits: number
 ): number => {
-  let coins = 0;
-  for (let n = paidStage; n < landmarkStage; n += 1) {
-    if (contributed(n)) coins += stageReward(n);
+  if (playerUnits <= 0 || totalUnits <= 0) return 0;
+  return Math.max(STAGE_MIN_PAYOUT, Math.floor((pot * playerUnits) / totalUnits));
+};
+
+// --- Collect economics (pure) -----------------------------------------------
+
+/**
+ * How many processor recipe runs the owner can afford, given a coin `balance`,
+ * the input `price`, the recipe input `per` (units consumed per run), and the
+ * `runs` the stockpile could otherwise support. Each run costs `price × per`
+ * coins; a free recipe (price or per 0) allows all runs.
+ */
+export const affordableRuns = (
+  balance: number,
+  price: number,
+  per: number,
+  runs: number
+): number => {
+  const costPerRun = price * per;
+  if (costPerRun <= 0) return runs;
+  return Math.min(runs, Math.floor(balance / costPerRun));
+};
+
+/**
+ * The Grand Keep grants +3% village-wide production per completed stage (max
+ * +15% at 5 stages). Applied to a collect's coin + goods OUTPUT after accrual;
+ * `xp` and consumed inputs are unaffected. Amounts are floored.
+ */
+export const applyStageBuff = (gained: Gained, stage: number): Gained => {
+  // Percent numerator (100 + 3 per stage, capped) kept integer so the multiply
+  // is exact — `100 × 1.15` drifts to 114.999… in IEEE754, but `100 × 115 / 100`
+  // is exactly 115.
+  const pct = 100 + 3 * Math.min(Math.max(stage, 0), KEEP_STAGES);
+  const scale = (v: number): number => Math.floor((v * pct) / 100);
+  const goods: Partial<Record<Good, number>> = {};
+  for (const g of GOODS) {
+    const v = gained.goods[g];
+    if (v) goods[g] = scale(v);
   }
-  return coins;
+  return { coins: scale(gained.coins), xp: gained.xp, goods };
 };
 
 // --- Sharing -----------------------------------------------------------------
@@ -315,44 +390,109 @@ export const shareText = (
   subredditName: string
 ): string => {
   if (kind === 'levelup') {
-    return `🏡 u/${name} just reached Level ${value} in Hearthvale — ${flairTitle(value)}!`;
+    return `u/${name} just reached Level ${value} in Hearthvale — ${flairTitle(value)}!`;
   }
-  return `🕰 The Grand Clocktower reached Stage ${value}/${LANDMARK_THRESHOLDS.length} — built together by the villagers of r/${subredditName}!`;
+  return `The Grand Keep reached Stage ${value}/${KEEP_STAGES} — built together by the villagers of r/${subredditName}!`;
 };
 
+export type CollectResult = {
+  tile: TileState;
+  player: PlayerState;
+  gained: Gained;
+  /** Inputs pulled from the village stockpile (the caller writes these back). */
+  consumed: Partial<Record<Good, number>>;
+};
+
+/**
+ * Collect one tile against the real village `stockpile` (and `city.weather`).
+ * Pure — the caller applies `consumed` to the stockpile and persists.
+ *
+ * - Raw producers + goods processors output goods into the OWNER'S wallet;
+ *   cottage/manor + the bakery output coins.
+ * - Processors consume `2 × runs` inputs from the stockpile and the owner PAYS
+ *   `price × units`: the bakery nets it out of its minted coins (floored at 0),
+ *   while goods processors pay from their coin balance — and if they cannot
+ *   afford every run, the run count (output + consumption + cost) is trimmed to
+ *   what they can afford (`affordableRuns`).
+ * - The Grand Keep production buff (+3%/stage) scales the OUTPUT after accrual.
+ * - Only production coins feed `lifetimeEarned` (→ lb:earned); market income
+ *   never does.
+ */
 export const applyCollect = (
   tile: TileState,
   player: PlayerState,
   city: CityState,
   now: number,
-  adjBonus: number
-): { tile: TileState; player: PlayerState; gained: Gained } => {
-  // TODO(V2): feed the real village stockpile + today's weather here, and route
-  // produced goods into the player's wallet + village stockpile. For now goods
-  // are summed into the legacy `supplies` counter to preserve v1 behaviour.
-  const { gained } = accrue(
-    tile,
-    now,
-    city.festival,
-    adjBonus,
-    STOPGAP_WEATHER,
-    stopgapStockpile()
-  );
-  const goods = goodsTotal(gained.goods);
-  const produced = gained.coins + goods > 0;
+  adjBonus: number,
+  stockpile: Stockpile
+): CollectResult => {
+  const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile);
+  let gained = raw.gained;
+  let consumed = raw.consumed;
+
+  const spec = tile.buildingId ? CATALOG[tile.buildingId] : undefined;
+
+  let inputCost = 0;
+  if (spec && spec.role === 'processor' && spec.input && spec.output) {
+    const input = spec.input;
+    const price = priceFor(stockpile[input.good], input.good);
+    const consumedUnits = consumed[input.good] ?? 0;
+    const runs = input.per > 0 ? Math.floor(consumedUnits / input.per) : 0;
+
+    if (spec.output === 'coins') {
+      inputCost = price * consumedUnits;
+    } else {
+      const affordable = affordableRuns(player.coins, price, input.per, runs);
+      if (affordable < runs) {
+        const outGood = spec.output;
+        consumed = { [input.good]: affordable * input.per };
+        gained = {
+          coins: 0,
+          xp: affordable,
+          goods: affordable > 0 ? { [outGood]: affordable } : {},
+        };
+      }
+      inputCost = price * (consumed[input.good] ?? 0);
+    }
+  }
+
+  // Grand Keep buff scales the output only (never the consumed inputs).
+  gained = applyStageBuff(gained, city.landmarkStage);
+
+  let netCoins = gained.coins;
+  let paidFromBalance = 0;
+  if (spec && spec.role === 'processor') {
+    if (spec.output === 'coins') {
+      netCoins = Math.max(0, gained.coins - inputCost);
+      gained = { ...gained, coins: netCoins };
+    } else {
+      paidFromBalance = inputCost;
+    }
+  }
+
+  const goodsOut = goodsTotal(gained.goods);
+  // Consuming inputs counts as "did work" even if the net output floored to 0
+  // (an underwater bakery) — so lastCollect advances and the draw is not repeated.
+  const produced =
+    netCoins + goodsOut > 0 || paidFromBalance > 0 || goodsTotal(consumed) > 0;
 
   let nextTile: TileState = { ...tile };
   let nextPlayer = player;
 
   if (produced) {
+    const wallet = { ...player.wallet };
+    for (const g of GOODS) {
+      const v = gained.goods[g];
+      if (v) wallet[g] = (wallet[g] ?? 0) + v;
+    }
     nextPlayer = creditXp(
       {
         ...player,
-        coins: player.coins + gained.coins,
-        supplies: player.supplies + goods,
+        coins: player.coins + netCoins - paidFromBalance,
+        wallet,
         // Absolute lifetime-earned counter drives the replay-safe lb:earned
         // score: re-applying the same collect result yields the same total.
-        lifetimeEarned: player.lifetimeEarned + gained.coins,
+        lifetimeEarned: player.lifetimeEarned + netCoins,
       },
       gained.xp
     );
@@ -366,7 +506,7 @@ export const applyCollect = (
     }
   }
 
-  return { tile: nextTile, player: nextPlayer, gained };
+  return { tile: nextTile, player: nextPlayer, gained, consumed };
 };
 
 // ---------------------------------------------------------------------------
@@ -417,6 +557,45 @@ export const broadcastFestival = async (
   }
 };
 
+const broadcastMarket = async (stockpile: Stockpile): Promise<void> => {
+  try {
+    await realtime.send('village', {
+      t: 'market',
+      prices: pricesFor(stockpile),
+      stockpile,
+    });
+  } catch (error) {
+    console.error('realtime market broadcast failed:', error);
+  }
+};
+
+const broadcastRing = async (bounds: {
+  lo: number;
+  hi: number;
+}): Promise<void> => {
+  try {
+    await realtime.send('village', { t: 'ring', bounds });
+  } catch (error) {
+    console.error('realtime ring broadcast failed:', error);
+  }
+};
+
+/**
+ * Lazily roll today's weather if the persisted roll is stale (covers missed
+ * scheduler runs). Returns the city with today's weather; persists on a change.
+ */
+const ensureWeather = async (
+  city: CityState,
+  now: number
+): Promise<CityState> => {
+  const today = utcDay(now);
+  if (city.weatherDate === today) return city;
+  const weather = weatherForDay(today);
+  const next: CityState = { ...city, weather, weatherDate: today };
+  await putCity({ weather, weatherDate: today });
+  return next;
+};
+
 const maybeFlair = async (
   before: number,
   player: PlayerState
@@ -465,10 +644,11 @@ const ensurePlayer = async (userId: string): Promise<PlayerState> => {
 // ---------------------------------------------------------------------------
 
 /**
- * Lazily pay a player for landmark stages that completed since they last
- * collected. Stages [player.paidStage, city.landmarkStage) are complete; the
- * player earns stageReward(n) === (n+1)*100 for each such stage they funded
- * (a positive score in `contrib:stage:{n}`). Advances paidStage and persists.
+ * Lazily pay a player for Grand Keep stages that completed since they last
+ * collected. Stages [player.paidStage, city.landmarkStage) are complete; for
+ * each such stage the player funded (a positive score in `contrib:stage:{n}`)
+ * they earn their pro-rata share of the `stagePot(n)` (min STAGE_MIN_PAYOUT).
+ * Advances paidStage and persists.
  */
 const settleStagePayouts = async (
   player: PlayerState,
@@ -478,8 +658,10 @@ const settleStagePayouts = async (
 
   let coins = 0;
   for (let n = player.paidStage; n < city.landmarkStage; n += 1) {
-    const score = await stageContribScore(n, player.id);
-    if (score > 0) coins += stageReward(n);
+    const mine = await stageContribScore(n, player.id);
+    if (mine <= 0) continue;
+    const total = await stageContribTotal(n);
+    coins += proRataPayout(stagePot(n), mine, total);
   }
 
   const settled: PlayerState = {
@@ -491,10 +673,39 @@ const settleStagePayouts = async (
   return settled;
 };
 
+const distinctOwners = (grid: Record<string, TileState>): number => {
+  const owners = new Set<string>();
+  for (const tile of Object.values(grid)) owners.add(tile.owner);
+  return owners.size;
+};
+
+/**
+ * Population-gated expansion check: null if tile `(x, y)` is inside the ring
+ * unlocked at `population`, else the rejection message naming how many more
+ * villagers unlock the next ring. Pure — unit-tested.
+ */
+export const expansionGate = (
+  x: number,
+  y: number,
+  population: number
+): string | null => {
+  if (isUnlocked(x, y, population)) return null;
+  const next = nextThreshold(population);
+  const need = next === null ? 0 : next - population;
+  return `The village must grow first (${need} more villagers unlock new land).`;
+};
+
 export const loadState = async (
   userId: string | undefined
 ): Promise<StateResponse> => {
-  const [grid, city] = await Promise.all([getGrid(), getCity()]);
+  const now = Date.now();
+  const [grid, cityRaw, stockpile] = await Promise.all([
+    getGrid(),
+    getCity(),
+    getStockpile(),
+  ]);
+  const city = await ensureWeather(cityRaw, now);
+
   let me = userId ? await ensurePlayer(userId) : null;
   if (me) me = await settleStagePayouts(me, city);
 
@@ -508,7 +719,27 @@ export const loadState = async (
     top.push({ name, score: row.score, me: row.member === userId });
   }
 
-  return { grid, city, me, now: Date.now(), top };
+  const today = utcDay(now);
+  const traderDone = userId ? await hasTradedToday(today, userId) : false;
+  const { lo, hi } = ringBounds(city.population);
+
+  return {
+    grid,
+    city,
+    me,
+    now,
+    top,
+    stockpile,
+    prices: pricesFor(stockpile),
+    weather: city.weather,
+    trader: { offers: offersForDay(today), done: traderDone },
+    ring: {
+      lo,
+      hi,
+      nextThreshold: nextThreshold(city.population),
+      population: city.population,
+    },
+  };
 };
 
 export const doClaim = async (
@@ -519,9 +750,16 @@ export const doClaim = async (
   const key = tileKey(x, y);
   const [grid, player] = await Promise.all([getGrid(), ensurePlayer(userId)]);
   const owned = ownedCount(grid, userId);
+  const population = distinctOwners(grid);
+  const wasOwner = owned > 0;
 
   const err = canClaim(grid, x, y, player, owned);
   if (err) throw new OpError(400, err);
+
+  // Population-gated expansion: locked outer land rejects claims until enough
+  // villagers have joined to unlock the next ring.
+  const gate = expansionGate(x, y, population);
+  if (gate) throw new OpError(400, gate);
 
   const tx = await redis.watch(GRID_KEY);
   const existing = await getTile(key);
@@ -553,7 +791,36 @@ export const doClaim = async (
   }
 
   await broadcastTile(key, tile);
+
+  // A brand-new villager grows the population; recompute the cached count and,
+  // if a new ring opened, broadcast + celebrate.
+  if (!wasOwner) {
+    const newPopulation = population + 1;
+    await putCity({ population: newPopulation });
+    const before = ringBounds(population);
+    const after = ringBounds(newPopulation);
+    if (before.lo !== after.lo || before.hi !== after.hi) {
+      await broadcastRing(after);
+      await celebrateRingUnlock();
+    }
+  }
+
   return { tile, me: player };
+};
+
+/** Best-effort app-account comment celebrating a land-expansion unlock. */
+const celebrateRingUnlock = async (): Promise<void> => {
+  const postId = context.postId;
+  if (!postId) return;
+  try {
+    await reddit.submitComment({
+      id: postId,
+      text: 'The village has grown! New land unlocked for settlement.',
+      runAs: 'APP',
+    });
+  } catch (error) {
+    console.error('ring-unlock celebration comment failed:', error);
+  }
 };
 
 export const doBuild = async (
@@ -608,7 +875,7 @@ export const doUpgrade = async (
   y: number
 ): Promise<{ tile: TileState; me: PlayerState }> => {
   const key = tileKey(x, y);
-  const [tile, player, grid, city] = await Promise.all([
+  const [tile, player, grid, cityRaw] = await Promise.all([
     getTile(key),
     ensurePlayer(userId),
     getGrid(),
@@ -624,9 +891,12 @@ export const doUpgrade = async (
   const err = validateUpgrade(player, tile, now);
   if (err) throw new OpError(400, err);
 
+  const city = await ensureWeather(cityRaw, now);
+  const stockpile = await getStockpile();
+
   // Auto-collect pending production before the timer resets.
   const adj = adjacencyBonus(grid, x, y, city.festival, now);
-  const collected = applyCollect(tile, player, city, now, adj);
+  const collected = applyCollect(tile, player, city, now, adj, stockpile);
   const pending = collected.gained;
 
   const nextTier: Tier = tile.tier === 1 ? 2 : 3;
@@ -655,6 +925,12 @@ export const doUpgrade = async (
     Math.floor(stats.cost / 10)
   );
 
+  const stockChanged = goodsTotal(collected.consumed) > 0;
+  if (stockChanged) {
+    for (const g of GOODS) stockpile[g] -= collected.consumed[g] ?? 0;
+    await putStockpile(stockpile);
+  }
+
   await putTile(key, upgraded);
   await putPlayer(me);
   // Absolute writes derived from the player's lifetime counters — replay-safe
@@ -669,6 +945,7 @@ export const doUpgrade = async (
   }
   await maybeFlair(before, me);
   await broadcastTile(key, upgraded);
+  if (stockChanged) await broadcastMarket(stockpile);
   return { tile: upgraded, me };
 };
 
@@ -678,7 +955,7 @@ export const doCollect = async (
   y: number
 ): Promise<{ tile: TileState; me: PlayerState; gained: Gained }> => {
   const key = tileKey(x, y);
-  const [tile, player, grid, city] = await Promise.all([
+  const [tile, player, grid, cityRaw] = await Promise.all([
     getTile(key),
     ensurePlayer(userId),
     getGrid(),
@@ -691,11 +968,15 @@ export const doCollect = async (
   }
 
   const now = Date.now();
+  const city = await ensureWeather(cityRaw, now);
+  const stockpile = await getStockpile();
+
   const adj = adjacencyBonus(grid, x, y, city.festival, now);
-  const result = applyCollect(tile, player, city, now, adj);
+  const result = applyCollect(tile, player, city, now, adj, stockpile);
   const gained = result.gained;
   const banked = gained.coins + goodsTotal(gained.goods);
-  const produced = banked > 0;
+  const stockChanged = goodsTotal(result.consumed) > 0;
+  const produced = banked > 0 || stockChanged;
 
   await putTile(key, result.tile);
   if (produced) {
@@ -711,37 +992,52 @@ export const doCollect = async (
     });
     await maybeFlair(player.level, result.player);
   }
+  if (stockChanged) {
+    for (const g of GOODS) stockpile[g] -= result.consumed[g] ?? 0;
+    await putStockpile(stockpile);
+  }
   await broadcastTile(key, result.tile);
+  if (stockChanged) await broadcastMarket(stockpile);
   return { tile: result.tile, me: result.player, gained };
 };
 
 export const doCollectAll = async (
   userId: string
 ): Promise<{ tiles: Record<string, TileState>; me: PlayerState; gained: Gained }> => {
-  const [grid, initial, city] = await Promise.all([
+  const [grid, initial, cityRaw] = await Promise.all([
     getGrid(),
     ensurePlayer(userId),
     getCity(),
   ]);
 
   const now = Date.now();
+  const city = await ensureWeather(cityRaw, now);
+  const stockpile = await getStockpile();
+
   const startLevel = initial.level;
   let me = initial;
   const total: Gained = { coins: 0, xp: 0, goods: {} };
   const changed: Array<{ key: string; tile: TileState }> = [];
+  let stockChanged = false;
 
   for (const [key, tile] of Object.entries(grid)) {
     if (tile.owner !== userId || !tile.buildingId) continue;
     const { x, y } = parseKey(key);
     const adj = adjacencyBonus(grid, x, y, city.festival, now);
-    const result = applyCollect(tile, me, city, now, adj);
+    // Thread the (mutating) stockpile so later processors see earlier draws.
+    const result = applyCollect(tile, me, city, now, adj, stockpile);
     me = result.player;
     total.coins += result.gained.coins;
     total.goods = mergeGoods(total.goods, result.gained.goods);
     total.xp += result.gained.xp;
+    const consumedUnits = goodsTotal(result.consumed);
+    if (consumedUnits > 0) {
+      for (const g of GOODS) stockpile[g] -= result.consumed[g] ?? 0;
+      stockChanged = true;
+    }
     const banked = result.gained.coins + goodsTotal(result.gained.goods);
     const boostChanged = result.tile.boostUntil !== tile.boostUntil;
-    if (banked > 0 || boostChanged) {
+    if (banked > 0 || boostChanged || consumedUnits > 0) {
       changed.push({ key, tile: result.tile });
     }
   }
@@ -750,7 +1046,7 @@ export const doCollectAll = async (
     await putTile(key, tile);
   }
   const bankedTotal = total.coins + goodsTotal(total.goods);
-  const produced = bankedTotal > 0;
+  const produced = bankedTotal > 0 || stockChanged;
   if (produced) {
     await putPlayer(me);
     if (total.coins > 0) {
@@ -761,9 +1057,11 @@ export const doCollectAll = async (
     });
     await maybeFlair(startLevel, me);
   }
+  if (stockChanged) await putStockpile(stockpile);
   for (const { key, tile } of changed) {
     await broadcastTile(key, tile);
   }
+  if (stockChanged) await broadcastMarket(stockpile);
 
   const tiles: Record<string, TileState> = {};
   for (const { key, tile } of changed) {
@@ -773,17 +1071,31 @@ export const doCollectAll = async (
   return { tiles, me, gained: total };
 };
 
+/** The good with the highest price-to-base ratio — what the village needs most. */
+const hottestGood = (stockpile: Stockpile): { good: Good; price: number } => {
+  let best: Good = 'wheat';
+  let bestRatio = -Infinity;
+  for (const g of GOODS) {
+    const price = priceFor(stockpile[g], g);
+    const ratio = price / MARKET[g].base;
+    if (ratio > bestRatio) {
+      bestRatio = ratio;
+      best = g;
+    }
+  }
+  return { good: best, price: priceFor(stockpile[best], best) };
+};
+
 export const loadSummary = async (
   userId: string | undefined
-): Promise<{
-  buildings: number;
-  players: number;
-  landmarkStage: number;
-  landmarkPct: number;
-  festival: CityState['festival'];
-  readyForMe: number;
-}> => {
-  const [grid, city] = await Promise.all([getGrid(), getCity()]);
+): Promise<Summary> => {
+  const now = Date.now();
+  const [grid, cityRaw, stockpile] = await Promise.all([
+    getGrid(),
+    getCity(),
+    getStockpile(),
+  ]);
+  const city = await ensureWeather(cityRaw, now);
 
   const owners = new Set<string>();
   let buildings = 0;
@@ -794,17 +1106,15 @@ export const loadSummary = async (
 
   const stage = city.landmarkStage;
   let landmarkPct = 100;
-  if (stage < LANDMARK_THRESHOLDS.length) {
-    const threshold = LANDMARK_THRESHOLDS[stage] ?? 1;
-    landmarkPct = Math.max(
-      0,
-      Math.min(100, Math.floor((city.landmarkProgress / threshold) * 100))
-    );
+  if (stage < KEEP_STAGES) {
+    const cost = KEEP_STAGE_COSTS[stage] ?? { planks: 1, bricks: 1 };
+    const need = cost.planks + cost.bricks;
+    const have = city.stagePlanks + city.stageBricks;
+    landmarkPct = Math.max(0, Math.min(100, Math.floor((have / need) * 100)));
   }
 
   let readyForMe = 0;
   if (userId) {
-    const now = Date.now();
     for (const [key, tile] of Object.entries(grid)) {
       if (tile.owner !== userId || !tile.buildingId) continue;
       const { x, y } = parseKey(key);
@@ -814,13 +1124,14 @@ export const loadSummary = async (
         now,
         city.festival,
         adj,
-        STOPGAP_WEATHER,
-        stopgapStockpile()
+        city.weather,
+        stockpile
       );
       if (gained.coins + goodsTotal(gained.goods) > 0) readyForMe += 1;
     }
   }
 
+  const hot = hottestGood(stockpile);
   return {
     buildings,
     players: owners.size,
@@ -828,6 +1139,9 @@ export const loadSummary = async (
     landmarkPct,
     festival: city.festival,
     readyForMe,
+    weather: city.weather,
+    hotGood: hot.good,
+    hotPrice: hot.price,
   };
 };
 
@@ -895,41 +1209,48 @@ export const doBoost = async (
 
 export const doContribute = async (
   userId: string,
-  amount: number
+  good: 'planks' | 'bricks',
+  qty: number
 ): Promise<{ city: CityState; me: PlayerState }> => {
   const [player, city] = await Promise.all([ensurePlayer(userId), getCity()]);
 
-  if (landmarkComplete(city, LANDMARK_THRESHOLDS)) {
-    throw new OpError(400, 'The clocktower is already complete.');
+  if (landmarkComplete(city)) {
+    throw new OpError(400, 'The Grand Keep is already complete.');
   }
-  if (player.supplies <= 0) {
-    throw new OpError(400, 'You have no supplies to contribute.');
+  const held = player.wallet[good];
+  if (held <= 0) {
+    throw new OpError(400, `You have no ${good} to contribute.`);
   }
 
-  const result = applyContribution(
-    city,
-    player.supplies,
-    amount,
-    LANDMARK_THRESHOLDS
-  );
+  const clamped = Math.min(qty, held);
+  const result = applyKeepContribution(city, good, clamped, KEEP_STAGE_COSTS);
+  if (result.applied <= 0) {
+    // The good's requirement for the current stage is already met; nothing can
+    // be poured in until the other good catches up.
+    throw new OpError(
+      400,
+      `The Grand Keep does not need more ${good} for this stage yet.`
+    );
+  }
 
   const before = player.level;
-  // 1 xp per supply contributed, credited through the level-up helper. The
+  // Units returned by the refund rule stay in the wallet; only `applied` leaves.
+  const wallet = { ...player.wallet, [good]: held - result.applied };
+  // 1 xp per unit contributed, credited through the level-up helper. The
   // absolute lifetimeContributed counter drives the replay-safe lb:contrib
   // score below.
   const me = creditXp(
     {
       ...player,
-      supplies: player.supplies - result.applied,
+      wallet,
       lifetimeContributed: player.lifetimeContributed + result.applied,
     },
     result.applied
   );
 
-  // Per-stage zsets keep zIncrBy: their payout is boolean-gated on score > 0
-  // (see settleStagePayouts), so a replayed increment is display-only and never
-  // pays twice. The cross-stage lb:contrib leaderboard, by contrast, uses an
-  // absolute zAdd so racing duplicate contributions converge instead of summing.
+  // Per-stage zsets keep zIncrBy (display + pro-rata payout weighting). The
+  // cross-stage lb:contrib leaderboard uses an absolute zAdd so racing duplicate
+  // contributions converge instead of summing.
   for (const split of result.splits) {
     await incrStageContrib(split.stage, userId, split.amount);
   }
@@ -938,13 +1259,15 @@ export const doContribute = async (
   const nextCity: CityState = {
     ...city,
     landmarkStage: result.landmarkStage,
-    landmarkProgress: result.landmarkProgress,
+    stagePlanks: result.stagePlanks,
+    stageBricks: result.stageBricks,
     totalContributed: city.totalContributed + result.applied,
   };
 
   await putCity({
     landmarkStage: nextCity.landmarkStage,
-    landmarkProgress: nextCity.landmarkProgress,
+    stagePlanks: nextCity.stagePlanks,
+    stageBricks: nextCity.stageBricks,
     totalContributed: nextCity.totalContributed,
   });
   await putPlayer(me);
@@ -955,6 +1278,204 @@ export const doContribute = async (
     await broadcastStage(stage);
   }
   return { city: nextCity, me };
+};
+
+// --- Market: sell / buy -----------------------------------------------------
+
+export const doSell = async (
+  userId: string,
+  good: Good,
+  qty: number
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
+  const [player, stockpile] = await Promise.all([
+    ensurePlayer(userId),
+    getStockpile(),
+  ]);
+  const held = player.wallet[good];
+  if (held <= 0) throw new OpError(400, `You have no ${good} to sell.`);
+
+  const amount = Math.min(qty, held);
+  const before = stockpile[good];
+  const coins = sellValue(amount, before, good);
+
+  // Market income is deliberately NOT counted toward lb:earned (production only).
+  const me: PlayerState = {
+    ...player,
+    coins: player.coins + coins,
+    wallet: { ...player.wallet, [good]: held - amount },
+  };
+  const nextStock: Stockpile = { ...stockpile, [good]: before + amount };
+
+  await putPlayer(me);
+  await putStockpile(nextStock);
+  await broadcastMarket(nextStock);
+  return { me, stockpile: nextStock, prices: pricesFor(nextStock) };
+};
+
+export const doBuy = async (
+  userId: string,
+  good: Good,
+  qty: number
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
+  const [player, stockpile] = await Promise.all([
+    ensurePlayer(userId),
+    getStockpile(),
+  ]);
+  const before = stockpile[good];
+  if (before < qty) {
+    throw new OpError(400, `The market only has ${before} ${good}.`);
+  }
+  const cost = buyValue(qty, before, good);
+  if (player.coins < cost) throw new OpError(400, 'Not enough coins.');
+
+  const me: PlayerState = {
+    ...player,
+    coins: player.coins - cost,
+    wallet: { ...player.wallet, [good]: player.wallet[good] + qty },
+  };
+  const nextStock: Stockpile = { ...stockpile, [good]: before - qty };
+
+  await putPlayer(me);
+  await putStockpile(nextStock);
+  await broadcastMarket(nextStock);
+  return { me, stockpile: nextStock, prices: pricesFor(nextStock) };
+};
+
+// --- Wandering trader -------------------------------------------------------
+
+/** Whether a wallet can cover an offer's `give` side. */
+export const canAffordOffer = (
+  wallet: PlayerState['wallet'],
+  offer: TraderOffer
+): boolean => wallet[offer.give.good] >= offer.give.qty;
+
+/**
+ * Validate a trade attempt: rejects an already-used daily trade or a wallet that
+ * cannot cover the offer's `give` side. Pure — unit-tested.
+ */
+export const validateTrade = (
+  alreadyTraded: boolean,
+  wallet: PlayerState['wallet'],
+  offer: TraderOffer
+): string | null => {
+  if (alreadyTraded) return 'You have already traded today.';
+  if (!canAffordOffer(wallet, offer)) {
+    return `You need ${offer.give.qty} ${offer.give.good}.`;
+  }
+  return null;
+};
+
+export const doTrade = async (
+  userId: string,
+  offerIndex: number
+): Promise<{ me: PlayerState; tile?: { key: string; tile: TileState } }> => {
+  const player = await ensurePlayer(userId);
+  const today = utcDay(Date.now());
+
+  const offers = offersForDay(today);
+  const offer = offers[offerIndex];
+  if (!offer) throw new OpError(400, 'That trade offer does not exist.');
+
+  const alreadyTraded = await hasTradedToday(today, userId);
+  const err = validateTrade(alreadyTraded, player.wallet, offer);
+  if (err) throw new OpError(400, err);
+
+  const wallet = {
+    ...player.wallet,
+    [offer.give.good]: player.wallet[offer.give.good] - offer.give.qty,
+  };
+
+  let cosmeticTile: { key: string; tile: TileState } | undefined;
+
+  if ('cosmetic' in offer.get) {
+    // SIMPLIFICATION (documented): the golden-roof cosmetic is auto-applied to
+    // the player's highest-value building tile (by tier, then build cost).
+    const grid = await getGrid();
+    let bestKey: string | null = null;
+    let bestScore = -1;
+    for (const [key, tile] of Object.entries(grid)) {
+      if (tile.owner !== userId || !tile.buildingId) continue;
+      const score = tile.tier * 10000 + CATALOG[tile.buildingId].cost;
+      if (score > bestScore) {
+        bestScore = score;
+        bestKey = key;
+      }
+    }
+    if (!bestKey) {
+      throw new OpError(400, 'You need a building for the golden roof.');
+    }
+    const chosen = grid[bestKey];
+    if (!chosen) throw new OpError(400, 'You need a building for the golden roof.');
+    const decorated: TileState = { ...chosen, cosmetic: offer.get.cosmetic };
+    await putTile(bestKey, decorated);
+    await broadcastTile(bestKey, decorated);
+    cosmeticTile = { key: bestKey, tile: decorated };
+  } else {
+    wallet[offer.get.good] += offer.get.qty;
+  }
+
+  const me: PlayerState = { ...player, wallet };
+  await putPlayer(me);
+  await markTradedToday(today, userId);
+  return { me, ...(cosmeticTile ? { tile: cosmeticTile } : {}) };
+};
+
+// --- Grand Keep stage naming ------------------------------------------------
+
+/** Join two word-list picks into a stage name; null if either index is bad. */
+export const stageNameFromWords = (
+  first: number,
+  second: number
+): string | null => {
+  const adj = STAGE_NAME_WORDS.adjectives[first];
+  const noun = STAGE_NAME_WORDS.nouns[second];
+  if (adj === undefined || noun === undefined) return null;
+  return `${adj} ${noun}`;
+};
+
+/**
+ * Validate a stage-naming attempt. Only the LAST completed stage (index
+ * `landmarkStage - 1`) may be named, only once, and only by that stage's top
+ * contributor. Returns null when allowed, else the rejection message. Pure —
+ * unit-tested.
+ */
+export const validateNaming = (
+  landmarkStage: number,
+  stageNames: string[],
+  topContributor: string | null,
+  userId: string
+): string | null => {
+  const stage = landmarkStage - 1;
+  if (stage < 0) return 'No stage has been completed yet.';
+  if (stageNames[stage]) return 'That stage has already been named.';
+  if (topContributor !== userId) {
+    return 'Only the stage’s top contributor may name it.';
+  }
+  return null;
+};
+
+export const doNameStage = async (
+  userId: string,
+  first: number,
+  second: number
+): Promise<{ city: CityState }> => {
+  const city = await getCity();
+  const stage = city.landmarkStage - 1;
+  const top = stage >= 0 ? await stageTopContributor(stage) : null;
+  const err = validateNaming(city.landmarkStage, city.stageNames, top, userId);
+  if (err) {
+    throw new OpError(err.startsWith('Only') ? 403 : 400, err);
+  }
+
+  const name = stageNameFromWords(first, second);
+  if (name === null) throw new OpError(400, 'Invalid stage-name selection.');
+
+  const stageNames = [...city.stageNames];
+  stageNames[stage] = name;
+  const nextCity: CityState = { ...city, stageNames };
+  await putCity({ stageNames });
+  await broadcastCity(nextCity);
+  return { city: nextCity };
 };
 
 export const doVote = async (
@@ -999,24 +1520,42 @@ export const loadLeaderboards = async (
 };
 
 /**
- * Resolve the next festival by tallying yesterday's ballot (majority wins; a
- * tie or empty ballot rotates from the current festival), persist it, and
- * broadcast. Returns the chosen festival. Used by the daily-cycle scheduler.
+ * The daily cycle's economy roll: tally yesterday's ballot into today's festival
+ * (majority wins; a tie or empty ballot rotates from the current festival) and
+ * roll today's weather, persist both, and broadcast. Returns the festival +
+ * weather + a market snapshot for the daily post. Used by the daily-cycle
+ * scheduler.
  */
 export const runFestivalRotation = async (
   now: number
-): Promise<{ festival: FestivalCategory; dayNumber: number }> => {
-  const city = await getCity();
+): Promise<{
+  festival: FestivalCategory;
+  weather: CityState['weather'];
+  dayNumber: number;
+  stockpile: Stockpile;
+  prices: Prices;
+  offers: TraderOffer[];
+}> => {
+  const [city, stockpile] = await Promise.all([getCity(), getStockpile()]);
   const today = utcDay(now);
   const yesterday = prevDay(today);
   const counts = await getBallot(yesterday);
   const festival = tallyBallot(counts, city.festival);
+  const weather = weatherForDay(today);
 
-  await putCity({ festival, festivalDate: today });
+  await putCity({ festival, festivalDate: today, weather, weatherDate: today });
   await broadcastFestival(festival);
+  await broadcastMarket(stockpile);
 
   const dayNumber = Math.floor((now - city.foundedAt) / 86_400_000) + 1;
-  return { festival, dayNumber };
+  return {
+    festival,
+    weather,
+    dayNumber,
+    stockpile,
+    prices: pricesFor(stockpile),
+    offers: offersForDay(today),
+  };
 };
 
 const shareKey = (userId: string, day: string): string =>
@@ -1044,8 +1583,8 @@ export const doShare = async (
       throw new OpError(400, 'You have not reached that level yet.');
     }
   } else {
-    if (value < 1 || value > LANDMARK_THRESHOLDS.length) {
-      throw new OpError(400, 'That is not a clocktower stage you can share.');
+    if (value < 1 || value > KEEP_STAGES) {
+      throw new OpError(400, 'That is not a Grand Keep stage you can share.');
     }
     if (value > city.landmarkStage) {
       throw new OpError(400, 'That stage has not been built yet.');
@@ -1097,3 +1636,9 @@ export const isCategory = (value: unknown): value is FestivalCategory =>
   value === 'raw' ||
   value === 'processed' ||
   value === 'decor';
+
+export const isGood = (value: unknown): value is Good =>
+  typeof value === 'string' && (GOODS as string[]).includes(value);
+
+export const isProcessedGood = (value: unknown): value is 'planks' | 'bricks' =>
+  value === 'planks' || value === 'bricks';

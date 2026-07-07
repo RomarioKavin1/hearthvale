@@ -1,6 +1,13 @@
 import { Hono } from 'hono';
-import type { FestivalCategory } from '../../shared/types';
-import { createDailyPost } from '../core/post';
+import { reddit } from '@devvit/web/server';
+import type {
+  FestivalCategory,
+  Prices,
+  Stockpile,
+  TraderOffer,
+  Weather,
+} from '../../shared/types';
+import { createDailyPost, marketReportText } from '../core/post';
 import { runFestivalRotation } from '../core/village';
 
 export const scheduler = new Hono();
@@ -11,15 +18,23 @@ type CycleResponse = {
 };
 
 /**
- * The daily cycle: tally yesterday's ballot into today's festival, then spin
- * up the daily post. Each step is wrapped so a failure is logged and still
- * returns HTTP 200 with a status — the platform scheduler retries on non-200,
- * and we never want to retry-spam post creation.
+ * The daily cycle: tally yesterday's ballot into today's festival, roll today's
+ * weather, spin up the daily post, then best-effort attach a market-report
+ * comment. Each step is wrapped so a failure is logged and still returns HTTP
+ * 200 with a status — the platform scheduler retries on non-200, and we never
+ * want to retry-spam post creation.
  */
 scheduler.post('/daily-cycle', async (c) => {
   const now = Date.now();
 
-  let rotation: { festival: FestivalCategory; dayNumber: number };
+  let rotation: {
+    festival: FestivalCategory;
+    weather: Weather;
+    dayNumber: number;
+    stockpile: Stockpile;
+    prices: Prices;
+    offers: TraderOffer[];
+  };
   try {
     rotation = await runFestivalRotation(now);
   } catch (error) {
@@ -30,9 +45,10 @@ scheduler.post('/daily-cycle', async (c) => {
     );
   }
 
-  const { festival, dayNumber } = rotation;
+  const { festival, weather, dayNumber, prices, offers } = rotation;
+  let post: Awaited<ReturnType<typeof createDailyPost>>;
   try {
-    await createDailyPost(festival, dayNumber);
+    post = await createDailyPost(festival, dayNumber, weather);
   } catch (error) {
     console.error('daily-cycle: daily post creation failed:', error);
     return c.json<CycleResponse>(
@@ -44,8 +60,22 @@ scheduler.post('/daily-cycle', async (c) => {
     );
   }
 
+  // Best-effort market-report comment on the fresh post.
+  try {
+    await reddit.submitComment({
+      id: post.id,
+      text: marketReportText(prices, offers),
+      runAs: 'APP',
+    });
+  } catch (error) {
+    console.error('daily-cycle: market report comment failed:', error);
+  }
+
   return c.json<CycleResponse>(
-    { status: 'ok', detail: `day ${dayNumber} ${festival} festival` },
+    {
+      status: 'ok',
+      detail: `day ${dayNumber} ${festival} festival, ${weather} weather`,
+    },
     200
   );
 });

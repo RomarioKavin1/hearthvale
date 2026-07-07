@@ -5,16 +5,22 @@ import {
   OpError,
   doBoost,
   doBuild,
+  doBuy,
   doCheckIn,
   doClaim,
   doCollect,
   doCollectAll,
   doContribute,
+  doNameStage,
+  doSell,
   doShare,
+  doTrade,
   doUpgrade,
   doVote,
   isBuildingId,
   isCategory,
+  isGood,
+  isProcessedGood,
   isShareKind,
   loadLeaderboards,
   loadState,
@@ -171,23 +177,104 @@ api.post('/boost', async (c) => {
   }
 });
 
+const asQty = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    return null;
+  }
+  return value;
+};
+
 api.post('/contribute', async (c) => {
   try {
     const userId = requireUser();
-    const body = await c.req.json<{ amount?: unknown }>();
-    if (
-      typeof body.amount !== 'number' ||
-      !Number.isInteger(body.amount) ||
-      body.amount < 1
-    ) {
+    const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
+    if (!isProcessedGood(body.good)) {
+      return c.json(...fail('You can only contribute planks or bricks.', 400));
+    }
+    const qty = asQty(body.qty);
+    if (qty === null) {
       return c.json(...fail('Contribution must be a whole number of at least 1.', 400));
     }
-    const result = await doContribute(userId, body.amount);
+    const result = await doContribute(userId, body.good, qty);
     return c.json(result);
   } catch (error) {
     if (error instanceof OpError) return c.json(...fail(error.message, error.status));
     console.error('POST /api/contribute failed:', error);
     return c.json(...fail('Failed to contribute.', 500));
+  }
+});
+
+api.post('/sell', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
+    if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
+    const qty = asQty(body.qty);
+    if (qty === null) return c.json(...fail('Quantity must be a whole number of at least 1.', 400));
+    const result = await doSell(userId, body.good, qty);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/sell failed:', error);
+    return c.json(...fail('Failed to sell.', 500));
+  }
+});
+
+api.post('/buy', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
+    if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
+    const qty = asQty(body.qty);
+    if (qty === null) return c.json(...fail('Quantity must be a whole number of at least 1.', 400));
+    const result = await doBuy(userId, body.good, qty);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/buy failed:', error);
+    return c.json(...fail('Failed to buy.', 500));
+  }
+});
+
+api.post('/trade', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ offerIndex?: unknown }>();
+    if (
+      typeof body.offerIndex !== 'number' ||
+      !Number.isInteger(body.offerIndex) ||
+      body.offerIndex < 0 ||
+      body.offerIndex > 2
+    ) {
+      return c.json(...fail('Invalid trade offer.', 400));
+    }
+    const result = await doTrade(userId, body.offerIndex);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/trade failed:', error);
+    return c.json(...fail('Failed to trade.', 500));
+  }
+});
+
+api.post('/name-stage', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ first?: unknown; second?: unknown }>();
+    if (
+      typeof body.first !== 'number' ||
+      !Number.isInteger(body.first) ||
+      typeof body.second !== 'number' ||
+      !Number.isInteger(body.second)
+    ) {
+      return c.json(...fail('Invalid stage-name selection.', 400));
+    }
+    const result = await doNameStage(userId, body.first, body.second);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/name-stage failed:', error);
+    return c.json(...fail('Failed to name stage.', 500));
   }
 });
 

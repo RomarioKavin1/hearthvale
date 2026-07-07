@@ -64,8 +64,12 @@ export type CityState = {
   foundedAt: number;
   festival: FestivalCategory;
   festivalDate: string;
+  /** Current Grand Keep stage under construction (0-indexed; 5 === complete). */
   landmarkStage: number;
-  landmarkProgress: number;
+  /** Planks contributed toward the current stage's planks requirement. */
+  stagePlanks: number;
+  /** Bricks contributed toward the current stage's bricks requirement. */
+  stageBricks: number;
   totalCollected: number;
   totalContributed: number;
   /** Today's rolled weather. */
@@ -82,11 +86,6 @@ export type PlayerState = {
   id: string;
   name: string;
   coins: number;
-  /**
-   * @deprecated TODO(V2): remove — superseded by `wallet` (per-good balances).
-   * Retained this task so the v1 server/client keep compiling and behaving.
-   */
-  supplies: number;
   /** Per-good private balance. */
   wallet: Wallet;
   xp: number;
@@ -116,7 +115,22 @@ export type VillageMessage =
   | { t: 'tile'; key: string; tile: TileState }
   | { t: 'city'; city: CityState }
   | { t: 'festival'; festival: FestivalCategory }
-  | { t: 'stage'; stage: number };
+  | { t: 'stage'; stage: number }
+  | { t: 'market'; prices: Prices; stockpile: Stockpile }
+  | { t: 'ring'; bounds: { lo: number; hi: number } };
+
+/** Today's wandering-trader state in a state response: the 3 offers plus
+ * whether the requesting player has already accepted one today. */
+export type TraderState = { offers: TraderOffer[]; done: boolean };
+
+/** Land-expansion snapshot: the unlocked ring bounds, the next population that
+ * unlocks more land (null once fully expanded), and the current villager count. */
+export type RingState = {
+  lo: number;
+  hi: number;
+  nextThreshold: number | null;
+  population: number;
+};
 
 export type StateResponse = {
   grid: Record<string, TileState>;
@@ -124,6 +138,32 @@ export type StateResponse = {
   me: PlayerState | null;
   now: number;
   top: LeaderRow[];
+  /** Village-wide stockpile of each good. */
+  stockpile: Stockpile;
+  /** Current market price of each good, derived from the stockpile. */
+  prices: Prices;
+  /** Today's rolled weather. */
+  weather: Weather;
+  /** Today's trader offers + whether this player already traded today. */
+  trader: TraderState;
+  /** Land-expansion ring state. */
+  ring: RingState;
+};
+
+/** Splash summary (GET /api/summary). */
+export type Summary = {
+  buildings: number;
+  players: number;
+  landmarkStage: number;
+  landmarkPct: number;
+  festival: FestivalCategory;
+  readyForMe: number;
+  /** Today's weather. */
+  weather: Weather;
+  /** The good with the highest price-to-base ratio (what the village needs). */
+  hotGood: Good;
+  /** That good's current market price. */
+  hotPrice: number;
 };
 
 /** The result of a collect: coins + xp + any goods produced into the wallet. */

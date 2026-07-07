@@ -3,9 +3,13 @@ import type {
   BuildingId,
   CityState,
   Gained,
+  Good,
   LeaderRow,
   PlayerState,
+  Prices,
   StateResponse,
+  Stockpile,
+  Summary,
   TileState,
 } from '../shared/types';
 
@@ -36,14 +40,17 @@ export type LeaderboardsResult = {
 };
 export type ShareKind = 'levelup' | 'stage';
 export type ShareResult = { ok: true };
-export type SummaryResult = {
-  buildings: number;
-  players: number;
-  landmarkStage: number;
-  landmarkPct: number;
-  festival: FestivalCategory;
-  readyForMe: number;
+export type SummaryResult = Summary;
+export type MarketResult = {
+  me: PlayerState;
+  stockpile: Stockpile;
+  prices: Prices;
 };
+export type TradeResult = {
+  me: PlayerState;
+  tile?: { key: string; tile: TileState };
+};
+export type NameStageResult = { city: CityState };
 
 /** True when a parsed body is the server's `{ status: 'error', … }` envelope. */
 const isErrorBody = (body: unknown): boolean =>
@@ -123,8 +130,22 @@ export const api = {
   boost: (x: number, y: number): Promise<TileResult> =>
     post('/api/boost', { x, y }),
 
-  contribute: (amount: number): Promise<ContributeResult> =>
-    post('/api/contribute', { amount }),
+  contribute: (
+    good: 'planks' | 'bricks',
+    qty: number
+  ): Promise<ContributeResult> => post('/api/contribute', { good, qty }),
+
+  sell: (good: Good, qty: number): Promise<MarketResult> =>
+    post('/api/sell', { good, qty }),
+
+  buy: (good: Good, qty: number): Promise<MarketResult> =>
+    post('/api/buy', { good, qty }),
+
+  trade: (offerIndex: number): Promise<TradeResult> =>
+    post('/api/trade', { offerIndex }),
+
+  nameStage: (first: number, second: number): Promise<NameStageResult> =>
+    post('/api/name-stage', { first, second }),
 
   vote: (category: FestivalCategory): Promise<VoteResult> =>
     post('/api/vote', { category }),

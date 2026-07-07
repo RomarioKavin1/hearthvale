@@ -101,7 +101,8 @@ const isCityState = (v: JsonValue | undefined): boolean =>
   typeof v.festival === 'string' &&
   typeof v.festivalDate === 'string' &&
   typeof v.landmarkStage === 'number' &&
-  typeof v.landmarkProgress === 'number' &&
+  typeof v.stagePlanks === 'number' &&
+  typeof v.stageBricks === 'number' &&
   typeof v.totalCollected === 'number' &&
   typeof v.totalContributed === 'number';
 
@@ -121,6 +122,12 @@ const isVillageMessage = (v: JsonValue): v is VillageMessage => {
       );
     case 'stage':
       return typeof v.stage === 'number';
+    // TODO(V4): market + ring messages are accepted here but the renderer does
+    // not yet react to them (V4 wires the market board + ring-unlock pan-out).
+    case 'market':
+      return isRecord(v.prices) && isRecord(v.stockpile);
+    case 'ring':
+      return isRecord(v.bounds);
     default:
       return false;
   }

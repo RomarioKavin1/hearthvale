@@ -1,4 +1,5 @@
 import type { FestivalCategory, LeaderRow } from '../../shared/types';
+import { goodsTotal } from '../../shared/logic/economy';
 import { api } from '../net';
 import { store } from '../state';
 import {
@@ -68,7 +69,9 @@ export const openLandmarkSheet = (): void => {
       }
 
       const threshold = LANDMARK_THRESHOLDS[stage] ?? 0;
-      const progress = city.landmarkProgress;
+      // TODO(V4): keep progress is now two goods (stagePlanks/stageBricks); this
+      // stopgap sums them to keep the v1 progress bar rendering until V4.
+      const progress = city.stagePlanks + city.stageBricks;
       const frac = threshold > 0 ? progress / threshold : 0;
 
       stack.appendChild(
@@ -95,12 +98,14 @@ export const openLandmarkSheet = (): void => {
           cls: 'hv-row-line',
           children: [
             el('span', { text: 'Your supplies' }),
-            el('b', { text: `${fmtInt(me?.supplies ?? 0)} 🌿` }),
+            el('b', { text: `${fmtInt(goodsTotal(me?.wallet ?? {}))} 🌿` }),
           ],
         })
       );
 
-      const supplies = me?.supplies ?? 0;
+      // TODO(V4): contribution is now per-good (planks/bricks); this stopgap
+      // pours the player's planks into the keep until V4 builds the real picker.
+      const supplies = me?.wallet.planks ?? 0;
       const steps = el('div', { cls: 'hv-steps' });
       const addStep = (pick: StepPick, label: string): void => {
         const disabled = pick === 'all' ? supplies <= 0 : supplies < Number(pick);
@@ -136,12 +141,12 @@ export const openLandmarkSheet = (): void => {
           return;
         }
         void action('contribute', async () => {
-          // The server clamps the contribution to the player's supplies, so read
+          // The server clamps the contribution to the player's planks, so read
           // the balance before the call and report the amount actually applied.
-          const before = store.data?.me?.supplies ?? 0;
-          const res = await api.contribute(amount);
+          const before = store.data?.me?.wallet.planks ?? 0;
+          const res = await api.contribute('planks', amount);
           store.applyMutation({ city: res.city, me: res.me });
-          const applied = Math.max(0, before - res.me.supplies);
+          const applied = Math.max(0, before - res.me.wallet.planks);
           toast(`+${fmtInt(applied)} to the clocktower! 🏰`, 'celebrate');
         });
       });

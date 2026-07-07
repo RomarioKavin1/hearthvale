@@ -16,7 +16,6 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   id: 'p1',
   name: 'Alice',
   coins: 0,
-  supplies: 0,
   wallet: { wheat: 0, logs: 0, stone: 0, flour: 0, planks: 0, bricks: 0 },
   xp: 0,
   level: 1,

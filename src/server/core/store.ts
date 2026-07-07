@@ -3,14 +3,16 @@ import type {
   CityState,
   FestivalCategory,
   PlayerState,
+  Stockpile,
   Wallet,
   Weather,
 } from '../../shared/types';
 import type { TileState } from '../../shared/types';
-import { GOODS } from '../../shared/logic/economy';
+import { GOODS, emptyStockpile } from '../../shared/logic/economy';
 
 const GRID_KEY = 'city:grid';
 const CITY_KEY = 'city:state';
+const STOCKPILE_KEY = 'city:stockpile';
 const playerKey = (userId: string): string => `player:${userId}`;
 
 const num = (value: string | undefined, fallback: number): number => {
@@ -25,9 +27,6 @@ const isCategory = (value: string | undefined): value is FestivalCategory =>
   value === 'processed' ||
   value === 'decor';
 
-// TODO(V2): the daily weather roll is not yet persisted by the server; getCity
-// returns a benign 'clear' default and putCity round-trips it. Task V2 wires the
-// scheduler weather roll + weatherDate through here.
 const isWeather = (value: string | undefined): value is Weather =>
   value === 'sunny' ||
   value === 'rain' ||
@@ -92,11 +91,10 @@ export const getCity = async (): Promise<CityState> => {
     festival: isCategory(h.festival) ? h.festival : 'coins',
     festivalDate: h.festivalDate ? h.festivalDate : todayUtc(),
     landmarkStage: num(h.landmarkStage, 0),
-    landmarkProgress: num(h.landmarkProgress, 0),
+    stagePlanks: num(h.stagePlanks, 0),
+    stageBricks: num(h.stageBricks, 0),
     totalCollected: num(h.totalCollected, 0),
     totalContributed: num(h.totalContributed, 0),
-    // TODO(V2): weather/population/stageNames are read-through defaults until
-    // the V2 server manages them (weather roll, distinct-owner cache, naming).
     weather: isWeather(h.weather) ? h.weather : 'clear',
     weatherDate: h.weatherDate ? h.weatherDate : '',
     population: num(h.population, 0),
@@ -110,16 +108,14 @@ export const putCity = async (c: Partial<CityState>): Promise<void> => {
   if (c.festival !== undefined) fields.festival = c.festival;
   if (c.festivalDate !== undefined) fields.festivalDate = c.festivalDate;
   if (c.landmarkStage !== undefined) fields.landmarkStage = String(c.landmarkStage);
-  if (c.landmarkProgress !== undefined) {
-    fields.landmarkProgress = String(c.landmarkProgress);
-  }
+  if (c.stagePlanks !== undefined) fields.stagePlanks = String(c.stagePlanks);
+  if (c.stageBricks !== undefined) fields.stageBricks = String(c.stageBricks);
   if (c.totalCollected !== undefined) {
     fields.totalCollected = String(c.totalCollected);
   }
   if (c.totalContributed !== undefined) {
     fields.totalContributed = String(c.totalContributed);
   }
-  // TODO(V2): these are round-tripped but not yet produced by server logic.
   if (c.weather !== undefined) fields.weather = c.weather;
   if (c.weatherDate !== undefined) fields.weatherDate = c.weatherDate;
   if (c.population !== undefined) fields.population = String(c.population);
@@ -131,6 +127,24 @@ export const putCity = async (c: Partial<CityState>): Promise<void> => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Village stockpile. `city:stockpile` is a hash Good -> qty; all six goods are
+// always persisted so a read-through never has to guess a default.
+// ---------------------------------------------------------------------------
+
+export const getStockpile = async (): Promise<Stockpile> => {
+  const h = await redis.hGetAll(STOCKPILE_KEY);
+  const stock = emptyStockpile();
+  for (const g of GOODS) stock[g] = num(h[g], 0);
+  return stock;
+};
+
+export const putStockpile = async (stock: Stockpile): Promise<void> => {
+  const fields: Record<string, string> = {};
+  for (const g of GOODS) fields[g] = String(stock[g]);
+  await redis.hSet(STOCKPILE_KEY, fields);
+};
+
 const parsePlayer = (
   userId: string,
   h: Record<string, string>
@@ -138,8 +152,6 @@ const parsePlayer = (
   id: h.id ? h.id : userId,
   name: h.name ?? '',
   coins: num(h.coins, 0),
-  // TODO(V2): `supplies` is legacy; wallet is the v2 balance store.
-  supplies: num(h.supplies, 0),
   wallet: parseWallet(h),
   xp: num(h.xp, 0),
   level: num(h.level, 1),
@@ -159,7 +171,6 @@ const playerFields = (p: PlayerState): Record<string, string> => ({
   id: p.id,
   name: p.name,
   coins: String(p.coins),
-  supplies: String(p.supplies),
   ...walletFields(p.wallet),
   xp: String(p.xp),
   level: String(p.level),
@@ -190,7 +201,6 @@ export const initPlayer = async (
     id: userId,
     name,
     coins: 120,
-    supplies: 0,
     wallet: { wheat: 0, logs: 0, stone: 0, flour: 0, planks: 0, bricks: 0 },
     xp: 0,
     level: 1,
@@ -224,9 +234,10 @@ export const ownedCount = (
 };
 
 // ---------------------------------------------------------------------------
-// Landmark contributions. `contrib:stage:{n}` is a zset of userId -> supplies
-// contributed toward the stage that was under construction (0-indexed) at the
-// time. lb:contrib tracks lifetime contribution across all stages.
+// Grand Keep contributions. `contrib:stage:{n}` is a zset of userId -> units
+// (planks + bricks) contributed toward the stage that was under construction
+// (0-indexed) at the time. lb:contrib tracks lifetime contribution across all
+// stages. The pot for a completed stage is split pro-rata by these unit scores.
 // ---------------------------------------------------------------------------
 
 const contribStageKey = (n: number): string => `contrib:stage:${n}`;
@@ -245,6 +256,51 @@ export const stageContribScore = async (
 ): Promise<number> => {
   const score = await redis.zScore(contribStageKey(n), userId);
   return score ?? 0;
+};
+
+/** Total units contributed to a stage's zset (sum of all member scores). */
+export const stageContribTotal = async (n: number): Promise<number> => {
+  const rows = await redis.zRange(contribStageKey(n), 0, -1, { by: 'rank' });
+  let total = 0;
+  for (const row of rows) total += row.score;
+  return total;
+};
+
+/** The top contributor (userId) of a stage's zset, or null if empty. */
+export const stageTopContributor = async (
+  n: number
+): Promise<string | null> => {
+  const rows = await redis.zRange(contribStageKey(n), 0, 0, {
+    reverse: true,
+    by: 'rank',
+  });
+  const [top] = rows;
+  return top ? top.member : null;
+};
+
+// ---------------------------------------------------------------------------
+// Wandering trader. Offers are deterministic per UTC day (computed, not stored);
+// only the per-player "already traded today" guard is persisted:
+// `traderdone:{date}` is a hash userId -> '1' with a 48h TTL.
+// ---------------------------------------------------------------------------
+
+const TRADER_TTL_SECONDS = 172800;
+const traderDoneKey = (day: string): string => `traderdone:${day}`;
+
+export const hasTradedToday = async (
+  day: string,
+  userId: string
+): Promise<boolean> => {
+  const done = await redis.hGet(traderDoneKey(day), userId);
+  return done !== undefined;
+};
+
+export const markTradedToday = async (
+  day: string,
+  userId: string
+): Promise<void> => {
+  await redis.hSet(traderDoneKey(day), { [userId]: '1' });
+  await redis.expire(traderDoneKey(day), TRADER_TTL_SECONDS);
 };
 
 // ---------------------------------------------------------------------------

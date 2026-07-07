@@ -2,7 +2,9 @@ import { Hono } from 'hono';
 import type { OnAppInstallRequest, TriggerResponse } from '@devvit/web/shared';
 import { context, redis } from '@devvit/web/server';
 import { createPost } from '../core/post';
-import { putCity } from '../core/store';
+import { putCity, putStockpile } from '../core/store';
+import { emptyStockpile } from '../../shared/logic/economy';
+import { weatherForDay } from '../../shared/logic/trader';
 
 export const triggers = new Hono();
 
@@ -26,15 +28,22 @@ triggers.post('/on-app-install', async (c) => {
     }
 
     await redis.set('installed', '1');
+    const today = todayUtc();
     await putCity({
       foundedAt: Date.now(),
       festival: 'coins',
-      festivalDate: todayUtc(),
+      festivalDate: today,
       landmarkStage: 0,
-      landmarkProgress: 0,
+      stagePlanks: 0,
+      stageBricks: 0,
       totalCollected: 0,
       totalContributed: 0,
+      weather: weatherForDay(today),
+      weatherDate: today,
+      population: 0,
+      stageNames: [],
     });
+    await putStockpile(emptyStockpile());
     const post = await createPost();
 
     return c.json<TriggerResponse>(
