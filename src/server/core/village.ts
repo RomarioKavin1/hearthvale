@@ -12,6 +12,7 @@ import type {
 } from '../../shared/types';
 import type { BuildingId } from '../../shared/types';
 import {
+  BOOST_DAILY_LIMIT,
   CATALOG,
   LANDMARK_THRESHOLDS,
   tierStats,
@@ -120,7 +121,7 @@ export const nextStreak = (
 
 // --- Boosts -----------------------------------------------------------------
 
-export const BOOST_LIMIT = 5;
+export const BOOST_LIMIT = BOOST_DAILY_LIMIT;
 export const BOOST_DURATION_MS = 30 * 60 * 1000;
 export const BOOST_COINS = 15;
 export const BOOST_XP = 5;

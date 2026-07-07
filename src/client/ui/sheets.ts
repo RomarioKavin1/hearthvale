@@ -277,6 +277,8 @@ let board: Board | null = null;
 let boardError = false;
 let activeTab: Tab = 'value';
 
+const TABS: Tab[] = ['value', 'earned', 'contrib'];
+
 const TAB_LABELS: Record<Tab, string> = {
   value: 'Value',
   earned: 'Earned',
@@ -292,7 +294,7 @@ export const openLeaderboardsSheet = (): void => {
       const stack = el('div', {});
 
       const tabs = el('div', { cls: 'hv-tabs' });
-      for (const tab of ['value', 'earned', 'contrib'] as Tab[]) {
+      for (const tab of TABS) {
         const b = el('button', {
           cls: `hv-tab${activeTab === tab ? ' is-active' : ''}`,
           text: TAB_LABELS[tab],

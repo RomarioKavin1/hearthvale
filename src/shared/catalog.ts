@@ -164,3 +164,5 @@ export const LANDMARK_THRESHOLDS: number[] = [300, 900, 2000, 4000, 7500];
 export const GRID_SIZE: number = 18;
 export const MAX_LEVEL: number = 15;
 export const PLOT_LEVELS: number[] = [1, 3, 5, 8, 12];
+/** Neighbour boosts a player may hand out per UTC day. */
+export const BOOST_DAILY_LIMIT: number = 5;

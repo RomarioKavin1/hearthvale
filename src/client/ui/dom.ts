@@ -8,6 +8,7 @@ import type {
   StateResponse,
   TileState,
 } from '../../shared/types';
+import { BOOST_DAILY_LIMIT } from '../../shared/catalog';
 import { parseKey } from '../../shared/logic/grid';
 import { accrue, adjacencyBonus, utcDay } from '../../shared/logic/economy';
 import { store } from '../state';
@@ -159,7 +160,7 @@ export const todayUtc = (): string => utcDay(store.serverNow());
 /** Boosts a player still has today (accounting for the UTC date rollover). */
 export const boostsLeft = (me: PlayerState): number => {
   const used = me.boostsDate === todayUtc() ? me.boostsToday : 0;
-  return Math.max(0, 5 - used);
+  return Math.max(0, BOOST_DAILY_LIMIT - used);
 };
 
 // ── Pending-action registry ──────────────────────────────────────────────────
