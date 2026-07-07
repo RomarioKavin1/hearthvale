@@ -49,9 +49,23 @@ export type PlayerState = {
   streak: number;
   lastCheckIn: string;
   boostsToday: number;
+  /** UTC day (YYYY-MM-DD) the boostsToday counter belongs to. */
+  boostsDate: string;
+  /** Highest landmark stage index whose payout this player has collected. */
+  paidStage: number;
 };
 
 export type LeaderRow = { name: string; score: number; me: boolean };
+
+/**
+ * Realtime messages broadcast on the 'village' channel. Consumed by the client
+ * in Task 5.
+ */
+export type VillageMessage =
+  | { t: 'tile'; key: string; tile: TileState }
+  | { t: 'city'; city: CityState }
+  | { t: 'festival'; festival: BuildingCategory }
+  | { t: 'stage'; stage: number };
 
 export type StateResponse = {
   grid: Record<string, TileState>;

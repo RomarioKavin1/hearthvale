@@ -23,6 +23,16 @@ export const plotsForLevel = (level: number): number =>
 export const streakReward = (streak: number): number =>
   25 * Math.min(streak, 7);
 
+/** UTC calendar day (YYYY-MM-DD) for a millisecond timestamp. */
+export const utcDay = (now: number): string =>
+  new Date(now).toISOString().slice(0, 10);
+
+/** The UTC day immediately before the given YYYY-MM-DD day. */
+export const prevDay = (day: string): string =>
+  new Date(new Date(`${day}T00:00:00.000Z`).getTime() - 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
 const noGain = (): Gained => ({ coins: 0, supplies: 0, xp: 0 });
 
 export const accrue = (

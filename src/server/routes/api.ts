@@ -3,12 +3,18 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { context } from '@devvit/web/server';
 import {
   OpError,
+  doBoost,
   doBuild,
+  doCheckIn,
   doClaim,
   doCollect,
   doCollectAll,
+  doContribute,
   doUpgrade,
+  doVote,
   isBuildingId,
+  isCategory,
+  loadLeaderboards,
   loadState,
   loadSummary,
 } from '../core/village';
@@ -132,5 +138,79 @@ api.post('/collect-all', async (c) => {
     if (error instanceof OpError) return c.json(...fail(error.message, error.status));
     console.error('POST /api/collect-all failed:', error);
     return c.json(...fail('Failed to collect.', 500));
+  }
+});
+
+api.post('/checkin', async (c) => {
+  try {
+    const userId = requireUser();
+    const result = await doCheckIn(userId);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/checkin failed:', error);
+    return c.json(...fail('Failed to check in.', 500));
+  }
+});
+
+api.post('/boost', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid tile coordinates.', 400));
+    const result = await doBoost(userId, x, y);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/boost failed:', error);
+    return c.json(...fail('Failed to boost.', 500));
+  }
+});
+
+api.post('/contribute', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ amount?: unknown }>();
+    if (
+      typeof body.amount !== 'number' ||
+      !Number.isInteger(body.amount) ||
+      body.amount < 1
+    ) {
+      return c.json(...fail('Contribution must be a whole number of at least 1.', 400));
+    }
+    const result = await doContribute(userId, body.amount);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/contribute failed:', error);
+    return c.json(...fail('Failed to contribute.', 500));
+  }
+});
+
+api.post('/vote', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ category?: unknown }>();
+    if (!isCategory(body.category)) {
+      return c.json(...fail('Unknown festival category.', 400));
+    }
+    const result = await doVote(userId, body.category);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/vote failed:', error);
+    return c.json(...fail('Failed to record vote.', 500));
+  }
+});
+
+api.get('/leaderboards', async (c) => {
+  try {
+    const result = await loadLeaderboards(context.userId);
+    return c.json(result);
+  } catch (error) {
+    console.error('GET /api/leaderboards failed:', error);
+    return c.json(...fail('Failed to load leaderboards.', 500));
   }
 });

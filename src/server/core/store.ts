@@ -89,6 +89,8 @@ const parsePlayer = (
   streak: num(h.streak, 0),
   lastCheckIn: h.lastCheckIn ?? '',
   boostsToday: num(h.boostsToday, 0),
+  boostsDate: h.boostsDate ?? '',
+  paidStage: num(h.paidStage, 0),
 });
 
 const playerFields = (p: PlayerState): Record<string, string> => ({
@@ -102,6 +104,8 @@ const playerFields = (p: PlayerState): Record<string, string> => ({
   streak: String(p.streak),
   lastCheckIn: p.lastCheckIn,
   boostsToday: String(p.boostsToday),
+  boostsDate: p.boostsDate,
+  paidStage: String(p.paidStage),
 });
 
 export const getPlayer = async (
@@ -127,13 +131,10 @@ export const initPlayer = async (
     streak: 0,
     lastCheckIn: '',
     boostsToday: 0,
-  };
-  // paidStage / boostsDate are consumed by Task 4; seed them now.
-  await redis.hSet(playerKey(userId), {
-    ...playerFields(player),
-    paidStage: '0',
     boostsDate: '',
-  });
+    paidStage: 0,
+  };
+  await redis.hSet(playerKey(userId), playerFields(player));
   return player;
 };
 
@@ -150,4 +151,68 @@ export const ownedCount = (
     if (tile.owner === userId) count += 1;
   }
   return count;
+};
+
+// ---------------------------------------------------------------------------
+// Landmark contributions. `contrib:stage:{n}` is a zset of userId -> supplies
+// contributed toward the stage that was under construction (0-indexed) at the
+// time. lb:contrib tracks lifetime contribution across all stages.
+// ---------------------------------------------------------------------------
+
+const contribStageKey = (n: number): string => `contrib:stage:${n}`;
+
+export const incrStageContrib = async (
+  n: number,
+  userId: string,
+  amount: number
+): Promise<void> => {
+  await redis.zIncrBy(contribStageKey(n), userId, amount);
+};
+
+export const stageContribScore = async (
+  n: number,
+  userId: string
+): Promise<number> => {
+  const score = await redis.zScore(contribStageKey(n), userId);
+  return score ?? 0;
+};
+
+// ---------------------------------------------------------------------------
+// Daily ballot. `ballot:{day}` is a hash category -> vote count;
+// `ballotvoted:{day}` is a hash userId -> '1' guarding one vote per user/day.
+// Both keys carry a 48h TTL so old ballots self-expire.
+// ---------------------------------------------------------------------------
+
+const BALLOT_TTL_SECONDS = 172800;
+const ballotKey = (day: string): string => `ballot:${day}`;
+const ballotVotedKey = (day: string): string => `ballotvoted:${day}`;
+
+export const hasVoted = async (
+  day: string,
+  userId: string
+): Promise<boolean> => {
+  const voted = await redis.hGet(ballotVotedKey(day), userId);
+  return voted !== undefined;
+};
+
+export const recordVote = async (
+  day: string,
+  userId: string,
+  category: BuildingCategory
+): Promise<void> => {
+  await redis.hSet(ballotVotedKey(day), { [userId]: '1' });
+  await redis.hIncrBy(ballotKey(day), category, 1);
+  await redis.expire(ballotVotedKey(day), BALLOT_TTL_SECONDS);
+  await redis.expire(ballotKey(day), BALLOT_TTL_SECONDS);
+};
+
+export const getBallot = async (
+  day: string
+): Promise<Record<BuildingCategory, number>> => {
+  const h = await redis.hGetAll(ballotKey(day));
+  return {
+    coins: num(h.coins, 0),
+    supplies: num(h.supplies, 0),
+    decor: num(h.decor, 0),
+  };
 };

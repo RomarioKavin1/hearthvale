@@ -1,6 +1,7 @@
 import { context, reddit, realtime, redis } from '@devvit/web/server';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type {
+  BuildingCategory,
   CityState,
   Gained,
   LeaderRow,
@@ -22,23 +23,32 @@ import {
   canClaim,
   levelForXp,
   plotsForLevel,
+  prevDay,
+  streakReward,
+  utcDay,
 } from '../../shared/logic/economy';
 import { parseKey, tileKey } from '../../shared/logic/grid';
 import {
+  getBallot,
   getCity,
   getGrid,
   getPlayer,
   getTile,
+  hasVoted,
+  incrStageContrib,
   initPlayer,
   ownedCount,
   putCity,
   putPlayer,
   putTile,
+  recordVote,
+  stageContribScore,
 } from './store';
 
 const GRID_KEY = 'city:grid';
 const LB_VALUE = 'lb:value';
 const LB_EARNED = 'lb:earned';
+const LB_CONTRIB = 'lb:contrib';
 
 type UserId = NonNullable<typeof context.userId>;
 
@@ -91,6 +101,172 @@ export const applyLevelUp = (player: PlayerState): PlayerState => {
 
 const creditXp = (player: PlayerState, amount: number): PlayerState =>
   applyLevelUp({ ...player, xp: player.xp + amount });
+
+// --- Check-in streaks -------------------------------------------------------
+
+/** Same-day check-ins are rejected; returns an error message or null. */
+export const canCheckIn = (
+  lastCheckIn: string,
+  today: string
+): string | null =>
+  lastCheckIn === today ? 'You have already checked in today.' : null;
+
+/** Next streak value: +1 if yesterday's check-in, otherwise back to 1. */
+export const nextStreak = (
+  lastCheckIn: string,
+  prevStreak: number,
+  today: string
+): number => (lastCheckIn === prevDay(today) ? prevStreak + 1 : 1);
+
+// --- Boosts -----------------------------------------------------------------
+
+export const BOOST_LIMIT = 5;
+export const BOOST_DURATION_MS = 30 * 60 * 1000;
+export const BOOST_COINS = 15;
+export const BOOST_XP = 5;
+
+/** Boosts already spent today; the daily counter resets on date rollover. */
+export const boostsUsedToday = (player: PlayerState, today: string): number =>
+  player.boostsDate === today ? player.boostsToday : 0;
+
+/**
+ * A boost targets a neighbour's completed producer. Returns an error message
+ * or null. `usedToday` must already account for date rollover.
+ */
+export const validateBoost = (
+  boosterId: string,
+  tile: TileState,
+  now: number,
+  usedToday: number
+): string | null => {
+  if (tile.owner === boosterId) return 'You cannot boost your own plot.';
+  if (!tile.buildingId) return 'There is nothing to boost here.';
+  if (CATALOG[tile.buildingId].category === 'decor') {
+    return 'Decorations cannot be boosted.';
+  }
+  if (now < tile.readyAt) return 'This building is still under construction.';
+  if (tile.boostUntil > now) return 'This building already has a boost running.';
+  if (usedToday >= BOOST_LIMIT) return 'You have used all your boosts today.';
+  return null;
+};
+
+// --- Landmark contributions -------------------------------------------------
+
+export type StageSplit = { stage: number; amount: number };
+
+export type ContributeResult = {
+  /** Total supplies actually consumed (after clamp + excess discard). */
+  applied: number;
+  /** Per-stage portions to record in `contrib:stage:{stage}` zsets. */
+  splits: StageSplit[];
+  /** New 0-indexed stage under construction. */
+  landmarkStage: number;
+  /** Progress toward the new stage's threshold. */
+  landmarkProgress: number;
+  /** New stage numbers reached (one per completion) for `{t:'stage'}`. */
+  completed: number[];
+};
+
+/** True once every landmark stage is built (stage index === threshold count). */
+export const landmarkComplete = (
+  city: CityState,
+  thresholds: number[]
+): boolean => city.landmarkStage >= thresholds.length;
+
+/**
+ * Apply a supply contribution to the landmark. The amount is clamped to the
+ * player's `supplies`, then poured stage-by-stage: each stage fills up to its
+ * threshold, completes, and carries the remainder into the next. Any excess
+ * left once the final stage completes is discarded.
+ *
+ * `contrib:stage:{n}` records contributions toward the stage that was under
+ * construction (n = 0-indexed) at the time — so stage n's zset funds the
+ * n->n+1 transition and pays out (n+1)*100 on completion.
+ */
+export const applyContribution = (
+  city: CityState,
+  supplies: number,
+  amount: number,
+  thresholds: number[]
+): ContributeResult => {
+  const clamped = Math.min(amount, supplies);
+  let stage = city.landmarkStage;
+  let progress = city.landmarkProgress;
+  let remaining = clamped;
+  const splits: StageSplit[] = [];
+  const completed: number[] = [];
+
+  while (remaining > 0 && stage < thresholds.length) {
+    const threshold = thresholds[stage];
+    if (threshold === undefined) break;
+    const need = threshold - progress;
+    const put = Math.min(remaining, need);
+    splits.push({ stage, amount: put });
+    progress += put;
+    remaining -= put;
+    if (progress >= threshold) {
+      stage += 1;
+      progress = 0;
+      completed.push(stage);
+    }
+  }
+
+  return {
+    applied: clamped - remaining,
+    splits,
+    landmarkStage: stage,
+    landmarkProgress: progress,
+    completed,
+  };
+};
+
+// --- Ballot -----------------------------------------------------------------
+
+const CATEGORIES: BuildingCategory[] = ['coins', 'supplies', 'decor'];
+
+/** Cyclic rotation coins -> supplies -> decor -> coins. */
+export const nextFestival = (current: BuildingCategory): BuildingCategory => {
+  const i = CATEGORIES.indexOf(current);
+  return CATEGORIES[(i + 1) % CATEGORIES.length] ?? 'coins';
+};
+
+/**
+ * Winning festival category: the strict majority. A tie (including no votes)
+ * rotates to the next category after the current festival.
+ */
+export const tallyBallot = (
+  counts: Record<BuildingCategory, number>,
+  current: BuildingCategory
+): BuildingCategory => {
+  const entries = CATEGORIES.map((c) => ({ c, n: counts[c] }));
+  const max = Math.max(...entries.map((e) => e.n));
+  const winners = entries.filter((e) => e.n === max);
+  const [winner] = winners;
+  if (max > 0 && winners.length === 1 && winner) return winner.c;
+  return nextFestival(current);
+};
+
+// --- Stage payout -----------------------------------------------------------
+
+/** Reward for a contributor when stage index n completes. */
+export const stageReward = (n: number): number => (n + 1) * 100;
+
+/**
+ * Sum the payouts owed to a player for completed-but-unpaid stages. Stages
+ * [paidStage, landmarkStage) are complete; the player is paid stageReward(n)
+ * for each such stage they funded.
+ */
+export const computePayout = (
+  paidStage: number,
+  landmarkStage: number,
+  contributed: (n: number) => boolean
+): number => {
+  let coins = 0;
+  for (let n = paidStage; n < landmarkStage; n += 1) {
+    if (contributed(n)) coins += stageReward(n);
+  }
+  return coins;
+};
 
 export const applyCollect = (
   tile: TileState,
@@ -149,6 +325,32 @@ const broadcastTile = async (key: string, tile: TileState): Promise<void> => {
   }
 };
 
+const broadcastCity = async (city: CityState): Promise<void> => {
+  try {
+    await realtime.send('village', { t: 'city', city });
+  } catch (error) {
+    console.error('realtime city broadcast failed:', error);
+  }
+};
+
+const broadcastStage = async (stage: number): Promise<void> => {
+  try {
+    await realtime.send('village', { t: 'stage', stage });
+  } catch (error) {
+    console.error('realtime stage broadcast failed:', error);
+  }
+};
+
+export const broadcastFestival = async (
+  festival: BuildingCategory
+): Promise<void> => {
+  try {
+    await realtime.send('village', { t: 'festival', festival });
+  } catch (error) {
+    console.error('realtime festival broadcast failed:', error);
+  }
+};
+
 const maybeFlair = async (
   before: number,
   player: PlayerState
@@ -193,11 +395,39 @@ const ensurePlayer = async (userId: string): Promise<PlayerState> => {
 // Operations.
 // ---------------------------------------------------------------------------
 
+/**
+ * Lazily pay a player for landmark stages that completed since they last
+ * collected. Stages [player.paidStage, city.landmarkStage) are complete; the
+ * player earns stageReward(n) === (n+1)*100 for each such stage they funded
+ * (a positive score in `contrib:stage:{n}`). Advances paidStage and persists.
+ */
+const settleStagePayouts = async (
+  player: PlayerState,
+  city: CityState
+): Promise<PlayerState> => {
+  if (player.paidStage >= city.landmarkStage) return player;
+
+  let coins = 0;
+  for (let n = player.paidStage; n < city.landmarkStage; n += 1) {
+    const score = await stageContribScore(n, player.id);
+    if (score > 0) coins += stageReward(n);
+  }
+
+  const settled: PlayerState = {
+    ...player,
+    coins: player.coins + coins,
+    paidStage: city.landmarkStage,
+  };
+  await putPlayer(settled);
+  return settled;
+};
+
 export const loadState = async (
   userId: string | undefined
 ): Promise<StateResponse> => {
   const [grid, city] = await Promise.all([getGrid(), getCity()]);
-  const me = userId ? await ensurePlayer(userId) : null;
+  let me = userId ? await ensurePlayer(userId) : null;
+  if (me) me = await settleStagePayouts(me, city);
 
   const rows = await redis.zRange(LB_VALUE, 0, 4, {
     reverse: true,
@@ -495,5 +725,187 @@ export const loadSummary = async (
   };
 };
 
+export const doCheckIn = async (
+  userId: string
+): Promise<{ me: PlayerState; gained: { coins: number } }> => {
+  const player = await ensurePlayer(userId);
+  const today = utcDay(Date.now());
+
+  const err = canCheckIn(player.lastCheckIn, today);
+  if (err) throw new OpError(400, err);
+
+  const streak = nextStreak(player.lastCheckIn, player.streak, today);
+  const coins = streakReward(streak);
+  const me: PlayerState = {
+    ...player,
+    streak,
+    lastCheckIn: today,
+    coins: player.coins + coins,
+  };
+
+  await putPlayer(me);
+  return { me, gained: { coins } };
+};
+
+export const doBoost = async (
+  userId: string,
+  x: number,
+  y: number
+): Promise<{ tile: TileState; me: PlayerState }> => {
+  const key = tileKey(x, y);
+  const [tile, player] = await Promise.all([getTile(key), ensurePlayer(userId)]);
+  if (!tile) throw new OpError(404, 'There is nothing to boost here.');
+
+  const now = Date.now();
+  const today = utcDay(now);
+  const used = boostsUsedToday(player, today);
+  const err = validateBoost(userId, tile, now, used);
+  if (err) throw new OpError(400, err);
+
+  const boosted: TileState = {
+    ...tile,
+    boostUntil: now + BOOST_DURATION_MS,
+    boostBy: userId,
+  };
+
+  const before = player.level;
+  // `me` is the BOOSTER's state: +15 coins, +5 xp, one boost spent today.
+  const me = creditXp(
+    {
+      ...player,
+      coins: player.coins + BOOST_COINS,
+      boostsToday: used + 1,
+      boostsDate: today,
+    },
+    BOOST_XP
+  );
+
+  await putTile(key, boosted);
+  await putPlayer(me);
+  await maybeFlair(before, me);
+  await broadcastTile(key, boosted);
+  return { tile: boosted, me };
+};
+
+export const doContribute = async (
+  userId: string,
+  amount: number
+): Promise<{ city: CityState; me: PlayerState }> => {
+  const [player, city] = await Promise.all([ensurePlayer(userId), getCity()]);
+
+  if (landmarkComplete(city, LANDMARK_THRESHOLDS)) {
+    throw new OpError(400, 'The clocktower is already complete.');
+  }
+  if (player.supplies <= 0) {
+    throw new OpError(400, 'You have no supplies to contribute.');
+  }
+
+  const result = applyContribution(
+    city,
+    player.supplies,
+    amount,
+    LANDMARK_THRESHOLDS
+  );
+
+  // Record each stage's portion in its per-stage contribution zset, plus the
+  // lifetime contribution leaderboard.
+  for (const split of result.splits) {
+    await incrStageContrib(split.stage, userId, split.amount);
+  }
+  await redis.zIncrBy(LB_CONTRIB, userId, result.applied);
+
+  const before = player.level;
+  // 1 xp per supply contributed, credited through the level-up helper.
+  const me = creditXp(
+    { ...player, supplies: player.supplies - result.applied },
+    result.applied
+  );
+
+  const nextCity: CityState = {
+    ...city,
+    landmarkStage: result.landmarkStage,
+    landmarkProgress: result.landmarkProgress,
+    totalContributed: city.totalContributed + result.applied,
+  };
+
+  await putCity({
+    landmarkStage: nextCity.landmarkStage,
+    landmarkProgress: nextCity.landmarkProgress,
+    totalContributed: nextCity.totalContributed,
+  });
+  await putPlayer(me);
+  await maybeFlair(before, me);
+  await broadcastCity(nextCity);
+  if (result.completed.length > 0) {
+    await broadcastStage(nextCity.landmarkStage);
+  }
+  return { city: nextCity, me };
+};
+
+export const doVote = async (
+  userId: string,
+  category: BuildingCategory
+): Promise<{ counts: Record<BuildingCategory, number> }> => {
+  const today = utcDay(Date.now());
+  if (await hasVoted(today, userId)) {
+    throw new OpError(400, 'You have already voted today.');
+  }
+  await recordVote(today, userId, category);
+  const counts = await getBallot(today);
+  return { counts };
+};
+
+const topRows = async (
+  key: string,
+  userId: string | undefined
+): Promise<LeaderRow[]> => {
+  const rows = await redis.zRange(key, 0, 9, { reverse: true, by: 'rank' });
+  const out: LeaderRow[] = [];
+  for (const row of rows) {
+    const name = await resolveName(row.member);
+    out.push({ name, score: row.score, me: row.member === userId });
+  }
+  return out;
+};
+
+export const loadLeaderboards = async (
+  userId: string | undefined
+): Promise<{
+  value: LeaderRow[];
+  earned: LeaderRow[];
+  contrib: LeaderRow[];
+}> => {
+  const [value, earned, contrib] = await Promise.all([
+    topRows(LB_VALUE, userId),
+    topRows(LB_EARNED, userId),
+    topRows(LB_CONTRIB, userId),
+  ]);
+  return { value, earned, contrib };
+};
+
+/**
+ * Resolve the next festival by tallying yesterday's ballot (majority wins; a
+ * tie or empty ballot rotates from the current festival), persist it, and
+ * broadcast. Returns the chosen festival. Used by the daily-cycle scheduler.
+ */
+export const runFestivalRotation = async (
+  now: number
+): Promise<{ festival: BuildingCategory; dayNumber: number }> => {
+  const city = await getCity();
+  const today = utcDay(now);
+  const yesterday = prevDay(today);
+  const counts = await getBallot(yesterday);
+  const festival = tallyBallot(counts, city.festival);
+
+  await putCity({ festival, festivalDate: today });
+  await broadcastFestival(festival);
+
+  const dayNumber = Math.floor((now - city.foundedAt) / 86_400_000) + 1;
+  return { festival, dayNumber };
+};
+
 export const isBuildingId = (value: unknown): value is BuildingId =>
   typeof value === 'string' && value in CATALOG;
+
+export const isCategory = (value: unknown): value is BuildingCategory =>
+  value === 'coins' || value === 'supplies' || value === 'decor';

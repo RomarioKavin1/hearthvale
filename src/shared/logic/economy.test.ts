@@ -21,6 +21,8 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   streak: 0,
   lastCheckIn: '2026-07-01',
   boostsToday: 0,
+  boostsDate: '',
+  paidStage: 0,
   ...overrides,
 });
 
