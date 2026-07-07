@@ -1,26 +1,17 @@
 import { Hono } from 'hono';
-import { context, redis, reddit } from '@devvit/web/server';
-
-// Demo response types (inlined from the deleted shared/api.ts; these demo
-// routes get fully replaced in Task 3).
-type InitResponse = {
-  type: 'init';
-  postId: string;
-  count: number;
-  username: string;
-};
-
-type IncrementResponse = {
-  type: 'increment';
-  postId: string;
-  count: number;
-};
-
-type DecrementResponse = {
-  type: 'decrement';
-  postId: string;
-  count: number;
-};
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { context } from '@devvit/web/server';
+import {
+  OpError,
+  doBuild,
+  doClaim,
+  doCollect,
+  doCollectAll,
+  doUpgrade,
+  isBuildingId,
+  loadState,
+  loadSummary,
+} from '../core/village';
 
 type ErrorResponse = {
   status: 'error';
@@ -29,81 +20,117 @@ type ErrorResponse = {
 
 export const api = new Hono();
 
-api.get('/init', async (c) => {
-  const { postId } = context;
+const fail = (
+  message: string,
+  status: ContentfulStatusCode
+): [ErrorResponse, ContentfulStatusCode] => [{ status: 'error', message }, status];
 
-  if (!postId) {
-    console.error('API Init Error: postId not found in devvit context');
-    return c.json<ErrorResponse>(
-      {
-        status: 'error',
-        message: 'postId is required but missing from context',
-      },
-      400
-    );
-  }
+const requireUser = (): string => {
+  const userId = context.userId;
+  if (!userId) throw new OpError(403, 'You must be logged in to play.');
+  return userId;
+};
 
+const asCoord = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return null;
+  return value;
+};
+
+api.get('/state', async (c) => {
   try {
-    const [count, username] = await Promise.all([
-      redis.get('count'),
-      reddit.getCurrentUsername(),
-    ]);
-
-    return c.json<InitResponse>({
-      type: 'init',
-      postId: postId,
-      count: count ? parseInt(count) : 0,
-      username: username ?? 'anonymous',
-    });
+    const state = await loadState(context.userId);
+    return c.json(state);
   } catch (error) {
-    console.error(`API Init Error for post ${postId}:`, error);
-    let errorMessage = 'Unknown error during initialization';
-    if (error instanceof Error) {
-      errorMessage = `Initialization failed: ${error.message}`;
+    console.error('GET /api/state failed:', error);
+    return c.json(...fail('Failed to load village state.', 500));
+  }
+});
+
+api.get('/summary', async (c) => {
+  try {
+    const summary = await loadSummary(context.userId);
+    return c.json(summary);
+  } catch (error) {
+    console.error('GET /api/summary failed:', error);
+    return c.json(...fail('Failed to load village summary.', 500));
+  }
+});
+
+api.post('/claim', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid tile coordinates.', 400));
+    const result = await doClaim(userId, x, y);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/claim failed:', error);
+    return c.json(...fail('Failed to claim tile.', 500));
+  }
+});
+
+api.post('/build', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown; buildingId?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid tile coordinates.', 400));
+    if (!isBuildingId(body.buildingId)) {
+      return c.json(...fail('Unknown building.', 400));
     }
-    return c.json<ErrorResponse>(
-      { status: 'error', message: errorMessage },
-      400
-    );
+    const result = await doBuild(userId, x, y, body.buildingId);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/build failed:', error);
+    return c.json(...fail('Failed to build.', 500));
   }
 });
 
-api.post('/increment', async (c) => {
-  const { postId } = context;
-  if (!postId) {
-    return c.json<ErrorResponse>(
-      {
-        status: 'error',
-        message: 'postId is required',
-      },
-      400
-    );
+api.post('/upgrade', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid tile coordinates.', 400));
+    const result = await doUpgrade(userId, x, y);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/upgrade failed:', error);
+    return c.json(...fail('Failed to upgrade.', 500));
   }
-
-  const count = await redis.incrBy('count', 1);
-  return c.json<IncrementResponse>({
-    count,
-    postId,
-    type: 'increment',
-  });
 });
 
-api.post('/decrement', async (c) => {
-  const { postId } = context;
-  if (!postId) {
-    return c.json<ErrorResponse>(
-      {
-        status: 'error',
-        message: 'postId is required',
-      },
-      400
-    );
+api.post('/collect', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid tile coordinates.', 400));
+    const result = await doCollect(userId, x, y);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/collect failed:', error);
+    return c.json(...fail('Failed to collect.', 500));
   }
+});
 
-  const count = await redis.incrBy('count', -1);
-  return c.json<DecrementResponse>({
-    count,
-    postId,
-    type: 'decrement',
-  });
+api.post('/collect-all', async (c) => {
+  try {
+    const userId = requireUser();
+    const result = await doCollectAll(userId);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/collect-all failed:', error);
+    return c.json(...fail('Failed to collect.', 500));
+  }
 });

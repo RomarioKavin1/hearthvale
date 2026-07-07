@@ -1,27 +1,9 @@
 import { Scene } from 'phaser';
 import * as Phaser from 'phaser';
 
-// Demo response types (inlined from the deleted shared/api.ts; this demo
-// scene gets replaced in a later task).
-type InitResponse = {
-  type: 'init';
-  postId: string;
-  count: number;
-  username: string;
-};
-
-type IncrementResponse = {
-  type: 'increment';
-  postId: string;
-  count: number;
-};
-
-type DecrementResponse = {
-  type: 'decrement';
-  postId: string;
-  count: number;
-};
-
+// This placeholder scene is fully replaced by the real village scene in a
+// later task. The demo /api/init|increment|decrement endpoints have been
+// removed from the server, so the buttons below are local-only no-ops.
 export class Game extends Scene {
   camera: Phaser.Cameras.Scene2D.Camera;
   background: Phaser.GameObjects.Image;
@@ -59,19 +41,8 @@ export class Game extends Scene {
       })
       .setOrigin(0.5);
 
-    // Fetch the initial counter value from server and update UI
-    void (async () => {
-      try {
-        const response = await fetch('/api/init');
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-        const data = (await response.json()) as InitResponse;
-        this.count = data.count;
-        this.updateCountText();
-      } catch (error) {
-        console.error('Failed to fetch initial count:', error);
-      }
-    })();
+    // Placeholder: the real village state load lands in a later task.
+    console.log('[Game] placeholder scene ready');
 
     // Button styling helper
     const createButton = (y: number, label: string, color: string, onClick: () => void) => {
@@ -94,32 +65,18 @@ export class Game extends Scene {
       return button;
     };
 
-    // Increment button
-    this.incButton = createButton(this.scale.height * 0.55, 'Increment', '#00ff00', async () => {
-      try {
-        const response = await fetch('/api/increment', { method: 'POST' });
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-        const data = (await response.json()) as IncrementResponse;
-        this.count = data.count;
-        this.updateCountText();
-      } catch (error) {
-        console.error('Failed to increment count:', error);
-      }
+    // Increment button (local-only no-op until the real scene lands)
+    this.incButton = createButton(this.scale.height * 0.55, 'Increment', '#00ff00', () => {
+      this.count += 1;
+      this.updateCountText();
+      console.log('[Game] increment (no-op)');
     });
 
-    // Decrement button
-    this.decButton = createButton(this.scale.height * 0.65, 'Decrement', '#ff5555', async () => {
-      try {
-        const response = await fetch('/api/decrement', { method: 'POST' });
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-        const data = (await response.json()) as DecrementResponse;
-        this.count = data.count;
-        this.updateCountText();
-      } catch (error) {
-        console.error('Failed to decrement count:', error);
-      }
+    // Decrement button (local-only no-op until the real scene lands)
+    this.decButton = createButton(this.scale.height * 0.65, 'Decrement', '#ff5555', () => {
+      this.count -= 1;
+      this.updateCountText();
+      console.log('[Game] decrement (no-op)');
     });
 
     // Game Over button – navigates to the GameOver scene
