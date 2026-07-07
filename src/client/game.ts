@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { AUTO, Game } from 'phaser';
-import { PAL } from '../shared/palette';
+import { BG } from './art/render';
 import { ArtDebug } from './scenes/ArtDebug';
 import { Boot } from './scenes/Boot';
 import { Preloader } from './scenes/Preloader';
@@ -14,7 +14,10 @@ const ART_DEBUG =
 const config: Phaser.Types.Core.GameConfig = {
   type: AUTO,
   parent: 'game-container',
-  backgroundColor: PAL.night,
+  backgroundColor: BG,
+  // Sketch Town sprites are smooth (not pixel art); round placement to whole
+  // pixels to avoid shimmer, but keep bilinear scaling (pixelArt stays off).
+  render: { roundPixels: true },
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,

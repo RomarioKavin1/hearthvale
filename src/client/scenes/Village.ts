@@ -3,7 +3,7 @@ import * as Phaser from 'phaser';
 import { connectRealtime, disconnectRealtime } from '@devvit/web/client';
 import type { JsonValue } from '@devvit/web/shared';
 import { PAL } from '../../shared/palette';
-import { CATALOG, GRID_SIZE } from '../../shared/catalog';
+import { CATALOG, GRID_SIZE, tierStats } from '../../shared/catalog';
 import {
   isClaimable,
   isPlaza,
@@ -17,16 +17,32 @@ import {
   emptyStockpile,
   goodsTotal,
 } from '../../shared/logic/economy';
+import { isRiver, nextThreshold, ringBounds } from '../../shared/logic/expansion';
 import type {
   CityState,
   TileState,
   VillageMessage,
 } from '../../shared/types';
-import { registerBuildings } from '../art/buildings';
-import { registerLandmark } from '../art/landmark';
-import { registerTiles, TILE_H, TILE_W } from '../art/tiles';
+import { BUILDING_ART } from '../art/manifest';
+import type { SpriteKey } from '../art/manifest';
+import {
+  addBlock,
+  addObject,
+  BG,
+  castleParts,
+  CASTLE_TOP_DY,
+  decorSprinkle,
+  isBlockFootprint,
+  isPathRing,
+  pathPiece,
+  riverPiece,
+  ROOF_DY,
+  TILE_H,
+  TILE_W,
+} from '../art/render';
 import { store } from '../state';
 import { api } from '../net';
+import { toast } from '../ui/dom';
 import type { HvTileSelected } from '../events';
 import {
   HV_CLEAR_SELECTION,
@@ -43,6 +59,7 @@ const C_GLOW = hexNum(PAL.glow);
 const C_CREAM = hexNum(PAL.cream);
 const C_ACCENT = hexNum(PAL.accent);
 const C_INK = hexNum(PAL.ink);
+const GOLD = 0xffd700;
 const CONFETTI = [
   hexNum(PAL.roofRed),
   hexNum(PAL.roofBlue),
@@ -52,31 +69,9 @@ const CONFETTI = [
   hexNum(PAL.accent),
 ];
 
-const RING_LO = 6;
-const RING_HI = 11;
-
-/** True for the one-tile dirt ring orthogonally bordering the plaza block. */
-const isPathRing = (x: number, y: number): boolean => {
-  const onX = x === RING_LO || x === RING_HI;
-  const onY = y === RING_LO || y === RING_HI;
-  const spanY = y >= RING_LO && y <= RING_HI;
-  const spanX = x >= RING_LO && x <= RING_HI;
-  return (onX && spanY) || (onY && spanX);
-};
-
-const groundTexture = (x: number, y: number): string => {
-  if (isPlaza(x, y)) return 'tile_plaza';
-  if (isPathRing(x, y)) return 'tile_path';
-  const v = (x * 7 + y * 13) % 17;
-  if (v === 3 || v === 12) return 'tile_grass2';
-  if (v === 7) return 'tile_grass3';
-  return 'tile_grass';
-};
-
-// Landmark 2×2 footprint centre + its front (bottom) tile, for depth sorting.
-const LANDMARK_CX = ((8 - 8 + (9 - 9)) * TILE_W) / 2; // 0
-const LANDMARK_CY = (((8 + 8 + 9 + 9) / 2) * TILE_H) / 2; // avg (x+y)=17 → 408
-const LANDMARK_DEPTH = ((9 + 9) * TILE_H) / 2; // front tile (9,9) sy = 432
+// Grand Keep centre (avg of the 2×2 [8,9]² footprint) for celebration effects.
+const KEEP_CX = 0;
+const KEEP_CY = 17 * (TILE_H / 2); // (8.5+8.5)·32 = 544
 
 // ── Runtime-guards for realtime messages (no casts) ─────────────────────────
 
@@ -106,6 +101,9 @@ const isCityState = (v: JsonValue | undefined): boolean =>
   typeof v.totalCollected === 'number' &&
   typeof v.totalContributed === 'number';
 
+const isBounds = (v: JsonValue | undefined): boolean =>
+  isRecord(v) && typeof v.lo === 'number' && typeof v.hi === 'number';
+
 const isVillageMessage = (v: JsonValue): v is VillageMessage => {
   if (!isRecord(v)) return false;
   switch (v.t) {
@@ -122,12 +120,11 @@ const isVillageMessage = (v: JsonValue): v is VillageMessage => {
       );
     case 'stage':
       return typeof v.stage === 'number';
-    // TODO(V4): market + ring messages are accepted here but the renderer does
-    // not yet react to them (V4 wires the market board + ring-unlock pan-out).
+    // TODO(V4): market prices/stockpile drive the HUD board, not the scene.
     case 'market':
       return isRecord(v.prices) && isRecord(v.stockpile);
     case 'ring':
-      return isRecord(v.bounds);
+      return isBounds(v.bounds);
     default:
       return false;
   }
@@ -136,24 +133,33 @@ const isVillageMessage = (v: JsonValue): v is VillageMessage => {
 // ── Per-tile view bookkeeping ───────────────────────────────────────────────
 
 type TileView = {
-  building: Phaser.GameObjects.Image | undefined;
+  /** Every structural sprite for this tile's building/decor, destroyed together. */
+  parts: Phaser.GameObjects.Image[];
+  /** Primary sprite used for pop animations + wheatfield growth swaps. */
+  primary: Phaser.GameObjects.Image | undefined;
   barBg: Phaser.GameObjects.Rectangle | undefined;
   bar: Phaser.GameObjects.Rectangle | undefined;
   claim: Phaser.GameObjects.Image | undefined;
-  glow: Phaser.GameObjects.Rectangle | undefined;
-  pip: Phaser.GameObjects.Rectangle | undefined;
+  goldPip: Phaser.GameObjects.Image | undefined;
+  finder: Phaser.GameObjects.Rectangle | undefined;
+  pip: Phaser.GameObjects.Image | undefined;
+  boostPip: Phaser.GameObjects.Image | undefined;
+  growthKey: SpriteKey | undefined;
   sig: string;
   constructing: boolean;
 };
 
-const BAR_W = 48;
-const BAR_H = 4;
+const BAR_W = 60;
+const BAR_H = 5;
 const EFFECT_DEPTH = 100000;
+const PIP_DEPTH = 50000;
 
 export class Village extends Scene {
   private views: Map<string, TileView> = new Map();
-  private highlight: Phaser.GameObjects.Image | undefined;
-  private landmark: Phaser.GameObjects.Image | undefined;
+  private groundImgs: Map<string, Phaser.GameObjects.Image> = new Map();
+  private decorImgs: Map<string, Phaser.GameObjects.Image> = new Map();
+  private landmarkParts: Phaser.GameObjects.Image[] = [];
+  private highlight: Phaser.GameObjects.Graphics | undefined;
   private conn: ReturnType<typeof connectRealtime> | undefined;
   private me: string | null = null;
 
@@ -185,20 +191,11 @@ export class Village extends Scene {
   create(): void {
     // Register cleanup up-front so a shutdown during the initial load still tidies.
     this.events.once('shutdown', () => this.cleanup());
-    this.cameras.main.setBackgroundColor(PAL.night);
-
-    // Defensive: art is registered in Preloader, but starting Village directly
-    // (e.g. a scene restart before Preloader) should still work. Idempotent —
-    // drawPixelTexture early-returns for textures that already exist.
-    if (!this.textures.exists('tile_grass')) {
-      registerTiles(this);
-      registerBuildings(this);
-      registerLandmark(this);
-    }
+    this.cameras.main.setBackgroundColor(BG);
 
     this.loading = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'Loading village…', {
-        fontFamily: 'monospace',
+        fontFamily: 'Georgia, serif',
         fontSize: '16px',
         color: PAL.cream,
       })
@@ -250,11 +247,10 @@ export class Village extends Scene {
     this.buildGround();
     this.buildLandmark();
 
-    // Selection highlight (hidden until a tile is tapped).
+    // Selection highlight (a glowing top-face diamond, hidden until a tile is tapped).
     this.highlight = this.add
-      .image(0, 0, 'tile_highlight')
-      .setOrigin(0.5)
-      .setDepth(3)
+      .graphics()
+      .setDepth(PIP_DEPTH - 1)
       .setVisible(false);
 
     this.reconcileAll();
@@ -265,9 +261,6 @@ export class Village extends Scene {
     this.setupDomBridge();
     this.setupRealtime();
 
-    // The 'change' subscription (→ ensureWorld → reconcileAll once built) is
-    // registered in create(), so it also catches the recover-after-outage case.
-
     this.time.addEvent({
       delay: 2000,
       loop: true,
@@ -275,26 +268,96 @@ export class Village extends Scene {
     });
   }
 
+  // ── Ring / unlock helpers ───────────────────────────────────────────────────
+
+  private population(): number {
+    const data = store.data;
+    return data?.ring.population ?? data?.city.population ?? 0;
+  }
+
+  private ringLoHi(): { lo: number; hi: number } {
+    const r = store.data?.ring;
+    if (r) return { lo: r.lo, hi: r.hi };
+    return ringBounds(this.population());
+  }
+
+  private isUnlockedTile(x: number, y: number): boolean {
+    const { lo, hi } = this.ringLoHi();
+    return x >= lo && x <= hi && y >= lo && y <= hi;
+  }
+
+  // ── Ground ──────────────────────────────────────────────────────────────────
+
   private buildGround(): void {
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
-        const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
-        this.add.image(sx, sy, groundTexture(x, y)).setOrigin(0.5).setDepth(0);
+        this.paintGround(x, y);
       }
     }
   }
 
+  /** Paint (or repaint) one ground tile per the current ring + routing rules. */
+  private paintGround(x: number, y: number): Phaser.GameObjects.Image {
+    const key = tileKey(x, y);
+    this.groundImgs.get(key)?.destroy();
+    this.decorImgs.get(key)?.destroy();
+    this.decorImgs.delete(key);
+
+    const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
+    let img: Phaser.GameObjects.Image;
+
+    if (!this.isUnlockedTile(x, y)) {
+      // Locked land: sunken dirt block, dimmed + darkened, no interactivity.
+      img = addBlock(this, 'dirt-low', sx, sy).setAlpha(0.55).setTint(0x8a7f95);
+    } else if (isRiver(x, y)) {
+      const p = riverPiece(x, y);
+      img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
+    } else if (isPlaza(x, y)) {
+      img = addBlock(this, 'dirt-center', sx, sy);
+    } else if (isPathRing(x, y)) {
+      const p = pathPiece(x, y);
+      img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
+    } else {
+      img = addBlock(this, 'grass-center', sx, sy);
+      // Sparse deterministic decor on currently-unowned open tiles.
+      if (store.data?.grid[key] === undefined) {
+        const d = decorSprinkle(x, y);
+        if (d) {
+          this.decorImgs.set(
+            key,
+            addObject(this, d, sx, sy).setDepth(sy + 0.5)
+          );
+        }
+      }
+    }
+
+    img.setDepth(sy);
+    this.groundImgs.set(key, img);
+    return img;
+  }
+
+  // ── Grand Keep (castle composition) ─────────────────────────────────────────
+
   private buildLandmark(): void {
+    this.renderCastle();
+  }
+
+  private renderCastle(): void {
+    for (const p of this.landmarkParts) p.destroy();
+    this.landmarkParts = [];
     const stage = store.data?.city.landmarkStage ?? 0;
-    this.landmark = this.add
-      .image(LANDMARK_CX, LANDMARK_CY + TILE_H / 2, `landmark_${stage}`)
-      .setOrigin(0.5, 1)
-      .setDepth(LANDMARK_DEPTH);
+    for (const part of castleParts(stage)) {
+      const { sx, sy } = isoToScreen(part.x, part.y, TILE_W, TILE_H);
+      const img = part.roof
+        ? addBlock(this, part.key, sx, sy, CASTLE_TOP_DY)
+        : addBlock(this, part.key, sx, sy);
+      img.setDepth(sy + (part.roof ? 2 : 1));
+      this.landmarkParts.push(img);
+    }
   }
 
   private updateLandmark(): void {
-    const stage = store.data?.city.landmarkStage ?? 0;
-    this.landmark?.setTexture(`landmark_${stage}`);
+    this.renderCastle();
   }
 
   // ── Incremental reconciliation ────────────────────────────────────────────
@@ -302,16 +365,31 @@ export class Village extends Scene {
   private reconcileAll(): void {
     const data = store.data;
     if (!data) return;
-    // Add / update tiles present in the grid.
     for (const [key, tile] of Object.entries(data.grid)) {
       this.syncTile(key, tile);
     }
-    // Remove views whose tile vanished (rare — tiles are not usually deleted).
     for (const key of [...this.views.keys()]) {
       if (!data.grid[key]) {
         this.destroyView(key);
       }
     }
+  }
+
+  private newView(): TileView {
+    return {
+      parts: [],
+      primary: undefined,
+      barBg: undefined,
+      bar: undefined,
+      claim: undefined,
+      goldPip: undefined,
+      finder: undefined,
+      pip: undefined,
+      boostPip: undefined,
+      growthKey: undefined,
+      sig: '',
+      constructing: false,
+    };
   }
 
   private syncTile(key: string, tile: TileState): void {
@@ -320,70 +398,52 @@ export class Village extends Scene {
 
     let view = this.views.get(key);
     if (!view) {
-      view = {
-        building: undefined,
-        barBg: undefined,
-        bar: undefined,
-        claim: undefined,
-        glow: undefined,
-        pip: undefined,
-        sig: '',
-        constructing: false,
-      };
+      view = this.newView();
       this.views.set(key, view);
     }
 
     const mine = tile.owner === this.me;
     const hasBuilding = tile.buildingId !== undefined;
     const constructing = hasBuilding && this.now() < tile.readyAt;
-    const sig = `${tile.buildingId ?? '-'}|${tile.tier}|${constructing ? 'c' : 'd'}|${mine ? 'm' : 'o'}`;
+    const cosmetic = tile.cosmetic ?? '-';
+    const sig = `${tile.buildingId ?? '-'}|${tile.tier}|${constructing ? 'c' : 'd'}|${mine ? 'm' : 'o'}|${cosmetic}`;
+
+    // A claimed tile never keeps a loose decor sprinkle beneath it.
+    const decor = this.decorImgs.get(key);
+    if (decor) {
+      decor.destroy();
+      this.decorImgs.delete(key);
+    }
 
     if (sig !== view.sig) {
       this.clearStructural(view);
 
-      if (tile.buildingId !== undefined) {
-        const texKey = constructing
-          ? 'bld_construction'
-          : `bld_${tile.buildingId}_${tile.tier}`;
-        view.building = this.add
-          .image(sx, sy + TILE_H / 2, texKey)
-          .setOrigin(0.5, 1)
-          .setDepth(sy);
-
-        if (constructing) {
-          view.barBg = this.add
-            .rectangle(sx, sy - TILE_H, BAR_W + 2, BAR_H + 2, C_INK)
-            .setDepth(sy + 1);
-          view.bar = this.add
-            .rectangle(sx - BAR_W / 2, sy - TILE_H, BAR_W, BAR_H, C_GLOW)
-            .setOrigin(0, 0.5)
-            .setDepth(sy + 2);
-        }
+      if (hasBuilding) {
+        this.buildBuilding(view, tile, x, y, sx, sy, constructing);
       } else {
-        // Claimed but empty — subtle claim outline.
-        view.claim = this.add
-          .image(sx, sy, 'tile_claim')
-          .setOrigin(0.5)
-          .setDepth(1);
+        // Claimed but empty — a small staked fence marker.
+        view.claim = addObject(this, 'fence-wood', sx, sy)
+          .setDepth(sy + 0.5)
+          .setAlpha(0.9);
       }
 
       // Own-tile finder glow (small pulsing pip near the tile corner).
-      if (mine && !view.glow) {
-        view.glow = this.add
-          .rectangle(sx - TILE_W * 0.26, sy + TILE_H * 0.14, 6, 6, C_GLOW)
-          .setDepth(sy + 3)
+      if (mine && !view.finder) {
+        view.finder = this.add
+          .rectangle(sx - TILE_W * 0.24, sy + TILE_H * 0.1, 6, 6, C_GLOW)
+          .setDepth(PIP_DEPTH)
           .setAlpha(0.85);
         this.tweens.add({
-          targets: view.glow,
+          targets: view.finder,
           alpha: 0.35,
           duration: 900,
           yoyo: true,
           repeat: -1,
         });
-      } else if (!mine && view.glow) {
-        this.tweens.killTweensOf(view.glow);
-        view.glow.destroy();
-        view.glow = undefined;
+      } else if (!mine && view.finder) {
+        this.tweens.killTweensOf(view.finder);
+        view.finder.destroy();
+        view.finder = undefined;
       }
 
       view.constructing = constructing;
@@ -391,33 +451,129 @@ export class Village extends Scene {
     }
   }
 
+  /** Compose a tile's building sprites (stacked base+roof, flat decor, or scaffold). */
+  private buildBuilding(
+    view: TileView,
+    tile: TileState,
+    x: number,
+    y: number,
+    sx: number,
+    sy: number,
+    constructing: boolean
+  ): void {
+    if (constructing || tile.buildingId === undefined) {
+      const scaffold = addBlock(this, 'structure-low', sx, sy).setDepth(sy + 1);
+      view.primary = scaffold;
+      view.parts.push(scaffold);
+      view.barBg = this.add
+        .rectangle(sx, sy - TILE_H, BAR_W + 2, BAR_H + 2, C_INK)
+        .setDepth(sy + 3);
+      view.bar = this.add
+        .rectangle(sx - BAR_W / 2, sy - TILE_H, BAR_W, BAR_H, C_GLOW)
+        .setOrigin(0, 0.5)
+        .setDepth(sy + 4);
+      return;
+    }
+
+    const art = BUILDING_ART[tile.buildingId];
+    if (art.kind === 'stacked') {
+      const base = addBlock(this, art.base, sx, sy).setDepth(sy + 1);
+      const roof = addBlock(this, art.roofByTier[tile.tier], sx, sy, ROOF_DY).setDepth(
+        sy + 2
+      );
+      if (tile.cosmetic === 'golden-roof') {
+        roof.setTint(GOLD);
+        view.goldPip = this.add
+          .image(sx, sy - TILE_H * 1.4, 'icon-star')
+          .setScale(0.18)
+          .setTint(C_GLOW)
+          .setDepth(sy + 3);
+        this.tweens.add({
+          targets: view.goldPip,
+          alpha: 0.4,
+          duration: 850,
+          yoyo: true,
+          repeat: -1,
+        });
+      }
+      view.primary = base;
+      view.parts.push(base, roof);
+      return;
+    }
+
+    // Flat composition (crops / trees / rocks / decor). Wheatfields use a growth
+    // state chosen from accrual instead of the static tier sprite.
+    let keys: SpriteKey[];
+    if (tile.buildingId === 'wheatfield') {
+      const gk = this.wheatGrowthKey(tile, x, y);
+      view.growthKey = gk;
+      keys = [gk];
+    } else {
+      keys = art.byTier[tile.tier];
+    }
+    let d = sy + 1;
+    for (const k of keys) {
+      const img = isBlockFootprint(k)
+        ? addBlock(this, k, sx, sy)
+        : addObject(this, k, sx, sy);
+      img.setDepth(d);
+      d += 0.1;
+      view.parts.push(img);
+      if (!view.primary) view.primary = img;
+    }
+  }
+
+  /** furrow-crop while under half the tier cap, furrow-crop-wheat once ripening. */
+  private wheatGrowthKey(tile: TileState, x: number, y: number): SpriteKey {
+    const data = store.data;
+    if (!data) return 'furrow-crop';
+    const now = this.now();
+    const adj = adjacencyBonus(data.grid, x, y, data.city.festival, now);
+    const { gained } = accrue(
+      tile,
+      now,
+      data.city.festival,
+      adj,
+      data.city.weather,
+      emptyStockpile()
+    );
+    const cap = tierStats(CATALOG.wheatfield, tile.tier).cap;
+    const wheat = gained.goods.wheat ?? 0;
+    return wheat >= cap * 0.5 ? 'furrow-crop-wheat' : 'furrow-crop';
+  }
+
   private clearStructural(view: TileView): void {
-    view.building?.destroy();
+    for (const p of view.parts) p.destroy();
+    view.parts = [];
+    view.primary = undefined;
     view.barBg?.destroy();
     view.bar?.destroy();
     view.claim?.destroy();
-    view.building = undefined;
     view.barBg = undefined;
     view.bar = undefined;
     view.claim = undefined;
+    if (view.goldPip) {
+      this.tweens.killTweensOf(view.goldPip);
+      view.goldPip.destroy();
+      view.goldPip = undefined;
+    }
+    view.growthKey = undefined;
   }
 
   private destroyView(key: string): void {
     const view = this.views.get(key);
     if (!view) return;
     this.clearStructural(view);
-    if (view.glow) {
-      this.tweens.killTweensOf(view.glow);
-      view.glow.destroy();
-    }
-    if (view.pip) {
-      this.tweens.killTweensOf(view.pip);
-      view.pip.destroy();
+    for (const pip of [view.finder, view.pip, view.boostPip]) {
+      if (pip) {
+        this.tweens.killTweensOf(pip);
+        pip.destroy();
+      }
     }
     this.views.delete(key);
   }
 
-  // ── Pending-production pips ────────────────────────────────────────────────
+  // ── Pending-production + boost pips ──────────────────────────────────────────
 
   private updatePips(): void {
     const data = store.data;
@@ -428,37 +584,69 @@ export class Village extends Scene {
     for (const [key, tile] of Object.entries(data.grid)) {
       const view = this.views.get(key);
       if (!view) continue;
+      const { x, y } = parseKey(key);
+      const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
 
-      let show = false;
-      if (tile.owner === this.me && tile.buildingId !== undefined && now >= tile.readyAt) {
-        const { x, y } = parseKey(key);
-        const adj = adjacencyBonus(data.grid, x, y, fest, now);
-        // TODO(V4): thread the real stockpile in for accurate processor pips.
-        const { gained } = accrue(tile, now, fest, adj, data.city.weather, emptyStockpile());
-        show = gained.coins + goodsTotal(gained.goods) > 0;
+      // Wheatfield growth state can change over time — refresh its sprite.
+      if (
+        tile.buildingId === 'wheatfield' &&
+        !view.constructing &&
+        view.primary
+      ) {
+        const gk = this.wheatGrowthKey(tile, x, y);
+        if (gk !== view.growthKey) {
+          view.growthKey = gk;
+          view.primary.setTexture(gk);
+        }
       }
 
-      if (show && !view.pip) {
-        const { x, y } = parseKey(key);
-        const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
-        const pip = this.add
-          .rectangle(sx, sy - TILE_H * 0.95, 6, 6, C_ACCENT)
-          .setDepth(sy + 500);
-        this.tweens.add({
-          targets: pip,
-          y: sy - TILE_H * 0.95 - 6,
-          duration: 620,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.inOut',
-        });
-        view.pip = pip;
-      } else if (!show && view.pip) {
+      // Ready-to-collect coin pip (own producing tiles with pending output).
+      let ready = false;
+      if (tile.owner === this.me && tile.buildingId !== undefined && now >= tile.readyAt) {
+        const adj = adjacencyBonus(data.grid, x, y, fest, now);
+        const { gained } = accrue(tile, now, fest, adj, data.city.weather, emptyStockpile());
+        ready = gained.coins + goodsTotal(gained.goods) > 0;
+      }
+      if (ready && !view.pip) {
+        view.pip = this.spawnPip(sx, sy - TILE_H * 0.95, 'icon-coin', C_GLOW);
+      } else if (!ready && view.pip) {
         this.tweens.killTweensOf(view.pip);
         view.pip.destroy();
         view.pip = undefined;
       }
+
+      // Boost pip (any boosted tile shows an up-arrow).
+      const boosted = tile.boostUntil > now && tile.buildingId !== undefined;
+      if (boosted && !view.boostPip) {
+        view.boostPip = this.spawnPip(sx, sy - TILE_H * 1.25, 'icon-arrow-up', C_ACCENT);
+      } else if (!boosted && view.boostPip) {
+        this.tweens.killTweensOf(view.boostPip);
+        view.boostPip.destroy();
+        view.boostPip = undefined;
+      }
     }
+  }
+
+  private spawnPip(
+    x: number,
+    y: number,
+    key: SpriteKey,
+    tint: number
+  ): Phaser.GameObjects.Image {
+    const pip = this.add
+      .image(x, y, key)
+      .setScale(0.2)
+      .setTint(tint)
+      .setDepth(PIP_DEPTH);
+    this.tweens.add({
+      targets: pip,
+      y: y - 7,
+      duration: 620,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.inOut',
+    });
+    return pip;
   }
 
   // ── Camera ─────────────────────────────────────────────────────────────────
@@ -466,18 +654,17 @@ export class Village extends Scene {
   private setupCamera(): void {
     const cam = this.cameras.main;
     const half = TILE_W;
-    const spanX = (GRID_SIZE - 1) * TILE_W; // full horizontal extent
+    const spanX = (GRID_SIZE - 1) * TILE_W;
     cam.setBounds(
       -spanX / 2 - half,
-      -220,
+      -260,
       spanX + half * 2,
-      (GRID_SIZE - 1) * TILE_H + 340
+      (GRID_SIZE - 1) * TILE_H + 460
     );
     cam.setZoom(1);
 
-    // Centre on the player's first owned tile, else the plaza centre.
-    let cx = 0;
-    let cy = LANDMARK_CY;
+    let cx = KEEP_CX;
+    let cy = KEEP_CY;
     const data = store.data;
     if (data && this.me) {
       for (const [key, tile] of Object.entries(data.grid)) {
@@ -561,6 +748,20 @@ export class Village extends Scene {
     const y = Math.round((b - a) / 2);
     if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) return;
 
+    // Locked land rejects interaction with a "grow first" nudge.
+    if (!this.isUnlockedTile(x, y)) {
+      const pop = this.population();
+      const nt = data.ring.nextThreshold ?? nextThreshold(pop);
+      if (nt !== null) {
+        const need = Math.max(1, nt - pop);
+        toast(
+          `The village must grow first — ${need} more villager${need === 1 ? '' : 's'}`,
+          'info'
+        );
+      }
+      return;
+    }
+
     const key = tileKey(x, y);
     const tile = data.grid[key] ?? null;
     const mine = tile !== null && tile.owner === this.me;
@@ -605,7 +806,18 @@ export class Village extends Scene {
   private setSelection(key: string, x: number, y: number): void {
     if (!this.highlight) return;
     const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
-    this.highlight.setPosition(sx, sy).setVisible(true);
+    const hw = TILE_W / 2;
+    const hh = TILE_H / 2;
+    this.highlight.clear();
+    this.highlight.lineStyle(3, C_GLOW, 0.9);
+    this.highlight.beginPath();
+    this.highlight.moveTo(sx, sy - hh);
+    this.highlight.lineTo(sx + hw, sy);
+    this.highlight.lineTo(sx, sy + hh);
+    this.highlight.lineTo(sx - hw, sy);
+    this.highlight.closePath();
+    this.highlight.strokePath();
+    this.highlight.setVisible(true);
     void key;
   }
 
@@ -661,7 +873,7 @@ export class Village extends Scene {
         store.patchTile(msg.key, msg.tile);
         if (brandNew && bid !== undefined && msg.tile.owner !== this.me) {
           const view = this.views.get(msg.key);
-          if (view?.building) this.dustPop(view.building);
+          if (view?.primary) this.dustPop(view.primary);
           this.floatLabel(msg.key, CATALOG[bid].name);
         }
         break;
@@ -685,7 +897,55 @@ export class Village extends Scene {
         store.setFestival(msg.festival);
         break;
       }
+      case 'ring': {
+        this.onRingUnlock(msg.bounds.lo, msg.bounds.hi);
+        break;
+      }
     }
+  }
+
+  /** New land opened: widen the ring, pop the new tiles in, celebrate. */
+  private onRingUnlock(lo: number, hi: number): void {
+    const data = store.data;
+    if (!data) return;
+    const old = { lo: data.ring.lo, hi: data.ring.hi };
+    if (lo >= old.lo && hi <= old.hi) return; // no growth
+    data.ring.lo = lo;
+    data.ring.hi = hi;
+
+    // Gather freshly-unlocked tiles (inside new bounds, outside old).
+    const fresh: Array<{ x: number; y: number }> = [];
+    for (let y = lo; y <= hi; y++) {
+      for (let x = lo; x <= hi; x++) {
+        const wasIn = x >= old.lo && x <= old.hi && y >= old.lo && y <= old.hi;
+        if (!wasIn) fresh.push({ x, y });
+      }
+    }
+
+    // Gentle zoom-out to reveal the bigger village.
+    const cam = this.cameras.main;
+    this.tweens.add({
+      targets: cam,
+      zoom: Math.max(0.55, cam.zoom * 0.82),
+      duration: 700,
+      ease: 'Sine.inOut',
+    });
+
+    // Staggered pop-in of the new terrain.
+    fresh.forEach((t, i) => {
+      this.time.delayedCall(i * 20, () => {
+        const img = this.paintGround(t.x, t.y);
+        img.setScale(0);
+        this.tweens.add({
+          targets: img,
+          scale: 1,
+          duration: 320,
+          ease: 'Back.out',
+        });
+      });
+    });
+
+    this.ringConfetti(fresh.length);
   }
 
   private startPolling(): void {
@@ -736,7 +996,9 @@ export class Village extends Scene {
     const oy = sy - TILE_H * 0.7;
     for (let i = 0; i < 7; i++) {
       const coin = this.add
-        .rectangle(sx, oy, 6, 6, C_GLOW)
+        .image(sx, oy, 'icon-coin')
+        .setScale(0.16)
+        .setTint(C_GLOW)
         .setDepth(EFFECT_DEPTH);
       this.tweens.add({
         targets: coin,
@@ -751,23 +1013,28 @@ export class Village extends Scene {
   }
 
   private confetti(): void {
-    const cx = LANDMARK_CX;
-    const cy = LANDMARK_CY - TILE_H * 2;
-    for (let i = 0; i < 12; i++) {
+    this.burstConfetti(KEEP_CX, KEEP_CY - TILE_H * 2, 14);
+  }
+
+  private ringConfetti(count: number): void {
+    const cam = this.cameras.main;
+    this.burstConfetti(
+      cam.midPoint.x,
+      cam.midPoint.y - 40,
+      Math.min(24, 8 + count)
+    );
+  }
+
+  private burstConfetti(cx: number, cy: number, n: number): void {
+    for (let i = 0; i < n; i++) {
       const color = CONFETTI[i % CONFETTI.length] ?? C_GLOW;
       const bit = this.add
-        .rectangle(
-          cx + Phaser.Math.Between(-40, 40),
-          cy,
-          5,
-          5,
-          color
-        )
+        .rectangle(cx + Phaser.Math.Between(-50, 50), cy, 5, 5, color)
         .setDepth(EFFECT_DEPTH);
       this.tweens.add({
         targets: bit,
-        y: cy + Phaser.Math.Between(60, 130),
-        x: bit.x + Phaser.Math.Between(-24, 24),
+        y: cy + Phaser.Math.Between(60, 150),
+        x: bit.x + Phaser.Math.Between(-30, 30),
         alpha: 0,
         angle: Phaser.Math.Between(-180, 180),
         duration: 1200,
@@ -782,8 +1049,8 @@ export class Village extends Scene {
     const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
     const label = this.add
       .text(sx, sy - TILE_H, text, {
-        fontFamily: 'monospace',
-        fontSize: '11px',
+        fontFamily: 'Georgia, serif',
+        fontSize: '12px',
         color: PAL.cream,
         backgroundColor: PAL.ink,
         padding: { x: 4, y: 2 },
@@ -818,7 +1085,7 @@ export class Village extends Scene {
       if (now >= tile.readyAt) {
         this.syncTile(key, tile);
         const rebuilt = this.views.get(key);
-        if (rebuilt?.building) this.dustPop(rebuilt.building);
+        if (rebuilt?.primary) this.dustPop(rebuilt.primary);
         continue;
       }
       if (view.bar) {

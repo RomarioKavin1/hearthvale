@@ -1,98 +1,177 @@
 import { Input, Scene } from 'phaser';
 import { PAL } from '../../shared/palette';
-import { registerBuildings, TIERS } from '../art/buildings';
-import { registerLandmark } from '../art/landmark';
-import { registerTiles, TILE_H, TILE_W } from '../art/tiles';
-import type { BuildingId } from '../../shared/types';
+import type { BuildingId, Tier } from '../../shared/types';
+import { BUILDING_ART, SPRITES } from '../art/manifest';
+import type { SpriteKey } from '../art/manifest';
+import {
+  addBlock,
+  addObject,
+  BG,
+  castleParts,
+  CASTLE_TOP_DY,
+  isBlockFootprint,
+  ROOF_DY,
+  TILE_H,
+} from '../art/render';
 
 const IDS: BuildingId[] = [
   'cottage',
-  'bakery',
   'wheatfield',
-  'quarry',
-  'sawmill',
   'grove',
+  'quarry',
+  'windmill',
+  'sawmill',
+  'kiln',
+  'bakery',
   'well',
   'trees',
-  'windmill',
-  'kiln',
-  'manor',
   'fountain',
+  'manor',
 ];
 
-const TILE_KEYS = [
-  'tile_grass',
-  'tile_grass2',
-  'tile_grass3',
-  'tile_path',
-  'tile_plaza',
-  'tile_highlight',
-  'tile_claim',
-];
+const TIERS: Tier[] = [1, 2, 3];
 
 /**
- * Developer-only verification surface: registers every runtime texture and
- * lays them all out with labels on a night background so the whole sprite
- * factory can be eyeballed at a glance. Activated via `?artdebug` (see game.ts).
+ * Developer-only verification surface (`?artdebug`): loads the Kenney atlas and
+ * lays out terrain samples, path/river routing pieces, every BUILDING_ART
+ * composition at each tier (stacked base+roof / flat decor), the Grand Keep stages,
+ * and the locked-tile treatment — the tuning surface for the anchor constants in
+ * art/render.ts and the reviewer's visual evidence.
  */
 export class ArtDebug extends Scene {
   constructor() {
     super('ArtDebug');
   }
 
-  create(): void {
-    registerTiles(this);
-    registerBuildings(this);
-    registerLandmark(this);
+  preload(): void {
+    this.cameras.main.setBackgroundColor(BG);
+    for (const key of Object.keys(SPRITES) as SpriteKey[]) {
+      this.load.image(key, SPRITES[key]);
+    }
+  }
 
-    this.cameras.main.setBackgroundColor(PAL.night);
-
-    const label = (x: number, y: number, text: string, size = 13): void => {
-      this.add.text(x, y, text, {
-        fontFamily: 'monospace',
-        fontSize: `${size}px`,
-        color: PAL.cream,
-      });
-    };
-
-    let y = 16;
-    label(16, y, 'HEARTHVALE ART DEBUG — tiles / buildings ×3 tiers / icons / clocktower', 15);
-    y += 30;
-
-    // Tiles
-    label(16, y, 'tiles', 12);
-    y += 14;
-    TILE_KEYS.forEach((key, i) => {
-      this.add.image(70 + i * (TILE_W + 16), y + TILE_H / 2, key).setOrigin(0.5);
-      label(40 + i * (TILE_W + 16), y + TILE_H + 4, key.replace('tile_', ''), 9);
+  private label(x: number, y: number, text: string, size = 12): void {
+    this.add.text(x, y, text, {
+      fontFamily: 'monospace',
+      fontSize: `${size}px`,
+      color: PAL.cream,
     });
-    y += TILE_H + 26;
+  }
 
-    // Buildings — one row per id, three tiers + icon
+  /** A faint grass tile under a cell so compositions read against ground. */
+  private ground(cx: number, cy: number): void {
+    addBlock(this, 'grass-center', cx, cy).setDepth(cy);
+  }
+
+  private composeBuilding(id: BuildingId, tier: Tier, cx: number, cy: number): void {
+    this.ground(cx, cy);
+    const art = BUILDING_ART[id];
+    if (art.kind === 'stacked') {
+      addBlock(this, art.base, cx, cy).setDepth(cy + 1);
+      addBlock(this, art.roofByTier[tier], cx, cy, ROOF_DY).setDepth(cy + 2);
+    } else {
+      let d = cy + 1;
+      for (const k of art.byTier[tier]) {
+        if (isBlockFootprint(k)) addBlock(this, k, cx, cy).setDepth(d);
+        else addObject(this, k, cx, cy).setDepth(d);
+        d += 0.1;
+      }
+    }
+  }
+
+  private tile(key: SpriteKey, cx: number, cy: number, flipX = false): void {
+    addBlock(this, key, cx, cy).setDepth(cy).setFlipX(flipX);
+  }
+
+  create(): void {
+    const COL = 128;
+    const ROW = 150;
+    let y = 40;
+
+    this.label(16, y - 24, 'HEARTHVALE ART DEBUG — Sketch Town diorama renderer', 15);
+
+    // Terrain + routing samples.
+    this.label(16, y - 4, 'terrain / routing', 12);
+    const terrain: Array<[string, SpriteKey, boolean]> = [
+      ['grass', 'grass-center', false],
+      ['dirt', 'dirt-center', false],
+      ['locked', 'dirt-low', false],
+      ['path', 'grass-path', false],
+      ['path/flip', 'grass-path', true],
+      ['cross', 'grass-path-crossing', false],
+      ['river', 'grass-river', true],
+      ['riverBend', 'grass-river-bend', false],
+      ['riverEnd', 'grass-river-end', false],
+    ];
+    terrain.forEach(([name, key, flip], i) => {
+      const cx = 90 + i * COL;
+      if (key === 'dirt-low') {
+        addBlock(this, key, cx, y + 60).setDepth(y).setAlpha(0.55).setTint(0x8a7f95);
+      } else {
+        this.tile(key, cx, y + 60, flip);
+      }
+      this.label(cx - 40, y + 96, name, 10);
+    });
+    y += ROW + 10;
+
+    // Buildings — one row per id, three tiers.
     for (const id of IDS) {
-      label(16, y + 6, id, 12);
+      this.label(16, y + 40, id, 12);
       TIERS.forEach((tier, i) => {
-        this.add.image(150 + i * 96, y + 96, `bld_${id}_${tier}`).setOrigin(0.5, 1);
-        label(150 + i * 96 - 8, y + 100, `t${tier}`, 9);
+        const cx = 150 + i * COL;
+        this.composeBuilding(id, tier, cx, y + 60);
+        this.label(cx - 8, y + 100, `t${tier}`, 10);
       });
-      this.add.image(470, y + 96, `icon_${id}`).setOrigin(0.5, 1);
-      label(452, y + 100, 'icon', 9);
-      y += 116;
+      y += ROW;
     }
 
-    // Construction + landmark stages
-    label(16, y + 6, 'construction', 12);
-    this.add.image(150, y + 96, 'bld_construction').setOrigin(0.5, 1);
-    label(230, y + 6, 'clocktower stages 0..5', 12);
-    for (let s = 0; s < 6; s++) {
-      this.add.image(300 + s * 120, y + 96, `landmark_${s}`).setOrigin(0.5, 1);
-      label(290 + s * 120, y + 100, `${s}`, 10);
+    // Wheatfield growth states + construction scaffold + golden roof.
+    this.label(16, y + 40, 'states', 12);
+    this.ground(150, y + 60);
+    addObject(this, 'furrow-crop', 150, y + 60).setDepth(y + 61);
+    this.label(120, y + 100, 'growing', 10);
+    this.ground(150 + COL, y + 60);
+    addObject(this, 'furrow-crop-wheat', 150 + COL, y + 60).setDepth(y + 61);
+    this.label(120 + COL, y + 100, 'ripe', 10);
+    this.ground(150 + 2 * COL, y + 60);
+    addBlock(this, 'structure-low', 150 + 2 * COL, y + 60).setDepth(y + 61);
+    this.label(120 + 2 * COL, y + 100, 'building', 10);
+    // Golden-roof cottage.
+    const gx = 150 + 3 * COL;
+    this.ground(gx, y + 60);
+    addBlock(this, 'building-door', gx, y + 60).setDepth(y + 61);
+    addBlock(this, 'roof-gable-brown', gx, y + 60, ROOF_DY).setDepth(y + 62).setTint(0xffd700);
+    this.label(gx - 30, y + 100, 'golden-roof', 10);
+    y += ROW;
+
+    // Grand Keep stages 0..5 — composed on the 2×2 footprint, offset per cell.
+    this.label(16, y + 40, 'keep stages 0..5', 12);
+    for (let stage = 0; stage <= 5; stage++) {
+      const ox = 140 + stage * (COL + 20);
+      const oy = y + 70;
+      // Four dirt tiles as the plaza footprint.
+      for (const t of [
+        { dx: 0, dy: -TILE_H / 2 },
+        { dx: -TILE_H, dy: 0 },
+        { dx: TILE_H, dy: 0 },
+        { dx: 0, dy: TILE_H / 2 },
+      ]) {
+        addBlock(this, 'dirt-center', ox + t.dx, oy + t.dy).setDepth(oy + t.dy);
+      }
+      for (const part of castleParts(stage)) {
+        // Map keep tile (8..9) to a local offset around (ox,oy).
+        const lx = (part.x - 8) - (part.y - 8);
+        const ly = (part.x - 8) + (part.y - 8);
+        const px = ox + lx * TILE_H;
+        const py = oy + ly * (TILE_H / 2);
+        if (part.roof) addBlock(this, part.key, px, py, CASTLE_TOP_DY).setDepth(py + 2);
+        else addBlock(this, part.key, px, py).setDepth(py + 1);
+      }
+      this.label(ox - 6, y + 150, `${stage}`, 11);
     }
-    y += 240;
+    y += ROW + 60;
 
     const contentHeight = y + 40;
-
-    // Vertical scroll via wheel / drag so the tall layout is fully reachable.
     const maxScroll = Math.max(0, contentHeight - this.scale.height);
     this.input.on(
       'wheel',
@@ -104,7 +183,10 @@ export class ArtDebug extends Scene {
     this.input.on('pointermove', (pointer: Input.Pointer) => {
       if (!pointer.isDown) return;
       const cam = this.cameras.main;
-      cam.scrollY = Math.min(maxScroll, Math.max(0, cam.scrollY - pointer.velocity.y * 0.1));
+      cam.scrollY = Math.min(
+        maxScroll,
+        Math.max(0, cam.scrollY - pointer.velocity.y * 0.1)
+      );
     });
   }
 }

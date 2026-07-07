@@ -1,9 +1,8 @@
 import { Scene } from 'phaser';
 
 /**
- * The village renders entirely from runtime-generated pixel textures (see
- * `src/client/art`), so there are no external assets to preload here. Boot
- * simply hands off to the Preloader, which registers those textures.
+ * Nothing to load before the Preloader (which streams the Kenney sprite atlas with
+ * a progress bar), so Boot simply hands off.
  */
 export class Boot extends Scene {
   constructor() {
