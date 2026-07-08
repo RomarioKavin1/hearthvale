@@ -12,11 +12,16 @@ import {
 } from './dom';
 
 /**
- * The single bottom-sheet host. One sheet is open at a time; opening another
- * swaps its content in place. A sheet supplies a `render(body)` callback that is
- * re-run on every `store` change (and optionally on a timer) so countdowns and
- * live figures stay fresh. Closing tears down those subscriptions and clears the
- * map's tile selection.
+ * The single modal host. One modal is open at a time; opening another swaps its
+ * content in place. A spec supplies a `render(body)` callback that is re-run on
+ * every `store` change (and optionally on a timer) so countdowns and live figures
+ * stay fresh. Closing tears down those subscriptions and clears the map's tile
+ * selection.
+ *
+ * Presentation (W3): a centred card over a dark, blurred backdrop — scale+fade in,
+ * closes on backdrop tap / the ✕ button / Escape. The public API (`openSheet`,
+ * `closeSheet`, `refreshSheet`, `setSheetTitle`, `action`) is unchanged so the
+ * panels/sheets code is untouched by the slide-up→modal swap.
  */
 
 export type SheetSpec = {
@@ -30,18 +35,13 @@ export type SheetSpec = {
 };
 
 let backdrop: HTMLElement | undefined;
-let sheet: HTMLElement | undefined;
+let card: HTMLElement | undefined;
 let titleEl: HTMLElement | undefined;
 let bodyEl: HTMLElement | undefined;
 
 let current: SheetSpec | undefined;
 let onStoreChange: (() => void) | undefined;
 let tickTimer: number | undefined;
-
-// Drag-to-close bookkeeping.
-let dragStartY = 0;
-let dragOffset = 0;
-let dragging = false;
 
 const rerender = (): void => {
   if (!current || !bodyEl) return;
@@ -73,46 +73,47 @@ const teardown = (): void => {
   prev?.onClose?.();
 };
 
+const onKeydown = (e: KeyboardEvent): void => {
+  if (e.key === 'Escape') closeSheet();
+};
+
 export const mountSheetRoot = (parent: HTMLElement): void => {
-  backdrop = el('div', {
-    cls: 'hv-backdrop',
-    on: { click: () => closeSheet() },
-  });
-
-  const handle = el('div', {
-    cls: 'hv-sheet-handle',
-    children: [el('span')],
-  });
-  handle.addEventListener('pointerdown', onDragStart);
-
-  titleEl = el('h2', { cls: 'hv-sheet-title' });
+  titleEl = el('h2', { cls: 'hv-modal-title' });
   const close = el('button', {
-    cls: 'hv-sheet-close',
+    cls: 'hv-modal-close',
     attrs: { type: 'button', 'aria-label': 'Close' },
     children: [iconEl('icon-cross', 14)],
     on: { click: () => closeSheet() },
   });
-  const head = el('div', { cls: 'hv-sheet-head', children: [titleEl, close] });
+  const head = el('div', { cls: 'hv-modal-head', children: [titleEl, close] });
 
-  bodyEl = el('div', { cls: 'hv-sheet-body' });
-  sheet = el('div', {
-    cls: 'hv-sheet',
+  bodyEl = el('div', { cls: 'hv-modal-body' });
+  card = el('div', {
+    cls: 'hv-modal',
     attrs: { role: 'dialog', 'aria-modal': 'true' },
-    children: [handle, head, bodyEl],
+    children: [head, bodyEl],
+  });
+
+  // The backdrop is the flex host that centres the card; a tap on the backdrop
+  // itself (not its child card) closes.
+  backdrop = el('div', { cls: 'hv-backdrop', children: [card] });
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) closeSheet();
   });
 
   parent.appendChild(backdrop);
-  parent.appendChild(sheet);
 };
 
 export const openSheet = (spec: SheetSpec): void => {
-  if (!sheet || !backdrop || !titleEl || !bodyEl) return;
+  if (!card || !backdrop || !titleEl || !bodyEl) return;
   // Swap out any previous sheet's subscriptions without firing a close event.
+  const wasOpen = current !== undefined;
   teardown();
 
   current = spec;
   titleEl.textContent = spec.title;
   rerender();
+  bodyEl.scrollTop = 0;
 
   onStoreChange = () => rerender();
   store.on('change', onStoreChange);
@@ -120,52 +121,18 @@ export const openSheet = (spec: SheetSpec): void => {
     tickTimer = window.setInterval(rerender, spec.tick);
   }
 
-  sheet.style.transform = '';
-  sheet.classList.remove('is-dragging');
   backdrop.classList.add('is-open');
-  sheet.classList.add('is-open');
+  if (!wasOpen) document.addEventListener('keydown', onKeydown);
 };
 
 export const closeSheet = (): void => {
-  if (!sheet || !backdrop) return;
+  if (!card || !backdrop) return;
   const wasOpen = current !== undefined;
   teardown();
-  sheet.classList.remove('is-open', 'is-dragging');
-  sheet.style.transform = '';
   backdrop.classList.remove('is-open');
+  document.removeEventListener('keydown', onKeydown);
   if (wasOpen) {
     window.dispatchEvent(new CustomEvent(HV_CLEAR_SELECTION));
-  }
-};
-
-// ── Drag-to-close ────────────────────────────────────────────────────────────
-
-const onDragStart = (e: PointerEvent): void => {
-  if (!sheet) return;
-  dragging = true;
-  dragStartY = e.clientY;
-  dragOffset = 0;
-  sheet.classList.add('is-dragging');
-  window.addEventListener('pointermove', onDragMove);
-  window.addEventListener('pointerup', onDragEnd);
-};
-
-const onDragMove = (e: PointerEvent): void => {
-  if (!dragging || !sheet) return;
-  dragOffset = Math.max(0, e.clientY - dragStartY);
-  sheet.style.transform = `translate(-50%, ${dragOffset}px)`;
-};
-
-const onDragEnd = (): void => {
-  if (!sheet) return;
-  dragging = false;
-  window.removeEventListener('pointermove', onDragMove);
-  window.removeEventListener('pointerup', onDragEnd);
-  sheet.classList.remove('is-dragging');
-  if (dragOffset > 90) {
-    closeSheet();
-  } else {
-    sheet.style.transform = '';
   }
 };
 

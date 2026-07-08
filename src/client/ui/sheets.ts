@@ -32,6 +32,7 @@ import {
   pctStr,
   promptLogin,
   todayUtc,
+  withTip,
 } from './dom';
 import { action, openSheet, refreshSheet, setSheetTitle, toast } from './sheet';
 
@@ -220,6 +221,11 @@ const renderMarketRow = (good: Good): HTMLElement => {
     cls: `hv-mkt-price${price > base ? ' hv-trend-up' : price < base ? ' hv-trend-down' : ''}`,
     children: priceChildren,
   });
+  if (price > base) {
+    withTip(priceEl, 'Price above base — the village is short on this good');
+  } else if (price < base) {
+    withTip(priceEl, 'Price below base — the village is well stocked');
+  }
 
   const head = el('button', {
     cls: 'hv-mkt-head',
@@ -269,11 +275,15 @@ export const openMarketSheet = (focus?: Good): void => {
             ],
           })
         );
-      } else {
-        stack.appendChild(
-          el('p', { cls: 'hv-note', text: 'Sell goods when prices rise; the village auto-buys what its workshops need.' })
-        );
       }
+      // A one-line explainer so mobile players (no hover tooltips) still learn
+      // how prices move.
+      stack.appendChild(
+        el('p', {
+          cls: 'hv-note hv-muted',
+          text: 'Prices rise when the village runs short and fall when it is well stocked.',
+        })
+      );
 
       const rows = el('div', { cls: 'hv-mkt-rows' });
       for (const good of GOODS) rows.appendChild(renderMarketRow(good));
@@ -344,6 +354,7 @@ const renderTradeCard = (offer: TraderOffer, index: number): HTMLElement => {
     text: me ? 'Accept' : 'Sign in to trade',
     attrs: { type: 'button' },
   });
+  withTip(btn, 'One trade per day — choose the offer you want most');
   if ((me && reason !== null) || isPending('trade')) btn.disabled = true;
   btn.addEventListener('click', () => {
     if (!me) {
@@ -458,6 +469,10 @@ const contributeControls = (good: KeepGood): HTMLElement => {
     text: me ? `Contribute ${fmtInt(amount)} ${GOOD_LABEL[good]}` : 'Sign in to contribute',
     attrs: { type: 'button' },
   });
+  withTip(
+    btn,
+    `Give ${GOOD_LABEL[good]} to the Village Hall — you earn a share of the level pot`
+  );
   if (me && (amount <= 0 || isPending(`contribute:${good}`))) btn.disabled = true;
   btn.addEventListener('click', () => {
     if (!me) {

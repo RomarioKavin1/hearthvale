@@ -71,6 +71,95 @@ export const clearNode = (node: HTMLElement): void => {
   while (node.firstChild) node.removeChild(node.firstChild);
 };
 
+// ── Tooltips ─────────────────────────────────────────────────────────────────
+// One shared, viewport-clamped bubble. Desktop: hover (300ms delay) shows it
+// above the target. Touch: a long-press (450ms) shows it for 2.5s. Every tooltip
+// also writes an `aria-label` so the meaning is available without a pointer.
+
+let tipEl: HTMLElement | undefined;
+let tipTimer: number | undefined;
+
+const ensureTip = (): HTMLElement => {
+  if (!tipEl) {
+    tipEl = el('div', {
+      cls: 'hv-tip',
+      attrs: { role: 'tooltip', 'aria-hidden': 'true' },
+    });
+    (document.getElementById('hv-hud') ?? document.body).appendChild(tipEl);
+  }
+  return tipEl;
+};
+
+const positionTip = (target: HTMLElement, text: string): void => {
+  const tip = ensureTip();
+  tip.textContent = text;
+  tip.classList.add('is-in');
+  tip.setAttribute('aria-hidden', 'false');
+  const r = target.getBoundingClientRect();
+  const tw = tip.offsetWidth;
+  const th = tip.offsetHeight;
+  const left = Math.max(
+    6,
+    Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 6)
+  );
+  const above = r.top - th - 8;
+  const top = above >= 6 ? above : r.bottom + 8; // flip below when clipped at top
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+};
+
+const hideTip = (): void => {
+  if (tipTimer !== undefined) {
+    window.clearTimeout(tipTimer);
+    tipTimer = undefined;
+  }
+  if (tipEl) {
+    tipEl.classList.remove('is-in');
+    tipEl.setAttribute('aria-hidden', 'true');
+  }
+};
+
+/**
+ * Attach a tooltip to `node`. `text` may be a getter so chips whose meaning
+ * changes with state (weather/festival) always show the current line. A static
+ * string also sets the `aria-label`; dynamic callers own their `aria-label`.
+ */
+export const withTip = <T extends HTMLElement>(
+  node: T,
+  text: string | (() => string)
+): T => {
+  const read = typeof text === 'function' ? text : (): string => text;
+  if (typeof text === 'string') node.setAttribute('aria-label', text);
+  node.removeAttribute('title');
+
+  node.addEventListener('pointerenter', (e) => {
+    if (e instanceof PointerEvent && e.pointerType !== 'mouse') return;
+    if (tipTimer !== undefined) window.clearTimeout(tipTimer);
+    tipTimer = window.setTimeout(() => positionTip(node, read()), 300);
+  });
+  node.addEventListener('pointerleave', hideTip);
+  node.addEventListener('pointercancel', hideTip);
+  node.addEventListener('pointerdown', (e) => {
+    if (e instanceof PointerEvent && e.pointerType === 'mouse') {
+      hideTip();
+      return;
+    }
+    if (tipTimer !== undefined) window.clearTimeout(tipTimer);
+    tipTimer = window.setTimeout(() => {
+      positionTip(node, read());
+      window.setTimeout(hideTip, 2500);
+    }, 450);
+  });
+  node.addEventListener('pointerup', () => {
+    // A tap shorter than the long-press threshold cancels the pending bubble.
+    if (tipTimer !== undefined) {
+      window.clearTimeout(tipTimer);
+      tipTimer = undefined;
+    }
+  });
+  return node;
+};
+
 // ── Building-icon data URLs (extracted from Phaser textures) ─────────────────
 
 let gameRef: Game | undefined;
@@ -171,6 +260,22 @@ export const WEATHER_META: Record<Weather, WeatherMeta> = {
   rain: { label: 'Rain', icon: 'icon-arrow-down' },
   clear: { label: 'Clear', icon: 'icon-check' },
   harvestmoon: { label: 'Harvest Moon', icon: 'icon-trophy' },
+};
+
+/** Plain-language tooltip for the weather chip (what today's sky pays). */
+export const WEATHER_TIP: Record<Weather, string> = {
+  sunny: 'Sunny: every producer earns +10% today',
+  rain: 'Rain: wheat and logs produce +30% today',
+  clear: 'Clear skies — no weather bonus today',
+  harvestmoon: 'Harvest Moon: every producer earns +50% today',
+};
+
+/** Plain-language tooltip for the festival chip (what today's festival favours). */
+export const FESTIVAL_TIP: Record<FestivalCategory, string> = {
+  coins: 'Coin Festival: coin buildings earn ×1.5 today',
+  raw: 'Harvest Festival: raw goods produce ×1.5 today',
+  processed: 'Craft Festival: workshops produce ×1.5 today',
+  decor: 'Decor Festival: decorations boost ×1.5 today',
 };
 
 // ── Formatting ───────────────────────────────────────────────────────────────
@@ -433,15 +538,16 @@ const CSS = `
   align-items: center;
   gap: 8px;
   min-height: 52px;
-  padding: calc(var(--sat) + 6px) calc(var(--sar) + 10px) 6px calc(var(--sal) + 10px);
+  padding: calc(var(--sat) + 8px) calc(var(--sar) + 12px) 8px calc(var(--sal) + 12px);
   background: rgba(59,51,71,0.92);
   border-bottom: 2px solid rgba(255,243,217,0.14);
+  -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
 }
 .hv-tb-left, .hv-tb-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
 }
 .hv-tb-center {
@@ -497,28 +603,40 @@ const CSS = `
 .hv-ring {
   pointer-events: auto;
   position: relative;
-  width: 40px; height: 40px;
   flex: 0 0 auto;
+  width: 40px; height: 40px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--cream);
+  -webkit-appearance: none;
+  appearance: none;
 }
-.hv-ring svg { display: block; }
+.hv-ring svg { display: block; width: 40px; height: 40px; }
 .hv-ring .hv-ring-lvl {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
   color: var(--cream);
+  pointer-events: none;
 }
+.hv-ring:active { transform: translateY(1px); }
 
 /* Weather + festival: cream-on-ink chips that truncate gracefully. */
 .hv-tb-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
-  height: 32px;
+  height: 28px;
   padding: 0 10px;
   background: rgba(255,243,217,0.09);
   border: 1px solid rgba(255,243,217,0.16);
@@ -649,69 +767,64 @@ const CSS = `
   100% { transform: scale(2.1); opacity: 0; }
 }
 
-/* ── Sheets ──────────────────────────────────────────────── */
+/* ── Modal (centred card over a blurred backdrop) ────────── */
 .hv-backdrop {
   position: absolute;
   inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--sat) + 12px) calc(var(--sar) + 12px)
+           calc(var(--sab) + 12px) calc(var(--sal) + 12px);
   background: rgba(46,40,55,0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 200ms ease-out;
+  transition: opacity 160ms ease-out;
 }
 .hv-backdrop.is-open { opacity: 1; pointer-events: auto; }
 
-.hv-sheet {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  width: min(520px, 100%);
-  transform: translate(-50%, 100%);
-  max-height: 76vh;
+.hv-modal {
+  width: min(440px, 100%);
+  max-height: 78vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--cream);
   border: 3px solid var(--ink);
-  border-bottom: none;
-  border-radius: 16px 16px 0 0;
-  box-shadow: 0 -6px 0 rgba(59,51,71,0.25);
-  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
-  pointer-events: none;
-  padding-bottom: var(--sab);
+  border-radius: 14px;
+  box-shadow: 0 6px 0 rgba(59,51,71,0.3);
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
 }
-.hv-sheet.is-open { transform: translate(-50%, 0); pointer-events: auto; }
-.hv-sheet.is-dragging { transition: none; }
+.hv-backdrop.is-open .hv-modal { opacity: 1; transform: scale(1); }
 
-.hv-sheet-handle {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: center;
-  padding: 8px 0 4px;
-  cursor: grab;
-  touch-action: none;
-}
-.hv-sheet-handle span {
-  width: 44px; height: 5px;
-  background: var(--wall-shade);
-  border: 1px solid var(--ink);
-  border-radius: 3px;
-}
-.hv-sheet-head {
+.hv-modal-head {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 14px 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 2px solid var(--wall-shade);
 }
-.hv-sheet-title {
+.hv-modal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
   font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
   font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.4px;
-  margin: 0;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.hv-sheet-close {
+.hv-modal-close {
   pointer-events: auto;
-  margin-left: auto;
+  flex: 0 0 auto;
   width: 34px; height: 34px;
   display: inline-flex;
   align-items: center;
@@ -724,13 +837,36 @@ const CSS = `
   cursor: pointer;
   color: var(--ink);
 }
-.hv-sheet-close:active { transform: translateY(2px); }
-.hv-sheet-body {
+.hv-modal-close:active { transform: translateY(2px); }
+.hv-modal-body {
   flex: 1 1 auto;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 4px 14px calc(16px + var(--sab));
+  padding: 16px;
 }
+
+/* ── Tooltip bubble ──────────────────────────────────────── */
+.hv-tip {
+  position: fixed;
+  left: 0; top: 0;
+  z-index: 60;
+  max-width: 220px;
+  padding: 6px 10px;
+  background: var(--ink);
+  color: var(--cream);
+  border: 2px solid var(--glow);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.2px;
+  box-shadow: 0 3px 0 rgba(0,0,0,0.3);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.hv-tip.is-in { opacity: 1; transform: none; }
 
 /* ── Generic controls ────────────────────────────────────── */
 .hv-btn {
@@ -999,17 +1135,19 @@ const CSS = `
 }
 .hv-jr-icon .hv-icon-mask { color: var(--wood-dark); }
 .hv-jr-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.hv-jr-top { display: flex; align-items: center; gap: 6px; }
+.hv-jr-top { display: flex; align-items: flex-start; gap: 6px; }
 .hv-jr-title {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 12.5px;
   font-weight: 800;
   letter-spacing: 0.2px;
-  line-height: 1.15;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .hv-jr-reward { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
 .hv-jr-reward-chip {
@@ -1448,14 +1586,17 @@ const CSS = `
   .hv-chip { height: 32px; font-size: 13px; padding: 0 9px; }
   .hv-tb-chip .hv-tb-label { display: none; }
   .hv-tb-chip { padding: 0 8px; }
-  .hv-sheet-title { font-size: 18px; }
+  .hv-modal-title { font-size: 18px; }
 }
 
-/* ── Reduced motion: still the bob, drop transition easing ──── */
+/* ── Reduced motion: keep opacity fades, drop scale/transforms ──── */
 @media (prefers-reduced-motion: reduce) {
   .hv-toast { transition: opacity 120ms linear; transform: none; }
   .hv-toast.is-in { transform: none; }
-  .hv-sheet { transition: none; }
+  .hv-modal { transition: opacity 120ms linear; transform: none; }
+  .hv-backdrop.is-open .hv-modal { transform: none; }
+  .hv-tip { transition: opacity 100ms linear; transform: none; }
+  .hv-tip.is-in { transform: none; }
   .hv-fill > i { transition: none; }
   .hv-fab-pulse::after { animation: none; }
   .hv-jr-bar > i, .hv-keep-bar > i { transition: none; }

@@ -46,6 +46,7 @@ import {
   ownedCount,
   pctStr,
   promptLogin,
+  withTip,
 } from './dom';
 import type { SpriteKey } from '../art/manifest';
 import { action, openSheet, setSheetTitle, toast } from './sheet';
@@ -365,11 +366,11 @@ const renderPaint = (
       cls: `hv-swatch${selected ? ' is-selected' : ''}`,
       attrs: {
         type: 'button',
-        title: sw.label,
-        'aria-label': `Paint roof ${sw.label}`,
         style: `background:${sw.css}`,
       },
     });
+    withTip(btn, sw.label);
+    btn.setAttribute('aria-label', `Paint roof ${sw.label}`);
     if (selected || !affordable || isPending('paint')) btn.disabled = true;
     btn.addEventListener('click', () => {
       void action('paint', async () => {
@@ -478,6 +479,10 @@ const renderProducerStats = (
         el('span', { text: `The stockpile has no ${GOOD_LABEL[input]} — sell some or build fields.` }),
       ],
     });
+    withTip(
+      warn,
+      'Workshops draw their inputs from the shared village stockpile — an empty stockpile means no output.'
+    );
     stack.appendChild(warn);
     const openMkt = el('button', {
       cls: 'hv-btn hv-btn-ghost',
@@ -602,6 +607,7 @@ const renderDemolish = (
     cls: 'hv-btn hv-btn-ghost hv-btn-danger',
     attrs: { type: 'button' },
   });
+  withTip(btn, 'Refunds half of what you invested in this building');
   btn.textContent = isArmed() ? armedLabel : 'Demolish';
   if (isArmed()) btn.classList.add('is-armed');
 
@@ -665,6 +671,10 @@ const renderNeighbour = (
     text: me ? 'Boost ×2 for 30m' : 'Sign in to boost',
     attrs: { type: 'button' },
   });
+  withTip(
+    btn,
+    'Doubles this building’s output for 30 minutes; you earn 15 coins for the favour'
+  );
   if ((me !== null && reason !== null) || isPending('boost')) btn.disabled = true;
   btn.addEventListener('click', () => {
     if (!me) {

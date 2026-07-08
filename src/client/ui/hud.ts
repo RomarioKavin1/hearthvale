@@ -15,6 +15,7 @@ import {
   CATEGORY_META,
   clearPending,
   el,
+  FESTIVAL_TIP,
   fmtInt,
   GOOD_LABEL,
   goodIcon,
@@ -31,6 +32,8 @@ import {
   toastAction,
   todayUtc,
   WEATHER_META,
+  WEATHER_TIP,
+  withTip,
 } from './dom';
 import type { ShareKind } from '../net';
 import { mountSheetRoot } from './sheet';
@@ -158,9 +161,10 @@ const buildRing = (): void => {
   ringLevel = el('span', { cls: 'hv-ring-lvl', text: '1' });
   ring = el('button', {
     cls: 'hv-ring',
-    attrs: { type: 'button', title: 'Level — tap for unlocks' },
+    attrs: { type: 'button' },
     on: { click: () => openLevelSheet() },
   });
+  withTip(ring, () => `Level ${store.data?.me?.level ?? 1} — tap for unlocks`);
   ring.appendChild(svg);
   ring.appendChild(ringLevel);
 };
@@ -170,16 +174,18 @@ const buildTopBar = (): HTMLElement => {
   coinsNum = el('span', { cls: 'hv-chip-num', text: '0' });
   coinsChip = el('button', {
     cls: 'hv-chip',
-    attrs: { type: 'button', title: 'Coins — tap for your goods' },
+    attrs: { type: 'button' },
     children: [iconEl('icon-coin', 16), coinsNum],
     on: { click: () => toggleWallet() },
   });
+  withTip(coinsChip, 'Your coins — tap for wallet');
   walletCaret = el('button', {
     cls: 'hv-caret',
-    attrs: { type: 'button', 'aria-label': 'Toggle goods wallet' },
+    attrs: { type: 'button' },
     children: [iconEl('icon-arrow-down', 16)],
     on: { click: () => toggleWallet() },
   });
+  withTip(walletCaret, 'Show your goods');
   const left = el('div', { cls: 'hv-tb-left', children: [coinsChip, walletCaret] });
 
   // Right: level ring (logged in) or the sign-in pill (logged out).
@@ -197,16 +203,16 @@ const buildTopBar = (): HTMLElement => {
   weatherLabel = el('span', { cls: 'hv-tb-label', text: 'Sunny' });
   weatherChip = el('div', {
     cls: 'hv-tb-chip',
-    attrs: { title: 'Today’s weather' },
     children: [weatherIcon, weatherLabel],
   });
+  withTip(weatherChip, () => WEATHER_TIP[store.data?.weather ?? 'sunny']);
   festIcon = iconEl('icon-coin', 14);
   festLabel = el('span', { cls: 'hv-tb-label', text: 'Festival' });
   festChip = el('div', {
     cls: 'hv-tb-chip hv-tb-fest',
-    attrs: { title: 'Today’s festival' },
     children: [festIcon, festLabel],
   });
+  withTip(festChip, () => FESTIVAL_TIP[store.data?.city.festival ?? 'coins']);
   const center = el('div', { cls: 'hv-tb-center', children: [weatherChip, festChip] });
 
   return el('div', { cls: 'hv-topbar', children: [left, center, right] });
@@ -263,34 +269,56 @@ const toggleWallet = (): void => {
 const buildFab = (
   icon: HTMLElement,
   caption: string,
+  tip: string,
   primary: boolean
 ): HTMLButtonElement => {
-  return el('button', {
+  const fab = el('button', {
     cls: `hv-fab${primary ? ' hv-primary' : ''}`,
-    attrs: { type: 'button', 'aria-label': caption },
+    attrs: { type: 'button' },
     children: [icon, el('span', { cls: 'hv-fab-cap', text: caption })],
   });
+  return withTip(fab, tip);
 };
 
 const buildFabs = (): HTMLElement => {
   // Order top→bottom: Collect · Market · Check in · Menu.
-  collectFab = buildFab(iconEl('icon-coin', 24), 'Collect', true);
+  collectFab = buildFab(
+    iconEl('icon-coin', 24),
+    'Collect',
+    'Collect every ready building at once',
+    true
+  );
   collectBadge = el('span', { cls: 'hv-fab-badge' });
   collectFab.appendChild(collectBadge);
   collectFab.addEventListener('click', doCollectAll);
 
-  marketFab = buildFab(iconEl('icon-cart', 24), 'Market', false);
+  marketFab = buildFab(
+    iconEl('icon-cart', 24),
+    'Market',
+    'Open the village market to buy and sell goods',
+    false
+  );
   marketPulse = el('span', { cls: 'hv-fab-pulse' });
   marketPulse.style.display = 'none';
   marketFab.appendChild(marketPulse);
   marketFab.addEventListener('click', () => openMarketSheet());
 
-  checkinFab = buildFab(iconEl('icon-streak', 24), 'Check in', false);
+  checkinFab = buildFab(
+    iconEl('icon-streak', 24),
+    'Check in',
+    'Daily check-in — coins and a growing streak',
+    false
+  );
   checkinStreak = el('span', { cls: 'hv-streak' });
   checkinFab.appendChild(checkinStreak);
   checkinFab.addEventListener('click', doCheckin);
 
-  const menuFab = buildFab(iconEl('icon-gear', 24), 'Menu', false);
+  const menuFab = buildFab(
+    iconEl('icon-gear', 24),
+    'Menu',
+    'Market, trader, hall, ballot, leaderboards and help',
+    false
+  );
   menuFab.addEventListener('click', () => openMenuSheet());
 
   return el('div', {
@@ -306,7 +334,7 @@ const buildKeepPill = (): HTMLButtonElement => {
   keepFill = el('i');
   keepPill = el('button', {
     cls: 'hv-keep-pill',
-    attrs: { type: 'button', 'aria-label': 'Village Hall progress' },
+    attrs: { type: 'button' },
     children: [
       iconEl('icon-trophy', 15),
       el('div', {
@@ -319,6 +347,7 @@ const buildKeepPill = (): HTMLButtonElement => {
     ],
     on: { click: () => openKeepSheet() },
   });
+  withTip(keepPill, 'Village Hall — tap to contribute planks and bricks');
   return keepPill;
 };
 
@@ -427,12 +456,14 @@ const renderWeather = (data: StateResponse): void => {
   const meta = WEATHER_META[data.weather];
   weatherIcon = swapIcon(weatherIcon, iconEl(meta.icon, 14));
   weatherLabel.textContent = meta.label;
+  weatherChip.setAttribute('aria-label', WEATHER_TIP[data.weather]);
 };
 
 const renderFestival = (data: StateResponse): void => {
   const meta = CATEGORY_META[data.city.festival];
   festIcon = swapIcon(festIcon, iconEl(meta.icon, 14));
   festLabel.textContent = meta.label;
+  festChip.setAttribute('aria-label', FESTIVAL_TIP[data.city.festival]);
 };
 
 const renderWallet = (me: PlayerState): void => {
@@ -459,6 +490,7 @@ const renderPlayer = (me: PlayerState): void => {
   const clamped = Math.max(0, Math.min(1, frac));
   ringProgress.setAttribute('stroke-dashoffset', String(RING_C * (1 - clamped)));
   ringLevel.textContent = String(me.level);
+  ring.setAttribute('aria-label', `Level ${me.level} — tap for unlocks`);
 
   if (prevLevel !== null && me.level > prevLevel) {
     const unlocked = PLOT_LEVELS.includes(me.level);

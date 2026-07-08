@@ -13,6 +13,7 @@ import {
   notifyError,
   pctStr,
   toast,
+  withTip,
 } from './dom';
 import { openJournalSheet } from './sheets';
 
@@ -198,6 +199,7 @@ export const mountJournal = (parent: HTMLElement): void => {
     children: [iconSlot, main],
     on: { click: onBannerClick },
   });
+  withTip(banner, 'Your current goal — tap to open the Journal');
   banner.style.display = 'none';
   parent.appendChild(banner);
 
