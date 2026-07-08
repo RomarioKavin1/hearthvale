@@ -213,9 +213,11 @@ type Walker = {
   idle: Phaser.Time.TimerEvent | undefined;
 };
 
-/** A butterfly fluttering a lazy figure-eight around a tree. */
+/** A butterfly fluttering a lazy figure-eight around a tree. `anchorKey` is the
+ * tree tile it circles, so it can be destroyed if that tile is built over. */
 type Butterfly = {
   root: Phaser.GameObjects.Container;
+  anchorKey: string;
   path: Phaser.Tweens.Tween | undefined;
   flap: Phaser.Tweens.Tween | undefined;
 };
@@ -628,6 +630,7 @@ export class Village extends Scene {
 
     if (sig !== view.sig) {
       this.clearStructural(view);
+      this.killButterfliesAt(key);
 
       if (hasBuilding) {
         this.buildBuilding(view, tile, x, y, sx, sy, constructing);
@@ -798,6 +801,7 @@ export class Village extends Scene {
     const view = this.views.get(key);
     if (!view) return;
     this.clearStructural(view);
+    this.killButterfliesAt(key);
     for (const pip of [view.finder, view.pip, view.boostPip]) {
       if (pip) {
         this.tweens.killTweensOf(pip);
@@ -1400,10 +1404,15 @@ export class Village extends Scene {
     return (h ^ (h >>> 15)) >>> 0;
   }
 
-  /** A tile a villager may stand on: unlocked, not river, not the keep pad. Path
-   * ring + open grass qualify; water/river/locked/keep never do. */
+  /** A tile a villager may stand on: unlocked, not river, not the keep pad, and
+   * not occupied by a building (bare claimed plots are fine to cross). Consulted
+   * live at every step, so a building appearing mid-stroll simply steers the
+   * next pick away — walkers never choose to clip through houses. */
   private isWalkable(x: number, y: number): boolean {
-    return this.isUnlockedTile(x, y) && !isRiver(x, y) && !isKeepPad(x, y);
+    if (!this.isUnlockedTile(x, y) || isRiver(x, y) || isKeepPad(x, y)) {
+      return false;
+    }
+    return store.data?.grid[tileKey(x, y)]?.buildingId === undefined;
   }
 
   // ── Villager walkers ─────────────────────────────────────────────────────────
@@ -1515,13 +1524,13 @@ export class Village extends Scene {
    * entirely under reduced motion. */
   private spawnButterflies(): void {
     if (this.reducedMotion) return;
-    const trees: Array<{ sx: number; sy: number }> = [];
+    const trees: Array<{ key: string; sx: number; sy: number }> = [];
     for (const [key] of this.decorImgs) {
       const { x, y } = parseKey(key);
       const d = decorSprinkle(x, y);
       if (d && isTreeDecor(d)) {
         const p = isoToScreen(x, y, TILE_W, TILE_H);
-        trees.push({ sx: p.sx, sy: p.sy });
+        trees.push({ key, sx: p.sx, sy: p.sy });
       }
     }
     const grid = store.data?.grid ?? {};
@@ -1529,24 +1538,29 @@ export class Village extends Scene {
       if (tile.buildingId === 'grove' || tile.buildingId === 'trees') {
         const { x, y } = parseKey(key);
         const p = isoToScreen(x, y, TILE_W, TILE_H);
-        trees.push({ sx: p.sx, sy: p.sy });
+        trees.push({ key, sx: p.sx, sy: p.sy });
       }
     }
     const n = Math.min(5, Math.floor(trees.length / 4));
     for (let i = 0; i < n; i++) {
       const t = trees[Math.floor((i / Math.max(1, n)) * trees.length)];
-      if (t) this.makeButterfly(i, t.sx, t.sy);
+      if (t) this.makeButterfly(i, t.key, t.sx, t.sy);
     }
   }
 
-  private makeButterfly(index: number, cx: number, cy: number): void {
+  private makeButterfly(
+    index: number,
+    anchorKey: string,
+    cx: number,
+    cy: number
+  ): void {
     if (this.ambientCount() >= AMBIENT_CAP) return;
     const tint = BUTTERFLY_TINT[index % BUTTERFLY_TINT.length] ?? hexNum(PAL.glow);
     const left = this.add.triangle(0, 0, 0, 0, -4, -3, -4, 3, tint);
     const right = this.add.triangle(0, 0, 0, 0, 4, -3, 4, 3, tint);
     const root = this.add.container(cx, cy - 30, [left, right]).setDepth(cy);
     this.ambient?.add(root);
-    const bf: Butterfly = { root, path: undefined, flap: undefined };
+    const bf: Butterfly = { root, anchorKey, path: undefined, flap: undefined };
     this.butterflies.push(bf);
 
     bf.flap = this.tweens.add({
@@ -1571,6 +1585,23 @@ export class Village extends Scene {
         root.setDepth(root.y);
       },
     });
+  }
+
+  /** Destroy any butterflies anchored to `key` — called alongside clearStructural
+   * from both tile-change paths, so a tree tile that gets built over (or a
+   * grove/tree building that changes) doesn't leave butterflies circling air. */
+  private killButterfliesAt(key: string): void {
+    const keep: Butterfly[] = [];
+    for (const b of this.butterflies) {
+      if (b.anchorKey !== key) {
+        keep.push(b);
+        continue;
+      }
+      b.path?.remove();
+      b.flap?.remove();
+      b.root.destroy();
+    }
+    this.butterflies = keep;
   }
 
   // ── Birds ────────────────────────────────────────────────────────────────────
