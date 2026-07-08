@@ -1,5 +1,10 @@
 import type { Game } from 'phaser';
-import { MARKET, MAX_LEVEL, PLOT_LEVELS } from '../../shared/catalog';
+import {
+  KEEP_STAGE_COSTS,
+  MARKET,
+  MAX_LEVEL,
+  PLOT_LEVELS,
+} from '../../shared/catalog';
 import type { Good, PlayerState, StateResponse } from '../../shared/types';
 import { GOODS, goodsTotal, xpFor } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
@@ -30,8 +35,8 @@ import {
 import type { ShareKind } from '../net';
 import { mountSheetRoot } from './sheet';
 import { openMenuSheet, openTileSheet } from './panels';
-import { openMarketSheet } from './sheets';
-import { mountTutorial } from './tutorial';
+import { openKeepSheet, openLevelSheet, openMarketSheet } from './sheets';
+import { mountJournal } from './journal';
 
 /**
  * The persistent HUD chrome: the top resource bar, the wallet drawer, the
@@ -59,6 +64,11 @@ let festIcon: HTMLElement;
 let festLabel: HTMLElement;
 let signinPill: HTMLElement;
 let walletCaret: HTMLButtonElement;
+
+// Keep pill (top-left column, beneath the Journal banner).
+let keepPill: HTMLButtonElement;
+let keepLabel: HTMLElement;
+let keepFill: HTMLElement;
 
 let walletDrawer: HTMLElement;
 let walletOpen = false;
@@ -90,7 +100,13 @@ export const initHud = (game: Game): void => {
   hud.appendChild(buildTopBar());
   hud.appendChild(buildWalletDrawer());
   hud.appendChild(buildFabs());
-  mountTutorial(hud, { marketFab });
+
+  // Top-left column: the Journal banner, then the Keep pill, stacked.
+  const topLeft = el('div', { cls: 'hv-topleft' });
+  hud.appendChild(topLeft);
+  mountJournal(topLeft);
+  topLeft.appendChild(buildKeepPill());
+
   mountSheetRoot(hud);
   mountToasts(hud);
 
@@ -140,7 +156,11 @@ const buildRing = (): void => {
   svg.appendChild(ringProgress);
 
   ringLevel = el('span', { cls: 'hv-ring-lvl', text: '1' });
-  ring = el('div', { cls: 'hv-ring', attrs: { title: 'Level' } });
+  ring = el('button', {
+    cls: 'hv-ring',
+    attrs: { type: 'button', title: 'Level — tap for unlocks' },
+    on: { click: () => openLevelSheet() },
+  });
   ring.appendChild(svg);
   ring.appendChild(ringLevel);
 };
@@ -277,6 +297,45 @@ const buildFabs = (): HTMLElement => {
     cls: 'hv-fabs',
     children: [collectFab, marketFab, checkinFab, menuFab],
   });
+};
+
+// ── Keep pill (collective goal, always in view) ──────────────────────────────
+
+const buildKeepPill = (): HTMLButtonElement => {
+  keepLabel = el('span', { cls: 'hv-keep-label', text: 'Keep' });
+  keepFill = el('i');
+  keepPill = el('button', {
+    cls: 'hv-keep-pill',
+    attrs: { type: 'button', 'aria-label': 'Grand Keep progress' },
+    children: [
+      iconEl('icon-trophy', 15),
+      el('div', {
+        cls: 'hv-keep-main',
+        children: [
+          keepLabel,
+          el('div', { cls: 'hv-keep-bar', children: [keepFill] }),
+        ],
+      }),
+    ],
+    on: { click: () => openKeepSheet() },
+  });
+  return keepPill;
+};
+
+const renderKeepPill = (data: StateResponse): void => {
+  const stage = data.city.landmarkStage;
+  const stages = KEEP_STAGE_COSTS.length;
+  if (stage >= stages) {
+    keepLabel.textContent = 'Keep complete';
+    keepFill.style.width = '100%';
+    return;
+  }
+  const cost = KEEP_STAGE_COSTS[stage] ?? { planks: 0, bricks: 0 };
+  const have = data.city.stagePlanks + data.city.stageBricks;
+  const need = cost.planks + cost.bricks;
+  const frac = need > 0 ? have / need : 0;
+  keepLabel.textContent = `Keep · Stage ${stage + 1}`;
+  keepFill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
 };
 
 const doCollectAll = (): void => {
@@ -455,6 +514,7 @@ const renderHud = (): void => {
 
   renderWeather(data);
   renderFestival(data);
+  renderKeepPill(data);
   if (me) renderPlayer(me);
   else renderLoggedOut();
   renderFabs(data, me);

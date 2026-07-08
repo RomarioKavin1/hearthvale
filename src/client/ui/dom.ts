@@ -6,10 +6,12 @@ import type {
   FestivalCategory,
   Good,
   PlayerState,
+  QuestView,
   StateResponse,
   TileState,
   Weather,
 } from '../../shared/types';
+import { questAt, questProgress, questSnapshot } from '../../shared/quests';
 import { BOOST_DAILY_LIMIT } from '../../shared/catalog';
 import type { SpriteKey } from '../art/manifest';
 import { BUILDING_ART, isIconKey, SPRITES } from '../art/manifest';
@@ -238,6 +240,31 @@ export const readyCount = (data: StateResponse, id: string, now: number): number
 };
 
 export const todayUtc = (): string => utcDay(store.serverNow());
+
+/**
+ * The player's active quest, computed client-side from the same pure functions
+ * the server uses for `StateResponse.quest`. Every mutation response updates
+ * `data.me` (including the quest counters) and emits `'change'`, so deriving the
+ * view here keeps the Journal banner + sheet live between full state refreshes
+ * (which alone would leave `data.quest` stale). Returns null when logged out.
+ */
+export const activeQuest = (data: StateResponse): QuestView | null => {
+  const me = data.me;
+  if (!me) return null;
+  const quest = questAt(me.questIndex, me.questLap);
+  const snap = questSnapshot(data.grid, me.id);
+  const { have, done } = questProgress(quest, me, snap, me.questBaseline);
+  return {
+    index: me.questIndex,
+    lap: me.questLap,
+    title: quest.title,
+    blurb: quest.blurb,
+    have,
+    target: quest.target,
+    reward: quest.reward,
+    done,
+  };
+};
 
 /** Boosts a player still has today (accounting for the UTC date rollover). */
 export const boostsLeft = (me: PlayerState): number => {
@@ -619,17 +646,6 @@ const CSS = `
   0% { transform: scale(1); opacity: 0.7; }
   100% { transform: scale(2.1); opacity: 0; }
 }
-/* Tutorial: highlight the Market FAB with a pulsing ring. */
-.hv-fab.is-tut-highlight { box-shadow: 0 4px 0 var(--wood-dark), 0 0 0 3px var(--glow); }
-.hv-fab.is-tut-highlight::before {
-  content: "";
-  position: absolute;
-  inset: -6px;
-  border-radius: 18px;
-  border: 3px solid var(--glow);
-  animation: hv-pulse-ring 1.5s ease-out infinite;
-  pointer-events: none;
-}
 
 /* ── Sheets ──────────────────────────────────────────────── */
 .hv-backdrop {
@@ -908,74 +924,269 @@ const CSS = `
 .hv-how-txt { font-size: 13.5px; line-height: 1.4; }
 .hv-how-txt b { display: block; font-size: 14.5px; letter-spacing: 0.3px; }
 
-/* ── First-run tutorial (coach-mark card) ────────────────── */
-.hv-tut {
+/* ── Top-left column: Journal banner + Keep pill ─────────── */
+.hv-topleft {
   position: absolute;
-  left: 50%;
-  bottom: calc(var(--sab) + 18px);
-  transform: translateX(-50%) translateY(8px);
-  width: min(360px, calc(100vw - 24px));
-  padding: 12px 14px 11px;
+  top: calc(var(--sat) + 58px);
+  left: calc(var(--sal) + 10px);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(260px, calc(100vw - 20px));
+  pointer-events: none;
+}
+
+/* Journal banner — the always-visible active quest. */
+.hv-jr {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
   background: var(--cream);
   border: 3px solid var(--ink);
-  border-bottom-width: 4px;
-  border-radius: 14px;
-  box-shadow: 0 5px 0 var(--wood-dark);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 200ms ease-out, transform 200ms cubic-bezier(0.22,1,0.36,1);
+  border-radius: 12px;
+  box-shadow: 0 3px 0 var(--wood-dark);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+  position: relative;
 }
-.hv-tut.is-in { opacity: 1; transform: translateX(-50%) translateY(0); }
-.hv-tut-head { display: flex; align-items: flex-start; gap: 8px; }
-.hv-tut-title {
-  flex: 1 1 auto;
-  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  line-height: 1.15;
+.hv-jr:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark); }
+.hv-jr.is-claiming { opacity: 0.7; pointer-events: none; }
+.hv-jr.is-done {
+  background: var(--straw);
+  border-color: var(--ink);
+  box-shadow: 0 3px 0 var(--wood-dark), 0 0 0 3px var(--glow);
 }
-.hv-tut-skip {
-  pointer-events: auto;
+.hv-jr.is-done .hv-jr-icon .hv-icon-mask { color: var(--wood-dark); }
+.hv-jr.is-pulse { animation: hv-jr-pulse 640ms ease-in-out; }
+@keyframes hv-jr-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+.hv-jr-icon {
   flex: 0 0 auto;
-  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
   background: var(--wall);
   border: 2px solid var(--ink);
-  border-radius: 7px;
-  font-family: inherit;
-  font-size: 11.5px;
+  border-radius: 8px;
+}
+.hv-jr-icon .hv-icon-mask { color: var(--wood-dark); }
+.hv-jr-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.hv-jr-top { display: flex; align-items: center; gap: 6px; }
+.hv-jr-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
   font-weight: 800;
-  letter-spacing: 0.3px;
-  color: var(--ink);
-  cursor: pointer;
+  letter-spacing: 0.2px;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.hv-tut-skip:active { transform: translateY(1px); }
-.hv-tut-body { margin: 6px 0 9px; font-size: 13px; line-height: 1.4; color: var(--ink); }
-.hv-tut-foot { display: flex; align-items: center; gap: 8px; }
-.hv-tut-dots { display: flex; gap: 5px; flex: 1 1 auto; }
-.hv-tut-dot {
-  width: 7px; height: 7px;
-  border-radius: 4px;
-  background: var(--wall-shade);
-  border: 1px solid var(--ink);
-}
-.hv-tut-dot.is-on { background: var(--glow); }
-.hv-tut-dot.is-done { background: var(--leaf); }
-.hv-tut-done {
-  pointer-events: auto;
-  padding: 6px 16px;
+.hv-jr-reward { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
+.hv-jr-reward-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
   background: var(--glow);
   border: 2px solid var(--ink);
-  border-bottom-width: 3px;
-  border-radius: 8px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.hv-jr-reward-chip .hv-icon-mask { color: var(--wood-dark); }
+.hv-jr-barline { display: flex; align-items: center; gap: 7px; }
+.hv-jr-bar {
+  flex: 1 1 auto;
+  height: 8px;
+  background: var(--wall-shade);
+  border: 2px solid var(--ink);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.hv-jr-bar > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--leaf);
+  transition: width 260ms ease-out;
+}
+.hv-jr.is-done .hv-jr-bar > i { background: var(--glow); }
+.hv-jr-progress { flex: 0 0 auto; font-size: 10.5px; font-weight: 800; opacity: 0.85; font-variant-numeric: tabular-nums; }
+
+/* DOM confetti burst over the banner on claim. */
+.hv-jr-confetti {
+  position: absolute;
+  left: 22px; top: 50%;
+  width: 0; height: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.hv-jr-confetti > i {
+  position: absolute;
+  left: 0; top: 0;
+  width: 7px; height: 7px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: hv-jr-confetti 800ms ease-out forwards;
+}
+@keyframes hv-jr-confetti {
+  0% { transform: translate(0, 0) scale(0.6); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0; }
+}
+
+/* Keep pill — the collective goal, permanently in view. */
+.hv-keep-pill {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: rgba(59,51,71,0.92);
+  border: 2px solid rgba(255,243,217,0.18);
+  border-radius: 10px;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.28);
+  cursor: pointer;
+  text-align: left;
   font-family: inherit;
-  font-size: 13px;
+  color: var(--cream);
+}
+.hv-keep-pill:active { transform: translateY(1px); }
+.hv-keep-pill .hv-icon-mask { color: var(--straw); }
+.hv-keep-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.hv-keep-label {
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hv-keep-bar {
+  height: 6px;
+  background: rgba(255,243,217,0.16);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.hv-keep-bar > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--glow);
+  transition: width 260ms ease-out;
+}
+
+/* ── Journal sheet ───────────────────────────────────────── */
+.hv-jrs-list { display: flex; flex-direction: column; gap: 6px; }
+.hv-jrs-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.hv-jrs-row.is-done { opacity: 0.75; }
+.hv-jrs-tick {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  background: var(--leaf);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+}
+.hv-jrs-tick .hv-icon-mask { color: var(--cream); }
+.hv-jrs-name { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+.hv-jrs-row.is-next { opacity: 0.7; border-style: dashed; }
+.hv-jrs-tag {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  background: var(--wall-shade);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.3px;
-  color: var(--ink);
-  cursor: pointer;
+  text-transform: uppercase;
 }
-.hv-tut-done:active { transform: translateY(1px); }
+.hv-jrs-nextmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.hv-jrs-reward { font-size: 11px; font-weight: 800; opacity: 0.85; font-variant-numeric: tabular-nums; }
+.hv-jrs-active {
+  padding: 12px;
+  background: var(--cream);
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: 0 4px 0 var(--wood-dark), 0 0 0 3px var(--glow);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.hv-jrs-active.is-done { background: var(--straw); }
+.hv-jrs-active-head { display: flex; align-items: center; gap: 10px; }
+.hv-jrs-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.hv-jrs-icon .hv-icon-mask { color: var(--wood-dark); }
+.hv-jrs-active-title { flex: 1 1 auto; font-size: 16px; font-weight: 800; letter-spacing: 0.3px; line-height: 1.15; }
+.hv-jrs-blurb { font-size: 12.5px; line-height: 1.45; opacity: 0.85; margin: 0; }
+.hv-jrs-active-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hv-jrs-count { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.hv-jrs-reward-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  background: var(--glow);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.hv-jrs-reward-chip + .hv-jrs-reward-chip { margin-left: 5px; }
+.hv-jrs-reward-chip .hv-icon-mask { color: var(--wood-dark); }
+.hv-jrs-unlock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.hv-jrs-lvl {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  background: var(--glow);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
 
 /* ── Toasts ──────────────────────────────────────────────── */
 .hv-toast-host {
@@ -991,10 +1202,6 @@ const CSS = `
   width: max-content;
   max-width: 90vw;
   transition: bottom 200ms ease-out;
-}
-/* Lift the toast stack clear of the tutorial card when both are on screen. */
-#hv-hud.hv-has-tutorial .hv-toast-host {
-  bottom: calc(var(--sab) + 150px);
 }
 .hv-toast {
   padding: 9px 16px;
@@ -1232,8 +1439,9 @@ const CSS = `
   .hv-toast.is-in { transform: none; }
   .hv-sheet { transition: none; }
   .hv-fill > i { transition: none; }
-  .hv-fab-pulse::after,
-  .hv-fab.is-tut-highlight::before { animation: none; }
-  .hv-tut { transition: opacity 120ms linear; }
+  .hv-fab-pulse::after { animation: none; }
+  .hv-jr-bar > i, .hv-keep-bar > i { transition: none; }
+  .hv-jr.is-pulse { animation: none; }
+  .hv-jr-confetti > i { animation: none; display: none; }
 }
 `;

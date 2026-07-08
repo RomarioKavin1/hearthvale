@@ -2,6 +2,7 @@ import type {
   FestivalCategory,
   BuildingId,
   CityState,
+  ClaimQuestResponse,
   Gained,
   Good,
   LeaderRow,
@@ -132,6 +133,8 @@ export const api = {
   collectAll: (): Promise<CollectAllResult> => post('/api/collect-all'),
 
   checkin: (): Promise<CheckInResult> => post('/api/checkin'),
+
+  claimQuest: (): Promise<ClaimQuestResponse> => post('/api/claim-quest'),
 
   boost: (x: number, y: number): Promise<TileResult> =>
     post('/api/boost', { x, y }),

@@ -1,16 +1,25 @@
 import type { FestivalCategory, Good, LeaderRow, TraderOffer } from '../../shared/types';
 import {
+  CATALOG,
   KEEP_STAGE_COSTS,
   MARKET,
+  MAX_LEVEL,
+  PLOT_LEVELS,
   STAGE_NAME_WORDS,
   STAGE_POT,
 } from '../../shared/catalog';
-import { GOODS } from '../../shared/logic/economy';
+import { GOODS, xpFor } from '../../shared/logic/economy';
+import {
+  advanceQuest,
+  QUEST_CHAIN,
+  questAt,
+} from '../../shared/quests';
 import { buyValue, priceFor, sellValue } from '../../shared/logic/market';
 import type { SpriteKey } from '../art/manifest';
 import { api } from '../net';
 import { store } from '../state';
 import {
+  activeQuest,
   CATEGORY_META,
   el,
   fmtInt,
@@ -22,8 +31,7 @@ import {
   promptLogin,
   todayUtc,
 } from './dom';
-import { action, openSheet, refreshSheet, toast } from './sheet';
-import { markTutorialSell } from './tutorial';
+import { action, openSheet, refreshSheet, setSheetTitle, toast } from './sheet';
 
 /**
  * The v2 "menu" sheets: the village Market (moving prices + sell/buy steppers),
@@ -147,7 +155,6 @@ const renderMarketBody = (good: Good): HTMLElement => {
       const res = await api.sell(good, sQty);
       store.applyMutation({ me: res.me, stockpile: res.stockpile, prices: res.prices });
       toast(`Sold ${fmtInt(sQty)} ${GOOD_LABEL[good]} for +${fmtInt(sGain)}`, 'gain');
-      markTutorialSell();
     });
   });
   sellSeg.appendChild(sellBtn);
@@ -892,4 +899,264 @@ export const openHowToSheet = (): void => {
       body.appendChild(how);
     },
   });
+};
+
+// ── Villager's Journal ─────────────────────────────────────────────────────────
+
+/** A completed chain quest: a check tick + its muted title. */
+const journalDoneRow = (title: string): HTMLElement =>
+  el('div', {
+    cls: 'hv-jrs-row is-done',
+    children: [
+      el('span', { cls: 'hv-jrs-tick', children: [iconEl('icon-check', 14)] }),
+      el('span', { cls: 'hv-jrs-name', text: title }),
+    ],
+  });
+
+/** An upcoming (teased) quest: greyed, "Up next" tag + reward hint. */
+const journalUpcomingRow = (
+  title: string,
+  reward: { coins?: number; xp?: number }
+): HTMLElement => {
+  const bits: string[] = [];
+  if (reward.coins !== undefined) bits.push(`+${fmtInt(reward.coins)}c`);
+  if (reward.xp !== undefined) bits.push(`+${fmtInt(reward.xp)} XP`);
+  return el('div', {
+    cls: 'hv-jrs-row is-next',
+    children: [
+      el('span', { cls: 'hv-jrs-tag', text: 'Up next' }),
+      el('div', {
+        cls: 'hv-jrs-nextmain',
+        children: [
+          el('span', { cls: 'hv-jrs-name', text: title }),
+          el('span', { cls: 'hv-jrs-reward', text: bits.join(' · ') }),
+        ],
+      }),
+    ],
+  });
+};
+
+export const openJournalSheet = (): void => {
+  openSheet({
+    title: "Villager's Journal",
+    render: (body) => {
+      const data = store.data;
+      const me = data?.me ?? null;
+      const quest = data ? activeQuest(data) : null;
+      const stack = el('div', { cls: 'hv-stack' });
+
+      if (!me || !quest) {
+        stack.appendChild(
+          el('p', { cls: 'hv-note', text: 'Sign in to start your quest chain.' })
+        );
+        body.appendChild(stack);
+        return;
+      }
+
+      const idx = me.questIndex;
+      const lap = me.questLap;
+
+      // Completed chain quests (kept concise: the fixed ladder up to the active one).
+      const doneCount = Math.min(idx, QUEST_CHAIN.length);
+      if (doneCount > 0) {
+        stack.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'Completed' }));
+        const doneList = el('div', { cls: 'hv-jrs-list' });
+        for (let i = 0; i < doneCount; i += 1) {
+          const q = QUEST_CHAIN[i];
+          if (q) doneList.appendChild(journalDoneRow(q.title));
+        }
+        stack.appendChild(doneList);
+      }
+
+      // Once into repeatable territory, name the current lap so scaling reads.
+      if (idx >= QUEST_CHAIN.length) {
+        stack.appendChild(
+          el('p', {
+            cls: 'hv-note hv-muted',
+            text: `Repeatable tiers — Lap ${fmtInt(lap + 1)}. Each lap raises the goal and its reward.`,
+          })
+        );
+      }
+
+      // Active quest — the highlighted focus card.
+      stack.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'Now' }));
+      const frac = quest.target > 0 ? quest.have / quest.target : 1;
+      const rewardBits: Node[] = [];
+      if (quest.reward.coins !== undefined) {
+        rewardBits.push(
+          el('span', {
+            cls: 'hv-jrs-reward-chip',
+            children: [iconEl('icon-coin', 13), el('span', { text: fmtInt(quest.reward.coins) })],
+          })
+        );
+      }
+      if (quest.reward.xp !== undefined) {
+        rewardBits.push(
+          el('span', {
+            cls: 'hv-jrs-reward-chip',
+            children: [iconEl('icon-star', 13), el('span', { text: `${fmtInt(quest.reward.xp)} XP` })],
+          })
+        );
+      }
+      stack.appendChild(
+        el('div', {
+          cls: `hv-jrs-active${quest.done ? ' is-done' : ''}`,
+          children: [
+            el('div', {
+              cls: 'hv-jrs-active-head',
+              children: [
+                el('span', { cls: 'hv-jrs-icon', children: [iconEl('icon-scroll', 20)] }),
+                el('div', { cls: 'hv-jrs-active-title', text: quest.title }),
+              ],
+            }),
+            el('p', { cls: 'hv-jrs-blurb', text: quest.blurb }),
+            el('div', {
+              cls: 'hv-fill hv-fill-glow',
+              children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })],
+            }),
+            el('div', {
+              cls: 'hv-jrs-active-foot',
+              children: [
+                el('span', {
+                  cls: 'hv-jrs-count',
+                  text: `${fmtInt(quest.have)} / ${fmtInt(quest.target)}`,
+                }),
+                el('div', { cls: 'hv-jrs-reward', children: rewardBits }),
+              ],
+            }),
+          ],
+        })
+      );
+      if (quest.done) {
+        stack.appendChild(
+          el('p', { cls: 'hv-note', text: 'Goal complete — tap the banner to claim your reward.' })
+        );
+      }
+
+      // Tease the next two rungs (correct lap scaling via advanceQuest).
+      const teased = el('div', { cls: 'hv-jrs-list' });
+      let pos = { index: idx, lap };
+      for (let n = 0; n < 2; n += 1) {
+        pos = advanceQuest(pos.index, pos.lap);
+        const q = questAt(pos.index, pos.lap);
+        teased.appendChild(journalUpcomingRow(q.title, q.reward));
+      }
+      stack.appendChild(teased);
+
+      body.appendChild(stack);
+    },
+  });
+};
+
+// ── Level unlocks ──────────────────────────────────────────────────────────────
+
+/** Buildings whose `unlockLevel` is exactly `level`, in catalog order. */
+const buildingsUnlockingAt = (level: number): string[] =>
+  Object.values(CATALOG)
+    .filter((spec) => spec.unlockLevel === level)
+    .map((spec) => spec.name);
+
+/** The plot number that a level in PLOT_LEVELS grants (1-indexed). */
+const plotNumberAt = (level: number): number | null => {
+  const i = PLOT_LEVELS.indexOf(level);
+  return i === -1 ? null : i + 1;
+};
+
+export const openLevelSheet = (): void => {
+  openSheet({
+    title: '',
+    render: (body) => {
+      const me = store.data?.me ?? null;
+      if (!me) {
+        const stack = el('div', { cls: 'hv-stack' });
+        stack.appendChild(el('p', { cls: 'hv-note', text: 'Sign in to earn levels.' }));
+        body.appendChild(stack);
+        return;
+      }
+      setSheetTitle(`Level ${fmtInt(me.level)}`);
+
+      const stack = el('div', { cls: 'hv-stack' });
+
+      // XP progress toward the next level (mirrors the top-bar ring).
+      const cur = xpFor(me.level);
+      const next = xpFor(me.level + 1);
+      const denom = next - cur;
+      const atMax = me.level >= MAX_LEVEL || denom <= 0;
+      const frac = atMax ? 1 : (me.xp - cur) / denom;
+      stack.appendChild(
+        el('div', {
+          cls: 'hv-row-line',
+          children: [
+            el('span', {
+              cls: 'hv-chain',
+              children: [iconEl('icon-star', 16), el('span', { text: 'Experience' })],
+            }),
+            el('b', {
+              text: atMax ? 'Max level' : `${fmtInt(Math.max(0, me.xp - cur))} / ${fmtInt(denom)}`,
+            }),
+          ],
+        })
+      );
+      stack.appendChild(
+        el('div', {
+          cls: 'hv-fill hv-fill-glow',
+          children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })],
+        })
+      );
+      stack.appendChild(
+        el('p', {
+          cls: 'hv-note',
+          text: atMax
+            ? "You've reached the height of village renown — keep building!"
+            : 'Keep earning XP by collecting, selling and building. Here is what the next levels unlock.',
+        })
+      );
+
+      // Unlock ladder: the next up-to-three levels that actually unlock something.
+      const rows = el('div', { cls: 'hv-jrs-list' });
+      let shown = 0;
+      for (let k = me.level + 1; k <= MAX_LEVEL && shown < 3; k += 1) {
+        const names = buildingsUnlockingAt(k);
+        const plot = plotNumberAt(k);
+        if (names.length === 0 && plot === null) continue;
+        const unlocks: string[] = [...names];
+        if (plot !== null) unlocks.push(`${ordinal(plot)} building plot`);
+        rows.appendChild(
+          el('div', {
+            cls: 'hv-jrs-unlock',
+            children: [
+              el('span', { cls: 'hv-jrs-lvl', text: `Lv ${fmtInt(k)}` }),
+              el('span', { cls: 'hv-jrs-name', text: unlocks.join(', ') }),
+            ],
+          })
+        );
+        shown += 1;
+      }
+      if (shown === 0) {
+        rows.appendChild(
+          el('div', { cls: 'hv-empty', text: 'Everything is unlocked — you have it all.' })
+        );
+      }
+      stack.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'Coming up' }));
+      stack.appendChild(rows);
+
+      body.appendChild(stack);
+    },
+  });
+};
+
+/** Small ordinal helper for plot copy ("3rd building plot"). */
+const ordinal = (n: number): string => {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
 };
