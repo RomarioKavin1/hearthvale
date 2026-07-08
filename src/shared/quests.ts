@@ -44,8 +44,8 @@ export type Quest = {
 export const QUEST_CHAIN: Quest[] = [
   {
     id: 'q01',
-    title: 'Settle your first plot',
-    blurb: 'Every great village begins with a single claimed plot — stake yours.',
+    title: 'Found your homestead',
+    blurb: 'Claim your first plot — your House rises there and your village begins.',
     metric: 'owned',
     target: 1,
     reward: { coins: 20 },

@@ -1,31 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import {
-  RIVER_TILES,
-  isRiver,
-  isUnlocked,
-  nextThreshold,
-  ringBounds,
-} from './expansion';
+import { RIVER_TILES, isRiver, isUnlocked, ringBounds } from './expansion';
 
 describe('ringBounds', () => {
-  it('starts at the innermost ring below 3 owners', () => {
+  it('opens one ring per Village Hall level', () => {
     expect(ringBounds(0)).toEqual({ lo: 5, hi: 11 });
-    expect(ringBounds(2)).toEqual({ lo: 5, hi: 11 });
+    expect(ringBounds(1)).toEqual({ lo: 4, hi: 13 });
+    expect(ringBounds(2)).toEqual({ lo: 3, hi: 14 });
+    expect(ringBounds(3)).toEqual({ lo: 1, hi: 16 });
+    expect(ringBounds(4)).toEqual({ lo: 0, hi: 17 });
   });
 
-  it('opens each ring at its population threshold', () => {
-    expect(ringBounds(3)).toEqual({ lo: 4, hi: 13 });
-    expect(ringBounds(5)).toEqual({ lo: 4, hi: 13 });
-    expect(ringBounds(6)).toEqual({ lo: 3, hi: 14 });
-    expect(ringBounds(11)).toEqual({ lo: 3, hi: 14 });
-    expect(ringBounds(12)).toEqual({ lo: 1, hi: 16 });
-    expect(ringBounds(20)).toEqual({ lo: 0, hi: 17 });
+  it('clamps: levels 4 and 5 share the max ring, negatives fall back to level 0', () => {
+    expect(ringBounds(5)).toEqual({ lo: 0, hi: 17 });
     expect(ringBounds(50)).toEqual({ lo: 0, hi: 17 });
+    expect(ringBounds(-3)).toEqual({ lo: 5, hi: 11 });
   });
 });
 
 describe('isUnlocked', () => {
-  it('always unlocks the plaza block regardless of population', () => {
+  it('always unlocks the plaza block regardless of Hall level', () => {
     expect(isUnlocked(8, 8, 0)).toBe(true);
     expect(isUnlocked(9, 9, 0)).toBe(true);
   });
@@ -37,25 +30,12 @@ describe('isUnlocked', () => {
     expect(isUnlocked(12, 5, 0)).toBe(false);
   });
 
-  it('opens the next ring as population grows', () => {
-    expect(isUnlocked(4, 4, 3)).toBe(true);
-    expect(isUnlocked(13, 13, 3)).toBe(true);
-    expect(isUnlocked(3, 3, 3)).toBe(false);
-    expect(isUnlocked(0, 0, 20)).toBe(true);
-    expect(isUnlocked(17, 17, 20)).toBe(true);
-  });
-});
-
-describe('nextThreshold', () => {
-  it('returns the next population that unlocks land, or null at the max ring', () => {
-    expect(nextThreshold(0)).toBe(3);
-    expect(nextThreshold(2)).toBe(3);
-    expect(nextThreshold(3)).toBe(6);
-    expect(nextThreshold(6)).toBe(12);
-    expect(nextThreshold(12)).toBe(20);
-    expect(nextThreshold(19)).toBe(20);
-    expect(nextThreshold(20)).toBeNull();
-    expect(nextThreshold(50)).toBeNull();
+  it('opens the next ring as the Hall levels up', () => {
+    expect(isUnlocked(4, 4, 1)).toBe(true);
+    expect(isUnlocked(13, 13, 1)).toBe(true);
+    expect(isUnlocked(3, 3, 1)).toBe(false);
+    expect(isUnlocked(0, 0, 4)).toBe(true);
+    expect(isUnlocked(17, 17, 4)).toBe(true);
   });
 });
 
@@ -88,10 +68,10 @@ describe('RIVER_TILES / isRiver', () => {
     }
   });
 
-  it('every river tile is locked at 6 owners and unlocked at 12', () => {
+  it('every river tile is locked at Hall level 2 and unlocked at level 3', () => {
     for (const t of RIVER_TILES) {
-      expect(isUnlocked(t.x, t.y, 6)).toBe(false);
-      expect(isUnlocked(t.x, t.y, 12)).toBe(true);
+      expect(isUnlocked(t.x, t.y, 2)).toBe(false);
+      expect(isUnlocked(t.x, t.y, 3)).toBe(true);
     }
   });
 

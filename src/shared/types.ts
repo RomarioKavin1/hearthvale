@@ -31,7 +31,7 @@ export type BuildingRole = 'coins' | 'raw' | 'processor' | 'decor';
 export type FestivalCategory = 'coins' | 'raw' | 'processed' | 'decor';
 
 export type BuildingId =
-  | 'cottage'
+  | 'house'
   | 'wheatfield'
   | 'grove'
   | 'quarry'
@@ -77,11 +77,12 @@ export type CityState = {
   theme: VillageTheme;
   festival: FestivalCategory;
   festivalDate: string;
-  /** Current Grand Keep stage under construction (0-indexed; 5 === complete). */
-  landmarkStage: number;
-  /** Planks contributed toward the current stage's planks requirement. */
+  /** Village Hall level 0..5. Levelling up needs BOTH the resource cost and a
+   * population threshold; each level unlocks a land ring + cumulative perks. */
+  hallLevel: number;
+  /** Planks contributed toward the current Hall level's planks requirement. */
   stagePlanks: number;
-  /** Bricks contributed toward the current stage's bricks requirement. */
+  /** Bricks contributed toward the current Hall level's bricks requirement. */
   stageBricks: number;
   totalCollected: number;
   totalContributed: number;
@@ -89,9 +90,9 @@ export type CityState = {
   weather: Weather;
   /** UTC day (YYYY-MM-DD) the current weather belongs to. */
   weatherDate: string;
-  /** Distinct-owner count — gates land expansion rings. */
+  /** House count — the villager population that gates Village Hall level-ups. */
   population: number;
-  /** Naming-rights label chosen by each completed stage's top contributor. */
+  /** Naming-rights label chosen by each Hall level's top contributor. */
   stageNames: string[];
 };
 
@@ -147,6 +148,7 @@ export type VillageMessage =
   | { t: 'tile'; key: string; tile: TileState }
   | { t: 'city'; city: CityState }
   | { t: 'festival'; festival: FestivalCategory }
+  /** A Village Hall level-up: `stage` is the new Hall level (1..5). */
   | { t: 'stage'; stage: number }
   | { t: 'market'; prices: Prices; stockpile: Stockpile }
   | { t: 'ring'; bounds: { lo: number; hi: number } };
@@ -155,8 +157,9 @@ export type VillageMessage =
  * whether the requesting player has already accepted one today. */
 export type TraderState = { offers: TraderOffer[]; done: boolean };
 
-/** Land-expansion snapshot: the unlocked ring bounds, the next population that
- * unlocks more land (null once fully expanded), and the current villager count. */
+/** Land-expansion snapshot: the unlocked ring bounds (derived from the Village
+ * Hall level), the population needed for the next Hall level (null once the Hall
+ * is maxed), and the current villager count. */
 export type RingState = {
   lo: number;
   hi: number;
@@ -211,7 +214,9 @@ export type Summary = {
   theme: VillageTheme;
   buildings: number;
   players: number;
-  landmarkStage: number;
+  /** Current Village Hall level (0..5). */
+  hallLevel: number;
+  /** Percent progress toward the next Hall level's resource requirement. */
   landmarkPct: number;
   festival: FestivalCategory;
   readyForMe: number;

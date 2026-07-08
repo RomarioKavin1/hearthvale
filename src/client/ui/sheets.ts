@@ -1,6 +1,8 @@
 import type { FestivalCategory, Good, LeaderRow, TraderOffer } from '../../shared/types';
 import {
   CATALOG,
+  HALL_POPULATION,
+  hallPerks,
   KEEP_STAGE_COSTS,
   MARKET,
   MAX_LEVEL,
@@ -491,28 +493,65 @@ const renderPlaque = (stageDone: number, stageNames: string[]): HTMLElement => {
   return plaque;
 };
 
+/** A simple labelled progress bar for the Village Hall's population requirement
+ * (villagers = houses on the map). Mirrors `keepBar` but with a home icon. */
+const villagerBar = (have: number, need: number): HTMLElement => {
+  const frac = need > 0 ? have / need : 1;
+  return el('div', {
+    cls: 'hv-stack',
+    children: [
+      el('div', {
+        cls: 'hv-row-line',
+        children: [
+          el('span', {
+            cls: 'hv-chain',
+            children: [iconEl('icon-home', 18), el('span', { text: 'Villagers' })],
+          }),
+          el('b', { text: `${fmtInt(have)} / ${fmtInt(need)}` }),
+        ],
+      }),
+      el('div', {
+        cls: 'hv-fill hv-fill-glow',
+        children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })],
+      }),
+    ],
+  });
+};
+
+/** Human descriptions of the perks a Village Hall level-up to `target` unlocks
+ * (the delta over the previous level), for the "Next level" teaser list. */
+const perkLines = (target: number): string[] => {
+  const lines: string[] = [`+3% village production (${hallPerks(target).productionPct}% total)`];
+  if (target === 1) lines.push('Trader offers 3 → 4 each day');
+  if (target === 2) lines.push('Market sell cap 500 → 750');
+  if (target === 3) lines.push('+1 plot for every villager');
+  if (target === 4) lines.push('Boost limit 5 → 7 per day');
+  if (target === 5) lines.push('Golden Hall banner for the village');
+  return lines;
+};
+
 export const openKeepSheet = (): void => {
   openSheet({
-    title: 'Grand Keep',
+    title: 'Village Hall',
     render: (body) => {
       const data = store.data;
       if (!data) return;
       const { city, me } = data;
-      const stage = city.landmarkStage;
+      const level = city.hallLevel;
       const stages = KEEP_STAGE_COSTS.length;
-      const complete = stage >= stages;
+      const complete = level >= stages;
 
       const stack = el('div', { cls: 'hv-stack' });
 
-      // Plaque of completed stages + naming CTA for the last one.
-      if (stage >= 1) {
-        stack.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'Completed stages' }));
-        stack.appendChild(renderPlaque(stage, city.stageNames));
-        const last = stage - 1;
+      // Plaque of completed levels + naming CTA for the last one.
+      if (level >= 1) {
+        stack.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'Completed levels' }));
+        stack.appendChild(renderPlaque(level, city.stageNames));
+        const last = level - 1;
         if (!(city.stageNames[last] ?? '')) {
           const nameBtn = el('button', {
             cls: 'hv-btn hv-btn-ghost',
-            text: me ? 'Name this stage' : 'Sign in to name a stage',
+            text: me ? 'Name this level' : 'Sign in to name a level',
             attrs: { type: 'button' },
           });
           nameBtn.addEventListener('click', () => {
@@ -532,38 +571,43 @@ export const openKeepSheet = (): void => {
             cls: 'hv-callout',
             children: [
               iconEl('icon-trophy', 22),
-              el('span', { text: 'The Grand Keep stands complete!' }),
+              el('span', { text: 'The Village Hall stands at its highest level!' }),
             ],
           })
         );
         stack.appendChild(
-          el('p', { cls: 'hv-note', text: 'Every stage adds +3% village-wide production. The whole village raised it together.' })
+          el('p', { cls: 'hv-note', text: 'The whole village raised it together — its perks apply to everyone.' })
         );
         body.appendChild(stack);
         return;
       }
 
-      // Current stage: two progress bars.
-      const cost = KEEP_STAGE_COSTS[stage] ?? { planks: 0, bricks: 0 };
+      // The next level needs BOTH resources AND population — two requirement bars.
+      const cost = KEEP_STAGE_COSTS[level] ?? { planks: 0, bricks: 0 };
+      const popNeed = HALL_POPULATION[level] ?? 0;
       stack.appendChild(
-        el('div', { cls: 'hv-mkt-seg-label', text: `Building stage ${stage + 1} of ${stages}` })
+        el('div', { cls: 'hv-mkt-seg-label', text: `Raising to level ${level + 1} of ${stages}` })
       );
       const bars = el('div', { cls: 'hv-keep-bars' });
       bars.appendChild(keepBar('planks', city.stagePlanks, cost.planks));
       bars.appendChild(keepBar('bricks', city.stageBricks, cost.bricks));
+      bars.appendChild(villagerBar(city.population, popNeed));
       stack.appendChild(bars);
 
       // Contribute controls per good.
       stack.appendChild(contributeControls('planks'));
       stack.appendChild(contributeControls('bricks'));
 
-      const pot = (stage + 1) * STAGE_POT;
+      const pot = (level + 1) * STAGE_POT;
       stack.appendChild(
-        el('p', { cls: 'hv-note', text: `Stage pot: ${fmtInt(pot)} coins, split by contribution.` })
+        el('p', { cls: 'hv-note', text: `Level pot: ${fmtInt(pot)} coins, split by contribution.` })
       );
-      stack.appendChild(
-        el('p', { cls: 'hv-note hv-muted', text: 'Each completed stage grants +3% village production.' })
-      );
+
+      // Next-level perks teaser.
+      stack.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: `Next: level ${level + 1} unlocks` }));
+      for (const line of perkLines(level + 1)) {
+        stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: line }));
+      }
 
       body.appendChild(stack);
     },
@@ -1053,7 +1097,8 @@ export const openJournalSheet = (): void => {
 /** Buildings whose `unlockLevel` is exactly `level`, in catalog order. */
 const buildingsUnlockingAt = (level: number): string[] =>
   Object.values(CATALOG)
-    .filter((spec) => spec.unlockLevel === level)
+    // The house is auto-placed on the first claim, never built — omit it.
+    .filter((spec) => spec.unlockLevel === level && spec.special !== 'house')
     .map((spec) => spec.name);
 
 /** The plot number that a level in PLOT_LEVELS grants (1-indexed). */

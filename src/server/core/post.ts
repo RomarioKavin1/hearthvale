@@ -49,11 +49,15 @@ export const createDailyPost = async (
 
 /**
  * The daily market-report comment: today's price for every good, the weather,
- * and a nudge that the trader has refreshed — e.g.
+ * the Village Hall level, and a nudge that the trader has refreshed — e.g.
  * `Market report — wheat 3, logs 4, stone 5, flour 9, planks 12, bricks 15.
- * Weather: Sunny. The trader has new offers.`
+ * Weather: Sunny. Village Hall: level 2. The trader has new offers.`
  */
-export const marketReportText = (prices: Prices, weather: Weather): string => {
+export const marketReportText = (
+  prices: Prices,
+  weather: Weather,
+  hallLevel: number
+): string => {
   const priceLine = GOODS.map((g) => `${g} ${prices[g]}`).join(', ');
-  return `Market report — ${priceLine}. Weather: ${weatherName(weather)}. The trader has new offers.`;
+  return `Market report — ${priceLine}. Weather: ${weatherName(weather)}. Village Hall: level ${hallLevel}. The trader has new offers.`;
 };

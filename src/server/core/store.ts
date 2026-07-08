@@ -96,7 +96,7 @@ export const getCity = async (): Promise<CityState> => {
     theme: isVillageTheme(h.theme) ? h.theme : 'meadow',
     festival: isCategory(h.festival) ? h.festival : 'coins',
     festivalDate: h.festivalDate ? h.festivalDate : todayUtc(),
-    landmarkStage: num(h.landmarkStage, 0),
+    hallLevel: num(h.hallLevel, 0),
     stagePlanks: num(h.stagePlanks, 0),
     stageBricks: num(h.stageBricks, 0),
     totalCollected: num(h.totalCollected, 0),
@@ -115,7 +115,7 @@ export const putCity = async (c: Partial<CityState>): Promise<void> => {
   if (c.theme !== undefined) fields.theme = c.theme;
   if (c.festival !== undefined) fields.festival = c.festival;
   if (c.festivalDate !== undefined) fields.festivalDate = c.festivalDate;
-  if (c.landmarkStage !== undefined) fields.landmarkStage = String(c.landmarkStage);
+  if (c.hallLevel !== undefined) fields.hallLevel = String(c.hallLevel);
   if (c.stagePlanks !== undefined) fields.stagePlanks = String(c.stagePlanks);
   if (c.stageBricks !== undefined) fields.stageBricks = String(c.stageBricks);
   if (c.totalCollected !== undefined) {

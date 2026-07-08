@@ -55,15 +55,17 @@ const SWAP_TABLE: ReadonlyArray<{
 const GOLDEN_ROOF_COST = 20;
 
 /**
- * The day's three global trader offers, deterministic per date string. Slots 0
- * and 1 are always good-for-good swaps; slot 2 has a 15% chance of being the
- * rare golden-roof cosmetic (20 planks). The same date always yields the same
- * offers.
+ * The day's global trader offers, deterministic per date string. `count` offers
+ * are generated (3 by default; the Village Hall's `traderOffers` perk raises it
+ * to 4). All but the last slot are good-for-good swaps; the last slot has a 15%
+ * chance of being the rare golden-roof cosmetic (20 planks). The same date +
+ * count always yields the same leading offers (extra slots extend the stream).
  */
-export const offersForDay = (dateStr: string): TraderOffer[] => {
+export const offersForDay = (dateStr: string, count = 3): TraderOffer[] => {
+  const n = Math.max(1, Math.floor(count));
   const rand = mulberry32(hashDay(`${dateStr}:trader`));
   const offers: TraderOffer[] = [];
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < n; i += 1) {
     const t = SWAP_TABLE[Math.floor(rand() * SWAP_TABLE.length)]!;
     offers.push({
       give: { good: t.give, qty: t.giveQty },
@@ -71,7 +73,7 @@ export const offersForDay = (dateStr: string): TraderOffer[] => {
     });
   }
   if (rand() < 0.15) {
-    offers[2] = {
+    offers[n - 1] = {
       give: { good: 'planks', qty: GOLDEN_ROOF_COST },
       get: { cosmetic: 'golden-roof' },
     };

@@ -33,7 +33,7 @@ triggers.post('/on-app-install', async (c) => {
       foundedAt: Date.now(),
       festival: 'coins',
       festivalDate: today,
-      landmarkStage: 0,
+      hallLevel: 0,
       stagePlanks: 0,
       stageBricks: 0,
       totalCollected: 0,

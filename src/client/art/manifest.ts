@@ -372,8 +372,8 @@ export const roofKeyFor = (
  * glance: tier1 = brown roof, tier2 = green roof, tier3 = purple roof.
  */
 export const BUILDING_ART: Record<BuildingId, BuildingArt> = {
-  // Cottage: door base + gable roof — the archetypal small house silhouette.
-  cottage: {
+  // House: door base + gable roof — the archetypal small homestead silhouette.
+  house: {
     kind: 'stacked',
     base: 'building-door',
     shape: 'gable',

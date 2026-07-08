@@ -10,8 +10,8 @@ import type {
   Weather,
 } from '../types';
 import type { BuildingSpec } from '../catalog';
-import { CATALOG, MAX_LEVEL, PLOT_LEVELS, tierStats } from '../catalog';
-import { isClaimable, isPlaza, neighbors, tileKey } from './grid';
+import { CATALOG, MAX_LEVEL, PLOT_LEVELS, hallPerks, tierStats } from '../catalog';
+import { isClaimable, isPlaza, neighbors, parseKey, tileKey } from './grid';
 import { isRiver } from './expansion';
 
 export const xpFor = (level: number): number => 50 * level * (level - 1);
@@ -26,6 +26,11 @@ export const levelForXp = (xp: number): number => {
 
 export const plotsForLevel = (level: number): number =>
   PLOT_LEVELS.filter((l) => l <= level).length;
+
+/** A player's effective plot allowance: the level-gated plots plus the Village
+ * Hall's shared bonus plot (+1 from Hall level 3). Pure. */
+export const plotsAllowed = (level: number, hallLevel: number): number =>
+  plotsForLevel(level) + hallPerks(hallLevel).bonusPlot;
 
 export const streakReward = (streak: number): number =>
   25 * Math.min(streak, 7);
@@ -174,7 +179,7 @@ export const accrue = (
     return { gained: { coins: 0, xp: amount, goods: { [good]: amount } }, consumed: {} };
   }
 
-  // Coins building (cottage, manor).
+  // Coins building (house, manor).
   return {
     gained: { coins: amount, xp: Math.ceil(amount / 10), goods: {} },
     consumed: {},
@@ -240,19 +245,58 @@ export const adjacencyBonus = (
 // Claiming.
 // ---------------------------------------------------------------------------
 
+/**
+ * The tile holding a player's house (their homestead anchor), or null if they
+ * have not settled yet. There is exactly one house per player (built free on
+ * their first claim). Pure.
+ */
+export const houseTile = (
+  grid: Record<string, TileState>,
+  userId: string
+): { x: number; y: number } | null => {
+  for (const [key, tile] of Object.entries(grid)) {
+    if (tile.owner === userId && tile.buildingId === 'house') {
+      return parseKey(key);
+    }
+  }
+  return null;
+};
+
+/**
+ * True if `(x, y)` is within Chebyshev radius 2 of the player's house tile —
+ * the rule every claim after the first must satisfy so homesteads cluster.
+ * A player with no house yet (should not happen past the first claim) is
+ * treated as unable to claim near a house. Pure.
+ */
+export const nearHouse = (
+  grid: Record<string, TileState>,
+  userId: string,
+  x: number,
+  y: number
+): boolean => {
+  const home = houseTile(grid, userId);
+  if (!home) return false;
+  return Math.max(Math.abs(home.x - x), Math.abs(home.y - y)) <= 2;
+};
+
 export const canClaim = (
   grid: Record<string, TileState>,
   x: number,
   y: number,
   player: PlayerState,
-  owned: number
+  owned: number,
+  hallLevel: number
 ): string | null => {
   if (isPlaza(x, y)) return 'That tile is part of the village plaza.';
   if (!isClaimable(x, y)) return 'That tile is outside the village.';
   if (isRiver(x, y)) return "You can't settle on the river.";
   if (grid[tileKey(x, y)]) return 'That tile is already claimed.';
-  if (owned >= plotsForLevel(player.level)) {
+  if (owned >= plotsAllowed(player.level, hallLevel)) {
     return 'You have reached your plot limit. Level up to claim more.';
+  }
+  // Every claim after the first must hug your homestead so villages stay tight.
+  if (owned > 0 && !nearHouse(grid, player.id, x, y)) {
+    return 'Build closer to your house (within 2 tiles).';
   }
   return null;
 };

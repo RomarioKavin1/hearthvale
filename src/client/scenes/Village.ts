@@ -17,7 +17,7 @@ import {
   emptyStockpile,
   goodsTotal,
 } from '../../shared/logic/economy';
-import { isRiver, nextThreshold, ringBounds } from '../../shared/logic/expansion';
+import { isRiver, ringBounds } from '../../shared/logic/expansion';
 import type {
   BuildingId,
   CityState,
@@ -106,7 +106,7 @@ const isCityState = (v: JsonValue | undefined): boolean =>
   typeof v.foundedAt === 'number' &&
   typeof v.festival === 'string' &&
   typeof v.festivalDate === 'string' &&
-  typeof v.landmarkStage === 'number' &&
+  typeof v.hallLevel === 'number' &&
   typeof v.stagePlanks === 'number' &&
   typeof v.stageBricks === 'number' &&
   typeof v.totalCollected === 'number' &&
@@ -199,7 +199,7 @@ const BUTTERFLY_TINT: readonly number[] = [
   hexNum(PAL.roofBlue),
 ];
 /** Buildings that puff chimney smoke (producing coin buildings). */
-const SMOKE_BUILDINGS: ReadonlySet<string> = new Set(['cottage', 'bakery', 'manor']);
+const SMOKE_BUILDINGS: ReadonlySet<string> = new Set(['house', 'bakery', 'manor']);
 
 /** A strolling villager: a `root` container that carries screen position + depth,
  * and an inner `vis` container that bobs/flips independently of the path travel. */
@@ -371,10 +371,14 @@ export class Village extends Scene {
     return data?.ring.population ?? data?.city.population ?? 0;
   }
 
+  private hallLevel(): number {
+    return store.data?.city.hallLevel ?? 0;
+  }
+
   private ringLoHi(): { lo: number; hi: number } {
     const r = store.data?.ring;
     if (r) return { lo: r.lo, hi: r.hi };
-    return ringBounds(this.population());
+    return ringBounds(this.hallLevel());
   }
 
   private isUnlockedTile(x: number, y: number): boolean {
@@ -504,7 +508,7 @@ export class Village extends Scene {
   private renderCastle(): void {
     for (const p of this.landmarkParts) p.destroy();
     this.landmarkParts = [];
-    const stage = store.data?.city.landmarkStage ?? 0;
+    const stage = store.data?.city.hallLevel ?? 0;
     for (const part of castleParts(stage)) {
       const { sx, sy } = isoToScreen(part.x, part.y, TILE_W, TILE_H);
       const img = part.roof
@@ -986,17 +990,10 @@ export class Village extends Scene {
     const y = Math.round((b - a) / 2);
     if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) return;
 
-    // Locked land rejects interaction with a "grow first" nudge.
+    // Locked land rejects interaction: this land opens when the Village Hall
+    // levels up (its ring unlock), not by raw villager count.
     if (!this.isUnlockedTile(x, y)) {
-      const pop = this.population();
-      const nt = data.ring.nextThreshold ?? nextThreshold(pop);
-      if (nt !== null) {
-        const need = Math.max(1, nt - pop);
-        toast(
-          `The village must grow first — ${need} more villager${need === 1 ? '' : 's'}`,
-          'info'
-        );
-      }
+      toast('Upgrade the Village Hall to unlock this land.', 'info');
       return;
     }
 
@@ -1132,7 +1129,7 @@ export class Village extends Scene {
       case 'stage': {
         const cur = store.data?.city;
         if (cur) {
-          const next: CityState = { ...cur, landmarkStage: msg.stage };
+          const next: CityState = { ...cur, hallLevel: msg.stage };
           store.patchCity(next);
         }
         this.updateLandmark();

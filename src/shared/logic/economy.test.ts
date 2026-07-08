@@ -7,7 +7,10 @@ import {
   canClaim,
   emptyStockpile,
   goodsTotal,
+  houseTile,
   levelForXp,
+  nearHouse,
+  plotsAllowed,
   plotsForLevel,
   streakReward,
   xpFor,
@@ -94,10 +97,10 @@ describe('plotsForLevel', () => {
 
 describe('investedCost', () => {
   it('sums tier costs from 1 up to the given tier', () => {
-    // cottage tier costs: 40, round(40×2.5)=100, round(40×6)=240.
-    expect(investedCost(CATALOG.cottage, 1)).toBe(40);
-    expect(investedCost(CATALOG.cottage, 2)).toBe(140);
-    expect(investedCost(CATALOG.cottage, 3)).toBe(380);
+    // house base cost 60: 60, round(60×2.5)=150, round(60×6)=360.
+    expect(investedCost(CATALOG.house, 1)).toBe(60);
+    expect(investedCost(CATALOG.house, 2)).toBe(210);
+    expect(investedCost(CATALOG.house, 3)).toBe(570);
   });
 });
 
@@ -110,44 +113,45 @@ describe('streakReward', () => {
 });
 
 describe('accrue — coins buildings', () => {
-  it('yields 2 coins for a fresh tier-1 cottage after 60s', () => {
-    const t = tile({ buildingId: 'cottage' });
+  it('yields 1 coin for a fresh tier-1 house after 60s', () => {
+    const t = tile({ buildingId: 'house' });
     const { gained, consumed } = accrue(t, 60_000, 'raw', 0, 'clear', emptyStockpile());
-    expect(gained).toEqual({ coins: 2, xp: 1, goods: {} });
+    // house rate 1/min: 1 coin, xp = ceil(1/10) = 1.
+    expect(gained).toEqual({ coins: 1, xp: 1, goods: {} });
     expect(consumed).toEqual({});
   });
 
   it('clamps to the tier cap after a long absence', () => {
-    const t = tile({ buildingId: 'cottage' });
+    const t = tile({ buildingId: 'house' });
     const { gained } = accrue(t, 1_000_000_000, 'raw', 0, 'clear', emptyStockpile());
-    // cottage cap 60 coins, xp = ceil(60/10) = 6.
+    // house cap 60 coins, xp = ceil(60/10) = 6.
     expect(gained).toEqual({ coins: 60, xp: 6, goods: {} });
   });
 
   it('yields nothing while under construction', () => {
-    const t = tile({ buildingId: 'cottage', readyAt: 100_000 });
+    const t = tile({ buildingId: 'house', readyAt: 100_000 });
     const { gained } = accrue(t, 50_000, 'coins', 1, 'clear', emptyStockpile());
     expect(gained).toEqual({ coins: 0, xp: 0, goods: {} });
   });
 
   it('doubles only the portion inside the boost window', () => {
-    // 2 min elapsed, first 1 min boosted -> 3 rate-minutes * 2/min = 6 coins.
-    const t = tile({ buildingId: 'cottage', boostUntil: 60_000 });
+    // 2 min elapsed, first 1 min boosted -> 3 rate-minutes * 1/min = 3 coins.
+    const t = tile({ buildingId: 'house', boostUntil: 60_000 });
     const { gained } = accrue(t, 120_000, 'raw', 0, 'clear', emptyStockpile());
-    expect(gained.coins).toBe(6);
+    expect(gained.coins).toBe(3);
   });
 
   it('multiplies by 1.5 when the festival matches the role', () => {
-    const t = tile({ buildingId: 'cottage' });
-    // 2 min * 2/min = 4, x1.5 = 6.
-    const { gained } = accrue(t, 120_000, 'coins', 0, 'clear', emptyStockpile());
+    const t = tile({ buildingId: 'house' });
+    // 4 min * 1/min = 4, x1.5 = 6.
+    const { gained } = accrue(t, 240_000, 'coins', 0, 'clear', emptyStockpile());
     expect(gained.coins).toBe(6);
   });
 
   it('multiplies by (1 + adjacency bonus)', () => {
-    const t = tile({ buildingId: 'cottage' });
-    // 2 min * 2/min = 4, x1.5 (adjacency) = 6.
-    const { gained } = accrue(t, 120_000, 'raw', 0.5, 'clear', emptyStockpile());
+    const t = tile({ buildingId: 'house' });
+    // 4 min * 1/min = 4, x1.5 (adjacency) = 6.
+    const { gained } = accrue(t, 240_000, 'raw', 0.5, 'clear', emptyStockpile());
     expect(gained.coins).toBe(6);
   });
 });
@@ -213,9 +217,9 @@ describe('accrue — weather', () => {
   });
 
   it('sunny x1.1 all producers', () => {
-    const t = tile({ buildingId: 'cottage' });
-    // 5 min * 2 = 10, x1.1 = 11.
-    const { gained } = accrue(t, 300_000, 'raw', 0, 'sunny', emptyStockpile());
+    const t = tile({ buildingId: 'house' });
+    // 10 min * 1 = 10, x1.1 = 11.
+    const { gained } = accrue(t, 600_000, 'raw', 0, 'sunny', emptyStockpile());
     expect(gained.coins).toBe(11);
   });
 });
@@ -250,7 +254,7 @@ describe('adjacencyBonus', () => {
       '3,2': tile({ buildingId: 'well', tier: 3, readyAt: 0 }),
       '2,1': tile({ buildingId: 'well', tier: 3, readyAt: 0 }),
       '2,3': tile({ buildingId: 'well', tier: 3, readyAt: 0 }),
-      '2,2': tile({ buildingId: 'cottage', readyAt: 0 }),
+      '2,2': tile({ buildingId: 'house', readyAt: 0 }),
     };
     expect(adjacencyBonus(grid, 2, 2, 'coins', 1000)).toBeCloseTo(0.6);
     // 0.6 * 2 = 1.2 -> overall cap 1.0.
@@ -294,20 +298,67 @@ describe('adjacencyBonus', () => {
   });
 });
 
+describe('plotsAllowed', () => {
+  it('is the level plots plus the Hall level-3 bonus plot', () => {
+    expect(plotsAllowed(1, 0)).toBe(1);
+    expect(plotsAllowed(1, 3)).toBe(2);
+    expect(plotsAllowed(4, 2)).toBe(3);
+    expect(plotsAllowed(4, 3)).toBe(4);
+  });
+});
+
+describe('houseTile / nearHouse', () => {
+  const withHouse = (): Record<string, TileState> => ({
+    '5,5': tile({ owner: 'p1', buildingId: 'house' }),
+    '9,9': tile({ owner: 'p2', buildingId: 'house' }),
+  });
+
+  it('finds the owner house tile, null when unsettled', () => {
+    expect(houseTile(withHouse(), 'p1')).toEqual({ x: 5, y: 5 });
+    expect(houseTile(withHouse(), 'nobody')).toBeNull();
+  });
+
+  it('accepts tiles within Chebyshev 2 of the house', () => {
+    const g = withHouse();
+    expect(nearHouse(g, 'p1', 7, 7)).toBe(true); // diagonal distance 2
+    expect(nearHouse(g, 'p1', 3, 5)).toBe(true); // distance 2 on x
+    expect(nearHouse(g, 'p1', 5, 5)).toBe(true); // the house tile itself
+  });
+
+  it('rejects tiles more than 2 away, and any tile when unsettled', () => {
+    const g = withHouse();
+    expect(nearHouse(g, 'p1', 8, 5)).toBe(false); // distance 3
+    expect(nearHouse(g, 'p1', 8, 8)).toBe(false);
+    expect(nearHouse(g, 'nobody', 5, 5)).toBe(false);
+  });
+});
+
 describe('canClaim', () => {
   it('rejects a plaza tile', () => {
-    expect(canClaim({}, 8, 8, player(), 0)).not.toBeNull();
+    expect(canClaim({}, 8, 8, player(), 0, 0)).not.toBeNull();
   });
   it('rejects an already-occupied tile', () => {
-    expect(canClaim({ '5,5': tile({ owner: 'other' }) }, 5, 5, player(), 0)).not.toBeNull();
+    expect(canClaim({ '5,5': tile({ owner: 'other' }) }, 5, 5, player(), 0, 0)).not.toBeNull();
   });
   it('rejects when at the plot limit', () => {
-    expect(canClaim({}, 0, 0, player({ level: 1 }), 1)).not.toBeNull();
+    expect(canClaim({}, 0, 0, player({ level: 1 }), 1, 0)).not.toBeNull();
   });
-  it('allows a valid claim', () => {
-    expect(canClaim({}, 0, 0, player({ level: 1 }), 0)).toBeNull();
+  it('allows the first claim anywhere in the ring', () => {
+    // owned 0: the homestead-radius rule does not apply to the first claim.
+    expect(canClaim({}, 0, 0, player({ level: 1 }), 0, 0)).toBeNull();
   });
   it('rejects a river tile', () => {
-    expect(canClaim({}, 1, 4, player({ level: 1 }), 0)).not.toBeNull();
+    expect(canClaim({}, 1, 4, player({ level: 1 }), 0, 0)).not.toBeNull();
+  });
+  it('rejects a later claim far from the house, allows one within 2 tiles', () => {
+    const grid: Record<string, TileState> = {
+      '5,5': tile({ owner: 'p1', buildingId: 'house' }),
+    };
+    const p = player({ level: 2 });
+    // (5,11) is inside the ring but 6 tiles from the house; (6,6) is 1 tile away.
+    expect(canClaim(grid, 5, 11, p, 1, 0)).toBe(
+      'Build closer to your house (within 2 tiles).'
+    );
+    expect(canClaim(grid, 6, 6, p, 1, 0)).toBeNull();
   });
 });

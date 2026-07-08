@@ -24,7 +24,7 @@ type Summary = {
   theme: Theme;
   buildings: number;
   players: number;
-  landmarkStage: number;
+  hallLevel: number;
   readyForMe: number;
   weather: Weather;
   hotGood: string;
@@ -142,8 +142,8 @@ const isSummary = (body: unknown): body is Summary =>
   typeof body.buildings === 'number' &&
   'players' in body &&
   typeof body.players === 'number' &&
-  'landmarkStage' in body &&
-  typeof body.landmarkStage === 'number' &&
+  'hallLevel' in body &&
+  typeof body.hallLevel === 'number' &&
   'readyForMe' in body &&
   typeof body.readyForMe === 'number' &&
   'weather' in body &&
@@ -180,10 +180,10 @@ const fillStats = (
   statsEl.replaceChildren(
     chip(`${fmtInt(s.buildings)} buildings`),
     chip(`${fmtInt(s.players)} villagers`),
-    chip(`Keep stage ${s.landmarkStage}/5`)
+    chip(`Village Hall L${s.hallLevel}/5`)
   );
 
-  if (s.landmarkStage >= 1) keepEl.classList.remove('is-hidden');
+  if (s.hallLevel >= 1) keepEl.classList.remove('is-hidden');
   else keepEl.classList.add('is-hidden');
 
   if (s.readyForMe > 0) {

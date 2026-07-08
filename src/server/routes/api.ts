@@ -226,8 +226,11 @@ api.post('/boost', async (c) => {
   }
 });
 
-/** Market trades are priced marginally in an O(qty) loop — bound them. */
-const MAX_TRADE_QTY = 500;
+/** Market buys are priced marginally in an O(qty) loop — bound them. */
+const MAX_BUY_QTY = 500;
+/** Hard upper bound for a sell order (the Village Hall `sellCap` perk tops out
+ * at 750; `doSell` enforces the exact per-Hall-level cap). */
+const MAX_SELL_QTY = 750;
 /** Sanity bound for non-market quantities (keep contributions). */
 const MAX_QTY = 1_000_000;
 
@@ -268,10 +271,10 @@ api.post('/sell', async (c) => {
     const userId = requireUser();
     const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
     if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
-    const qty = asQty(body.qty, MAX_TRADE_QTY);
+    const qty = asQty(body.qty, MAX_SELL_QTY);
     if (qty === null) {
       return c.json(
-        ...fail(`Quantity must be a whole number between 1 and ${MAX_TRADE_QTY}.`, 400)
+        ...fail(`Quantity must be a whole number between 1 and ${MAX_SELL_QTY}.`, 400)
       );
     }
     const result = await doSell(userId, body.good, qty);
@@ -288,10 +291,10 @@ api.post('/buy', async (c) => {
     const userId = requireUser();
     const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
     if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
-    const qty = asQty(body.qty, MAX_TRADE_QTY);
+    const qty = asQty(body.qty, MAX_BUY_QTY);
     if (qty === null) {
       return c.json(
-        ...fail(`Quantity must be a whole number between 1 and ${MAX_TRADE_QTY}.`, 400)
+        ...fail(`Quantity must be a whole number between 1 and ${MAX_BUY_QTY}.`, 400)
       );
     }
     const result = await doBuy(userId, body.good, qty);
@@ -311,7 +314,7 @@ api.post('/trade', async (c) => {
       typeof body.offerIndex !== 'number' ||
       !Number.isInteger(body.offerIndex) ||
       body.offerIndex < 0 ||
-      body.offerIndex > 2
+      body.offerIndex > 3
     ) {
       return c.json(...fail('Invalid trade offer.', 400));
     }

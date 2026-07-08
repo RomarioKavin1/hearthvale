@@ -21,9 +21,9 @@ import type {
 } from '../../shared/types';
 import type { BuildingId } from '../../shared/types';
 import {
-  BOOST_DAILY_LIMIT,
   CATALOG,
   DEMOLISH_REFUND,
+  HALL_POPULATION,
   KEEP_STAGE_COSTS,
   MARKET,
   MAX_LEVEL,
@@ -31,6 +31,8 @@ import {
   STAGE_MIN_PAYOUT,
   STAGE_NAME_WORDS,
   STAGE_POT,
+  hallPerks,
+  houseBonus,
   investedCost,
   isStackedBuilding,
   isValidVillageName,
@@ -52,7 +54,7 @@ import {
   utcDay,
 } from '../../shared/logic/economy';
 import { buyValue, priceFor, pricesFor, sellValue } from '../../shared/logic/market';
-import { isUnlocked, nextThreshold, ringBounds } from '../../shared/logic/expansion';
+import { isUnlocked, ringBounds } from '../../shared/logic/expansion';
 import { offersForDay, weatherForDay } from '../../shared/logic/trader';
 import {
   advanceQuest,
@@ -90,7 +92,7 @@ import {
   stockpileFields,
 } from './store';
 
-/** Number of Grand Keep stages. */
+/** Number of Village Hall levels (resource stages). */
 export const KEEP_STAGES: number = KEEP_STAGE_COSTS.length;
 
 const GRID_KEY = 'city:grid';
@@ -121,6 +123,9 @@ export const validateBuild = (
 ): string | null => {
   if (tile.owner !== player.id) return 'You do not own this plot.';
   if (tile.buildingId) return 'This plot already has a building.';
+  if (spec.special === 'house') {
+    return 'Your house is placed when you settle your first plot.';
+  }
   if (player.level < spec.unlockLevel) {
     return `${spec.name} unlocks at level ${spec.unlockLevel}.`;
   }
@@ -152,6 +157,9 @@ export const validateDemolish = (
 ): string | null => {
   if (tile.owner !== player.id) return 'You do not own this plot.';
   if (!tile.buildingId) return 'There is no building here to demolish.';
+  if (CATALOG[tile.buildingId].special === 'house') {
+    return 'Your house is your home.';
+  }
   return null;
 };
 
@@ -211,7 +219,9 @@ export const nextStreak = (
 
 // --- Boosts -----------------------------------------------------------------
 
-export const BOOST_LIMIT = BOOST_DAILY_LIMIT;
+/** The base neighbour-boost daily limit (Village Hall level 0). Higher Hall
+ * levels raise it via `hallPerks(level).boostLimit`. */
+export const BOOST_LIMIT = hallPerks(0).boostLimit;
 export const BOOST_DURATION_MS = 30 * 60 * 1000;
 export const BOOST_COINS = 15;
 export const BOOST_XP = 5;
@@ -222,13 +232,15 @@ export const boostsUsedToday = (player: PlayerState, today: string): number =>
 
 /**
  * A boost targets a neighbour's completed producer. Returns an error message
- * or null. `usedToday` must already account for date rollover.
+ * or null. `usedToday` must already account for date rollover; `limit` is the
+ * player's daily allowance (raised by the Village Hall's `boostLimit` perk).
  */
 export const validateBoost = (
   boosterId: string,
   tile: TileState,
   now: number,
-  usedToday: number
+  usedToday: number,
+  limit: number
 ): string | null => {
   if (tile.owner === boosterId) return 'You cannot boost your own plot.';
   if (!tile.buildingId) return 'There is nothing to boost here.';
@@ -237,7 +249,7 @@ export const validateBoost = (
   }
   if (now < tile.readyAt) return 'This building is still under construction.';
   if (tile.boostUntil > now) return 'This building already has a boost running.';
-  if (usedToday >= BOOST_LIMIT) return 'You have used all your boosts today.';
+  if (usedToday >= limit) return 'You have used all your boosts today.';
   return null;
 };
 
@@ -246,40 +258,29 @@ export const validateBoost = (
 export type StageSplit = { stage: number; amount: number };
 
 export type KeepContributeResult = {
-  /** Units of the good actually poured into stages (excludes any refund). */
+  /** Units of the good actually poured into the current level (excludes refund). */
   applied: number;
-  /** Units returned to the player's wallet (see the refund rule below). */
+  /** Units returned to the player's wallet (over the current level's need). */
   refunded: number;
-  /** Per-stage portions to record in `contrib:stage:{stage}` zsets. */
+  /** Portion to record in the `contrib:stage:{hallLevel}` zset (one entry). */
   splits: StageSplit[];
-  /** New 0-indexed stage under construction. */
-  landmarkStage: number;
-  /** Planks progress toward the new current stage. */
+  /** Planks progress toward the current Hall level. */
   stagePlanks: number;
-  /** Bricks progress toward the new current stage. */
+  /** Bricks progress toward the current Hall level. */
   stageBricks: number;
-  /** New stage numbers reached (one per completion) for `{t:'stage'}`. */
-  completed: number[];
 };
 
-/** True once every Grand Keep stage is built (stage index === stage count). */
+/** True once the Village Hall is at its top level (all stages built). */
 export const landmarkComplete = (city: CityState): boolean =>
-  city.landmarkStage >= KEEP_STAGES;
+  city.hallLevel >= KEEP_STAGES;
 
 /**
- * Pour a single-good contribution into the Grand Keep. Each stage requires BOTH
- * planks and bricks (`KEEP_STAGE_COSTS[stage]`); a contribution fills only the
- * requirement for the good given (`planks` or `bricks`). Rules:
- *
- * - Units flow into the current stage's requirement for that good; a stage
- *   completes only when BOTH goods have met their requirement.
- * - When this contribution completes both goods for a stage, the stage advances
- *   and any remaining units CARRY into the next stage's requirement for the same
- *   good.
- * - When this good's requirement for the current stage is met but the OTHER
- *   good's is not, the stage cannot advance — so any leftover units of this good
- *   are REFUNDED to the wallet rather than carried (you cannot pre-pay a good for
- *   a stage the village has not otherwise funded).
+ * Pour a single-good contribution toward the current Village Hall level. The
+ * level's cost (`KEEP_STAGE_COSTS[hallLevel]`) needs BOTH planks and bricks; a
+ * contribution only fills the requirement for the good given. Resources are
+ * capped at the current level's need — a level-up ALSO requires a population
+ * threshold (see `tryHallLevelUp`), so units cannot pre-pay a future level and
+ * any surplus beyond this good's current requirement is refunded to the wallet.
  *
  * Pure: `costs` is passed in (KEEP_STAGE_COSTS) so it is unit-testable.
  */
@@ -289,59 +290,71 @@ export const applyKeepContribution = (
   qty: number,
   costs: Array<{ planks: number; bricks: number }>
 ): KeepContributeResult => {
-  let stage = city.landmarkStage;
+  const level = city.hallLevel;
   let planks = city.stagePlanks;
   let bricks = city.stageBricks;
-  let remaining = Math.max(0, Math.floor(qty));
-  let applied = 0;
-  let refunded = 0;
-  const splits: StageSplit[] = [];
-  const completed: number[] = [];
+  const incoming = Math.max(0, Math.floor(qty));
 
-  while (remaining > 0 && stage < costs.length) {
-    const cost = costs[stage];
+  const cost = costs[level];
+  // Hall maxed: nothing needed, refund everything.
+  if (!cost) {
+    return { applied: 0, refunded: incoming, splits: [], stagePlanks: planks, stageBricks: bricks };
+  }
+
+  const filled = good === 'planks' ? planks : bricks;
+  const need = Math.max(0, cost[good] - filled);
+  const applied = Math.min(incoming, need);
+  const refunded = incoming - applied;
+  if (good === 'planks') planks += applied;
+  else bricks += applied;
+
+  const splits: StageSplit[] = applied > 0 ? [{ stage: level, amount: applied }] : [];
+  return { applied, refunded, splits, stagePlanks: planks, stageBricks: bricks };
+};
+
+export type HallLevelUp = {
+  /** The resulting Hall level (unchanged if the level-up conditions are unmet). */
+  hallLevel: number;
+  /** Planks progress carried on the resulting level (reset to 0 on a level-up). */
+  stagePlanks: number;
+  /** Bricks progress carried on the resulting level (reset to 0 on a level-up). */
+  stageBricks: number;
+  /** New Hall levels reached (for `{t:'stage'}` broadcasts + pot settlement). */
+  leveled: number[];
+};
+
+/**
+ * Try to raise the Village Hall. A level-up needs BOTH the current level's
+ * resources met AND `population >= HALL_POPULATION[hallLevel]`. Because resources
+ * are capped per level (they reset to 0 on a level-up), at most one level is
+ * gained per call — but the result is expressed as a list for symmetry with the
+ * broadcast/pot code. Pure: `costs` and `population` are passed in.
+ */
+export const tryHallLevelUp = (
+  city: CityState,
+  population: number,
+  costs: Array<{ planks: number; bricks: number }>
+): HallLevelUp => {
+  let level = city.hallLevel;
+  let planks = city.stagePlanks;
+  let bricks = city.stageBricks;
+  const leveled: number[] = [];
+
+  while (level < costs.length) {
+    const cost = costs[level];
     if (!cost) break;
-    const filled = good === 'planks' ? planks : bricks;
-    const need = cost[good] - filled;
-    if (need > 0) {
-      const put = Math.min(remaining, need);
-      if (good === 'planks') planks += put;
-      else bricks += put;
-      remaining -= put;
-      applied += put;
-      splits.push({ stage, amount: put });
-    }
-
-    const thisFilled = good === 'planks' ? planks : bricks;
-    const otherFilled = good === 'planks' ? bricks : planks;
-    const otherCost = good === 'planks' ? cost.bricks : cost.planks;
-    if (thisFilled >= cost[good]) {
-      if (otherFilled >= otherCost) {
-        // Both goods met — stage completes; leftover carries to the next stage.
-        stage += 1;
-        planks = 0;
-        bricks = 0;
-        completed.push(stage);
-      } else {
-        // This good is full but the stage cannot advance — refund the rest.
-        refunded += remaining;
-        remaining = 0;
-      }
+    const popNeed = HALL_POPULATION[level] ?? Infinity;
+    if (planks >= cost.planks && bricks >= cost.bricks && population >= popNeed) {
+      level += 1;
+      planks = 0;
+      bricks = 0;
+      leveled.push(level);
+    } else {
+      break;
     }
   }
 
-  // Fully expanded / all stages built: any remaining units are refunded.
-  refunded += remaining;
-
-  return {
-    applied,
-    refunded,
-    splits,
-    landmarkStage: stage,
-    stagePlanks: planks,
-    stageBricks: bricks,
-    completed,
-  };
+  return { hallLevel: level, stagePlanks: planks, stageBricks: bricks, leveled };
 };
 
 // --- Ballot -----------------------------------------------------------------
@@ -409,15 +422,24 @@ export const affordableRuns = (
 };
 
 /**
- * The Grand Keep grants +3% village-wide production per completed stage (max
- * +15% at 5 stages). Applied to a collect's coin + goods OUTPUT after accrual;
- * `xp` and consumed inputs are unaffected. Amounts are floored.
+ * Scale a collect's coin + goods OUTPUT by the production buffs (`xp` and
+ * consumed inputs are unaffected, amounts floored):
+ * - The Village Hall grants +3% village-wide production per level (`hallPerks`),
+ * - the owner's house grants +2% per house tier to their OTHER buildings
+ *   (`houseBonus`) — passed via `houseTier`, and excluded on the house itself
+ *   (`isHouse`).
+ *
+ * The two percentages are summed into one integer numerator so the multiply is
+ * exact — `100 × 1.15` drifts to 114.999… in IEEE754, but `100 × 115 / 100`
+ * is exactly 115.
  */
-export const applyStageBuff = (gained: Gained, stage: number): Gained => {
-  // Percent numerator (100 + 3 per stage, capped) kept integer so the multiply
-  // is exact — `100 × 1.15` drifts to 114.999… in IEEE754, but `100 × 115 / 100`
-  // is exactly 115.
-  const pct = 100 + 3 * Math.min(Math.max(stage, 0), KEEP_STAGES);
+export const applyHallBuff = (
+  gained: Gained,
+  hallLevel: number,
+  houseTier: number,
+  isHouse: boolean
+): Gained => {
+  const pct = 100 + hallPerks(hallLevel).productionPct + (isHouse ? 0 : houseBonus(houseTier));
   const scale = (v: number): number => Math.floor((v * pct) / 100);
   const goods: Partial<Record<Good, number>> = {};
   for (const g of GOODS) {
@@ -493,13 +515,14 @@ export type CollectResult = {
  * Pure — the caller applies `consumed` to the stockpile and persists.
  *
  * - Raw producers + goods processors output goods into the OWNER'S wallet;
- *   cottage/manor + the bakery output coins.
+ *   house/manor + the bakery output coins.
  * - Processors consume `2 × runs` inputs from the stockpile and the owner PAYS
  *   `price × units`: the bakery nets it out of its minted coins (floored at 0),
  *   while goods processors pay from their coin balance — and if they cannot
  *   afford every run, the run count (output + consumption + cost) is trimmed to
  *   what they can afford (`affordableRuns`).
- * - The Grand Keep production buff (+3%/stage) scales the OUTPUT after accrual.
+ * - The Village Hall production buff (+3%/level) and the owner's house aura
+ *   (+2%/house tier, excluding the house itself) scale the OUTPUT after accrual.
  * - Only production coins feed `lifetimeEarned` (→ lb:earned); market income
  *   never does.
  */
@@ -509,13 +532,15 @@ export const applyCollect = (
   city: CityState,
   now: number,
   adjBonus: number,
-  stockpile: Stockpile
+  stockpile: Stockpile,
+  houseTier: number
 ): CollectResult => {
   const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile);
   let gained = raw.gained;
   let consumed = raw.consumed;
 
   const spec = tile.buildingId ? CATALOG[tile.buildingId] : undefined;
+  const isHouse = spec?.special === 'house';
 
   let inputCost = 0;
   if (spec && spec.role === 'processor' && spec.input && spec.output) {
@@ -541,8 +566,8 @@ export const applyCollect = (
     }
   }
 
-  // Grand Keep buff scales the output only (never the consumed inputs).
-  gained = applyStageBuff(gained, city.landmarkStage);
+  // Hall + house buffs scale the output only (never the consumed inputs).
+  gained = applyHallBuff(gained, city.hallLevel, houseTier, isHouse);
 
   let netCoins = gained.coins;
   let paidFromBalance = 0;
@@ -734,20 +759,19 @@ const ensurePlayer = async (userId: string): Promise<PlayerState> => {
 // ---------------------------------------------------------------------------
 
 /**
- * Lazily pay a player for Grand Keep stages that completed since they last
- * collected. Stages [player.paidStage, city.landmarkStage) are complete; for
- * each such stage the player funded (a positive score in `contrib:stage:{n}`)
- * they earn their pro-rata share of the `stagePot(n)` (min STAGE_MIN_PAYOUT).
- * Advances paidStage and persists.
+ * Lazily pay a player for Village Hall levels reached since they last collected.
+ * Levels [player.paidStage, city.hallLevel) are done; for each level the player
+ * funded (a positive score in `contrib:stage:{n}`) they earn their pro-rata
+ * share of the `stagePot(n)` (min STAGE_MIN_PAYOUT). Advances paidStage.
  */
 const settleStagePayouts = async (
   player: PlayerState,
   city: CityState
 ): Promise<PlayerState> => {
-  if (player.paidStage >= city.landmarkStage) return player;
+  if (player.paidStage >= city.hallLevel) return player;
 
   let coins = 0;
-  for (let n = player.paidStage; n < city.landmarkStage; n += 1) {
+  for (let n = player.paidStage; n < city.hallLevel; n += 1) {
     const mine = await stageContribScore(n, player.id);
     if (mine <= 0) continue;
     const total = await stageContribTotal(n);
@@ -757,32 +781,47 @@ const settleStagePayouts = async (
   const settled: PlayerState = {
     ...player,
     coins: player.coins + coins,
-    paidStage: city.landmarkStage,
+    paidStage: city.hallLevel,
   };
   await putPlayer(settled);
   return settled;
 };
 
-const distinctOwners = (grid: Record<string, TileState>): number => {
-  const owners = new Set<string>();
-  for (const tile of Object.values(grid)) owners.add(tile.owner);
-  return owners.size;
+/** The village population: the number of houses on the grid (one per settled
+ * player, built free on their first claim). Pure. */
+const countHouses = (grid: Record<string, TileState>): number => {
+  let n = 0;
+  for (const tile of Object.values(grid)) {
+    if (tile.buildingId === 'house') n += 1;
+  }
+  return n;
 };
 
+/** The tier of a player's house, or 0 if they have not settled yet (used for
+ * the house's personal production aura). Pure. */
+const houseTierOf = (grid: Record<string, TileState>, userId: string): number => {
+  for (const tile of Object.values(grid)) {
+    if (tile.owner === userId && tile.buildingId === 'house') return tile.tier;
+  }
+  return 0;
+};
+
+/** Villagers (houses) needed to reach the next Village Hall level, or null once
+ * the Hall is maxed. Drives the RingState `nextThreshold` display field. */
+const hallNextPopulation = (hallLevel: number): number | null =>
+  hallLevel < HALL_POPULATION.length ? HALL_POPULATION[hallLevel] ?? null : null;
+
 /**
- * Population-gated expansion check: null if tile `(x, y)` is inside the ring
- * unlocked at `population`, else the rejection message naming how many more
- * villagers unlock the next ring. Pure — unit-tested.
+ * Land-expansion check: null if tile `(x, y)` is inside the ring unlocked at the
+ * current Village Hall level, else the rejection message. Pure — unit-tested.
  */
 export const expansionGate = (
   x: number,
   y: number,
-  population: number
+  hallLevel: number
 ): string | null => {
-  if (isUnlocked(x, y, population)) return null;
-  const next = nextThreshold(population);
-  const need = next === null ? 0 : next - population;
-  return `The village must grow first (${need} more villagers unlock new land).`;
+  if (isUnlocked(x, y, hallLevel)) return null;
+  return 'Upgrade the Village Hall to unlock this land.';
 };
 
 /** The player's active-quest view for a state response. The grid is already
@@ -835,7 +874,8 @@ export const loadState = async (
 
   const today = utcDay(now);
   const traderDone = userId ? await hasTradedToday(today, userId) : false;
-  const { lo, hi } = ringBounds(city.population);
+  const { lo, hi } = ringBounds(city.hallLevel);
+  const offerCount = hallPerks(city.hallLevel).traderOffers;
 
   return {
     grid,
@@ -846,11 +886,11 @@ export const loadState = async (
     stockpile,
     prices: pricesFor(stockpile),
     weather: city.weather,
-    trader: { offers: offersForDay(today), done: traderDone },
+    trader: { offers: offersForDay(today, offerCount), done: traderDone },
     ring: {
       lo,
       hi,
-      nextThreshold: nextThreshold(city.population),
+      nextThreshold: hallNextPopulation(city.hallLevel),
       population: city.population,
     },
     quest: questView(grid, me),
@@ -863,17 +903,21 @@ export const doClaim = async (
   y: number
 ): Promise<{ tile: TileState; me: PlayerState }> => {
   const key = tileKey(x, y);
-  const [grid, player] = await Promise.all([getGrid(), ensurePlayer(userId)]);
+  const now = Date.now();
+  const [grid, player, city] = await Promise.all([
+    getGrid(),
+    ensurePlayer(userId),
+    getCity(),
+  ]);
   const owned = ownedCount(grid, userId);
-  const population = distinctOwners(grid);
   const wasOwner = owned > 0;
 
-  const err = canClaim(grid, x, y, player, owned);
+  const err = canClaim(grid, x, y, player, owned, city.hallLevel);
   if (err) throw new OpError(400, err);
 
-  // Population-gated expansion: locked outer land rejects claims until enough
-  // villagers have joined to unlock the next ring.
-  const gate = expansionGate(x, y, population);
+  // Land expansion is gated by the Village Hall level: locked outer tiles reject
+  // claims until the Hall is upgraded to unlock the next ring.
+  const gate = expansionGate(x, y, city.hallLevel);
   if (gate) throw new OpError(400, gate);
 
   const tx = await redis.watch(GRID_KEY);
@@ -892,6 +936,16 @@ export const doClaim = async (
     lastCollect: 0,
     boostUntil: 0,
   };
+  // A player's FIRST claim founds their homestead: the House is placed free (no
+  // coin cost), building immediately. It anchors every later claim and counts
+  // as population.
+  if (!wasOwner) {
+    const houseReady = now + tierStats(CATALOG.house, 1).buildSeconds * 1000;
+    tile.buildingId = 'house';
+    tile.builtAt = now;
+    tile.readyAt = houseReady;
+    tile.lastCollect = houseReady;
+  }
 
   await tx.multi();
   await tx.hSet(GRID_KEY, { [key]: JSON.stringify(tile) });
@@ -907,34 +961,47 @@ export const doClaim = async (
 
   await broadcastTile(key, tile);
 
-  // A brand-new villager grows the population; recompute the cached count and,
-  // if a new ring opened, broadcast + celebrate.
+  // A new house grows the population; the extra villager may itself complete a
+  // pending Village Hall level-up (resources already met, waiting on people).
   if (!wasOwner) {
-    const newPopulation = population + 1;
-    await putCity({ population: newPopulation });
-    const before = ringBounds(population);
-    const after = ringBounds(newPopulation);
-    if (before.lo !== after.lo || before.hi !== after.hi) {
-      await broadcastRing(after);
-      await celebrateRingUnlock();
+    const newPopulation = countHouses(grid) + 1;
+    const levelUp = tryHallLevelUp(city, newPopulation, KEEP_STAGE_COSTS);
+    await putCity({
+      population: newPopulation,
+      hallLevel: levelUp.hallLevel,
+      stagePlanks: levelUp.stagePlanks,
+      stageBricks: levelUp.stageBricks,
+    });
+    if (levelUp.leveled.length > 0) {
+      await broadcastCity({
+        ...city,
+        population: newPopulation,
+        hallLevel: levelUp.hallLevel,
+        stagePlanks: levelUp.stagePlanks,
+        stageBricks: levelUp.stageBricks,
+      });
+      for (const level of levelUp.leveled) await broadcastStage(level);
+      await broadcastRing(ringBounds(levelUp.hallLevel));
+      await celebrateHallLevel(levelUp.hallLevel);
     }
   }
 
   return { tile, me: player };
 };
 
-/** Best-effort app-account comment celebrating a land-expansion unlock. */
-const celebrateRingUnlock = async (): Promise<void> => {
+/** Best-effort app-account comment celebrating a Village Hall level-up (which
+ * also unlocks a new land ring). */
+const celebrateHallLevel = async (level: number): Promise<void> => {
   const postId = context.postId;
   if (!postId) return;
   try {
     await reddit.submitComment({
       id: postId,
-      text: 'The village has grown! New land unlocked for settlement.',
+      text: `The Village Hall reached Level ${level}! New land unlocked for the whole village.`,
       runAs: 'APP',
     });
   } catch (error) {
-    console.error('ring-unlock celebration comment failed:', error);
+    console.error('hall level-up celebration comment failed:', error);
   }
 };
 
@@ -1011,7 +1078,8 @@ export const doUpgrade = async (
 
   // Auto-collect pending production before the timer resets.
   const adj = adjacencyBonus(grid, x, y, city.festival, now);
-  const collected = applyCollect(tile, player, city, now, adj, stockpile);
+  const houseTier = houseTierOf(grid, userId);
+  const collected = applyCollect(tile, player, city, now, adj, stockpile, houseTier);
   const pending = collected.gained;
 
   const nextTier: Tier = tile.tier === 1 ? 2 : 3;
@@ -1136,8 +1204,9 @@ export const doCollect = async (
   const stockpile = await getStockpile();
 
   const adj = adjacencyBonus(grid, x, y, city.festival, now);
+  const houseTier = houseTierOf(grid, userId);
   const pricesBefore = pricesFor(stockpile);
-  const result = applyCollect(tile, player, city, now, adj, stockpile);
+  const result = applyCollect(tile, player, city, now, adj, stockpile, houseTier);
   const gained = result.gained;
   const banked = gained.coins + goodsTotal(gained.goods);
   const stockChanged = goodsTotal(result.consumed) > 0;
@@ -1191,6 +1260,7 @@ export const doCollectAll = async (
   const pricesBefore = pricesFor(stockpile);
 
   const startLevel = initial.level;
+  const houseTier = houseTierOf(grid, userId);
   let me = initial;
   const total: Gained = { coins: 0, xp: 0, goods: {} };
   const changed: Array<{ key: string; tile: TileState }> = [];
@@ -1204,7 +1274,7 @@ export const doCollectAll = async (
     const { x, y } = parseKey(key);
     const adj = adjacencyBonus(grid, x, y, city.festival, now);
     // Thread the (mutating) stockpile so later processors see earlier draws.
-    const result = applyCollect(tile, me, city, now, adj, stockpile);
+    const result = applyCollect(tile, me, city, now, adj, stockpile, houseTier);
     me = result.player;
     total.coins += result.gained.coins;
     total.goods = mergeGoods(total.goods, result.gained.goods);
@@ -1293,10 +1363,10 @@ export const loadSummary = async (
     if (tile.buildingId) buildings += 1;
   }
 
-  const stage = city.landmarkStage;
+  const hallLevel = city.hallLevel;
   let landmarkPct = 100;
-  if (stage < KEEP_STAGES) {
-    const cost = KEEP_STAGE_COSTS[stage] ?? { planks: 1, bricks: 1 };
+  if (hallLevel < KEEP_STAGES) {
+    const cost = KEEP_STAGE_COSTS[hallLevel] ?? { planks: 1, bricks: 1 };
     const need = cost.planks + cost.bricks;
     const have = city.stagePlanks + city.stageBricks;
     landmarkPct = Math.max(0, Math.min(100, Math.floor((have / need) * 100)));
@@ -1326,7 +1396,7 @@ export const loadSummary = async (
     theme: city.theme,
     buildings,
     players: owners.size,
-    landmarkStage: stage,
+    hallLevel,
     landmarkPct,
     festival: city.festival,
     readyForMe,
@@ -1371,13 +1441,18 @@ export const doBoost = async (
   y: number
 ): Promise<{ tile: TileState; me: PlayerState }> => {
   const key = tileKey(x, y);
-  const [tile, player] = await Promise.all([getTile(key), ensurePlayer(userId)]);
+  const [tile, player, city] = await Promise.all([
+    getTile(key),
+    ensurePlayer(userId),
+    getCity(),
+  ]);
   if (!tile) throw new OpError(404, 'There is nothing to boost here.');
 
   const now = Date.now();
   const today = utcDay(now);
   const used = boostsUsedToday(player, today);
-  const err = validateBoost(userId, tile, now, used);
+  const limit = hallPerks(city.hallLevel).boostLimit;
+  const err = validateBoost(userId, tile, now, used, limit);
   if (err) throw new OpError(400, err);
 
   const boosted: TileState = {
@@ -1467,7 +1542,7 @@ export const doContribute = async (
   const [player, city] = await Promise.all([ensurePlayer(userId), getCity()]);
 
   if (landmarkComplete(city)) {
-    throw new OpError(400, 'The Grand Keep is already complete.');
+    throw new OpError(400, 'The Village Hall is already at its highest level.');
   }
   const held = player.wallet[good];
   if (held <= 0) {
@@ -1477,11 +1552,10 @@ export const doContribute = async (
   const clamped = Math.min(qty, held);
   const result = applyKeepContribution(city, good, clamped, KEEP_STAGE_COSTS);
   if (result.applied <= 0) {
-    // The good's requirement for the current stage is already met; nothing can
-    // be poured in until the other good catches up.
+    // This good's requirement for the current Hall level is already met.
     throw new OpError(
       400,
-      `The Grand Keep does not need more ${good} for this stage yet.`
+      `The Village Hall does not need more ${good} for this level yet.`
     );
   }
 
@@ -1500,8 +1574,17 @@ export const doContribute = async (
     result.applied
   );
 
-  // Per-stage zsets keep zIncrBy (display + pro-rata payout weighting). The
-  // cross-stage lb:contrib leaderboard uses an absolute zAdd so racing duplicate
+  // Filling the resources may complete a Hall level-up — but only if the
+  // population threshold is also met (population is the cached house count).
+  const filledCity: CityState = {
+    ...city,
+    stagePlanks: result.stagePlanks,
+    stageBricks: result.stageBricks,
+  };
+  const levelUp = tryHallLevelUp(filledCity, city.population, KEEP_STAGE_COSTS);
+
+  // Per-level zsets keep zIncrBy (display + pro-rata payout weighting). The
+  // cross-level lb:contrib leaderboard uses an absolute zAdd so racing duplicate
   // contributions converge instead of summing.
   for (const split of result.splits) {
     await incrStageContrib(split.stage, userId, split.amount);
@@ -1510,14 +1593,14 @@ export const doContribute = async (
 
   const nextCity: CityState = {
     ...city,
-    landmarkStage: result.landmarkStage,
-    stagePlanks: result.stagePlanks,
-    stageBricks: result.stageBricks,
+    hallLevel: levelUp.hallLevel,
+    stagePlanks: levelUp.stagePlanks,
+    stageBricks: levelUp.stageBricks,
     totalContributed: city.totalContributed + result.applied,
   };
 
   await putCity({
-    landmarkStage: nextCity.landmarkStage,
+    hallLevel: nextCity.hallLevel,
     stagePlanks: nextCity.stagePlanks,
     stageBricks: nextCity.stageBricks,
     totalContributed: nextCity.totalContributed,
@@ -1525,9 +1608,14 @@ export const doContribute = async (
   await putPlayer(me);
   await maybeFlair(before, me);
   await broadcastCity(nextCity);
-  // One {t:'stage'} broadcast per completed stage, in completion order.
-  for (const stage of result.completed) {
-    await broadcastStage(stage);
+  // One {t:'stage'} broadcast per Hall level reached; a level-up also opens a
+  // new land ring and earns a celebratory comment.
+  for (const level of levelUp.leveled) {
+    await broadcastStage(level);
+  }
+  if (levelUp.leveled.length > 0) {
+    await broadcastRing(ringBounds(levelUp.hallLevel));
+    await celebrateHallLevel(levelUp.hallLevel);
   }
   return { city: nextCity, me };
 };
@@ -1596,8 +1684,14 @@ export const doSell = async (
   userId: string,
   good: Good,
   qty: number
-): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> =>
-  marketTx(userId, (player, stockpile) => {
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
+  // The per-order sell cap rises with the Village Hall (`sellCap` perk).
+  const city = await getCity();
+  const cap = hallPerks(city.hallLevel).sellCap;
+  if (qty > cap) {
+    throw new OpError(400, `You can sell at most ${cap} ${good} in one order.`);
+  }
+  return marketTx(userId, (player, stockpile) => {
     const held = player.wallet[good];
     if (held <= 0) throw new OpError(400, `You have no ${good} to sell.`);
 
@@ -1616,6 +1710,7 @@ export const doSell = async (
     const nextStock: Stockpile = { ...stockpile, [good]: before + amount };
     return { me, nextStock };
   });
+};
 
 export const doBuy = async (
   userId: string,
@@ -1667,10 +1762,10 @@ export const doTrade = async (
   userId: string,
   offerIndex: number
 ): Promise<{ me: PlayerState; tile?: { key: string; tile: TileState } }> => {
-  const player = await ensurePlayer(userId);
+  const [player, city] = await Promise.all([ensurePlayer(userId), getCity()]);
   const today = utcDay(Date.now());
 
-  const offers = offersForDay(today);
+  const offers = offersForDay(today, hallPerks(city.hallLevel).traderOffers);
   const offer = offers[offerIndex];
   if (!offer) throw new OpError(400, 'That trade offer does not exist.');
 
@@ -1744,18 +1839,18 @@ export const stageNameFromWords = (
 };
 
 /**
- * Validate a stage-naming attempt. Only the LAST completed stage (index
- * `landmarkStage - 1`) may be named, only once, and only by that stage's top
+ * Validate a stage-naming attempt. Only the LAST completed Hall level (index
+ * `hallLevel - 1`) may be named, only once, and only by that level's top
  * contributor. Returns null when allowed, else the rejection message. Pure —
  * unit-tested.
  */
 export const validateNaming = (
-  landmarkStage: number,
+  hallLevel: number,
   stageNames: string[],
   topContributor: string | null,
   userId: string
 ): string | null => {
-  const stage = landmarkStage - 1;
+  const stage = hallLevel - 1;
   if (stage < 0) return 'No stage has been completed yet.';
   if (stageNames[stage]) return 'That stage has already been named.';
   if (topContributor !== userId) {
@@ -1770,9 +1865,9 @@ export const doNameStage = async (
   second: number
 ): Promise<{ city: CityState }> => {
   const city = await getCity();
-  const stage = city.landmarkStage - 1;
+  const stage = city.hallLevel - 1;
   const top = stage >= 0 ? await stageTopContributor(stage) : null;
-  const err = validateNaming(city.landmarkStage, city.stageNames, top, userId);
+  const err = validateNaming(city.hallLevel, city.stageNames, top, userId);
   if (err) {
     throw new OpError(err.startsWith('Only') ? 403 : 400, err);
   }
@@ -1889,6 +1984,7 @@ export const runFestivalRotation = async (
   weather: CityState['weather'];
   dayNumber: number;
   villageName: string;
+  hallLevel: number;
   stockpile: Stockpile;
   prices: Prices;
   offers: TraderOffer[];
@@ -1910,9 +2006,10 @@ export const runFestivalRotation = async (
     weather,
     dayNumber,
     villageName: city.villageName,
+    hallLevel: city.hallLevel,
     stockpile,
     prices: pricesFor(stockpile),
-    offers: offersForDay(today),
+    offers: offersForDay(today, hallPerks(city.hallLevel).traderOffers),
   };
 };
 
@@ -1942,10 +2039,10 @@ export const doShare = async (
     }
   } else {
     if (value < 1 || value > KEEP_STAGES) {
-      throw new OpError(400, 'That is not a Grand Keep stage you can share.');
+      throw new OpError(400, 'That is not a Village Hall level you can share.');
     }
-    if (value > city.landmarkStage) {
-      throw new OpError(400, 'That stage has not been built yet.');
+    if (value > city.hallLevel) {
+      throw new OpError(400, 'That Hall level has not been reached yet.');
     }
   }
 

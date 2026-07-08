@@ -6,9 +6,9 @@ import {
   CHECKIN_XP,
   affordableRuns,
   applyCollect,
+  applyHallBuff,
   applyKeepContribution,
   applyLevelUp,
-  applyStageBuff,
   boostsUsedToday,
   canAffordOffer,
   canCheckIn,
@@ -24,6 +24,7 @@ import {
   stageNameFromWords,
   stagePot,
   tallyBallot,
+  tryHallLevelUp,
   validateBoost,
   validateBuild,
   validateDemolish,
@@ -78,7 +79,7 @@ const city = (overrides: Partial<CityState> = {}): CityState => ({
   theme: 'meadow',
   festival: 'raw',
   festivalDate: '2026-07-07',
-  landmarkStage: 0,
+  hallLevel: 0,
   stagePlanks: 0,
   stageBricks: 0,
   totalCollected: 0,
@@ -98,12 +99,16 @@ const stock = (overrides: Partial<Record<string, number>> = {}) => ({
 describe('validateBuild', () => {
   it('rejects a tile the player does not own', () => {
     const t = tile({ owner: 'someoneElse' });
-    expect(validateBuild(player(), t, CATALOG.cottage)).not.toBeNull();
+    expect(validateBuild(player(), t, CATALOG.wheatfield)).not.toBeNull();
   });
 
   it('rejects a tile that already has a building', () => {
-    const t = tile({ buildingId: 'cottage' });
-    expect(validateBuild(player(), t, CATALOG.cottage)).not.toBeNull();
+    const t = tile({ buildingId: 'wheatfield' });
+    expect(validateBuild(player(), t, CATALOG.wheatfield)).not.toBeNull();
+  });
+
+  it('rejects the house — it is auto-placed on the first claim, never built', () => {
+    expect(validateBuild(player({ coins: 1000, level: 1 }), tile(), CATALOG.house)).not.toBeNull();
   });
 
   it('rejects a building locked behind a higher level', () => {
@@ -111,17 +116,17 @@ describe('validateBuild', () => {
   });
 
   it('rejects when the player cannot afford the tier-1 cost', () => {
-    expect(validateBuild(player({ coins: 10 }), tile(), CATALOG.cottage)).not.toBeNull();
+    expect(validateBuild(player({ coins: 10 }), tile(), CATALOG.wheatfield)).not.toBeNull();
   });
 
   it('allows a valid build on an owned empty plot with funds and level', () => {
-    expect(validateBuild(player({ coins: 100, level: 1 }), tile(), CATALOG.cottage)).toBeNull();
+    expect(validateBuild(player({ coins: 100, level: 1 }), tile(), CATALOG.wheatfield)).toBeNull();
   });
 });
 
 describe('validatePaint', () => {
   it('rejects a tile the player does not own', () => {
-    const t = tile({ owner: 'someoneElse', buildingId: 'cottage', readyAt: 0 });
+    const t = tile({ owner: 'someoneElse', buildingId: 'house', readyAt: 0 });
     expect(validatePaint(player(), t, 1000)).not.toBeNull();
   });
 
@@ -135,17 +140,17 @@ describe('validatePaint', () => {
   });
 
   it('rejects while construction is still in progress', () => {
-    const t = tile({ buildingId: 'cottage', readyAt: 5000 });
+    const t = tile({ buildingId: 'house', readyAt: 5000 });
     expect(validatePaint(player(), t, 1000)).not.toBeNull();
   });
 
   it('rejects when the player cannot afford PAINT_COST', () => {
-    const t = tile({ buildingId: 'cottage', readyAt: 0 });
+    const t = tile({ buildingId: 'house', readyAt: 0 });
     expect(validatePaint(player({ coins: PAINT_COST - 1 }), t, 1000)).not.toBeNull();
   });
 
   it('allows painting a completed stacked building the player owns and can afford', () => {
-    const t = tile({ buildingId: 'cottage', readyAt: 0 });
+    const t = tile({ buildingId: 'house', readyAt: 0 });
     expect(validatePaint(player({ coins: PAINT_COST }), t, 1000)).toBeNull();
   });
 
@@ -160,17 +165,17 @@ describe('validateUpgrade', () => {
   });
 
   it('rejects while construction is still in progress', () => {
-    const t = tile({ buildingId: 'cottage', readyAt: 5000 });
+    const t = tile({ buildingId: 'house', readyAt: 5000 });
     expect(validateUpgrade(player(), t, 1000)).not.toBeNull();
   });
 
   it('rejects a tier-3 building (tier cap)', () => {
-    const t = tile({ buildingId: 'cottage', tier: 3, readyAt: 0 });
+    const t = tile({ buildingId: 'house', tier: 3, readyAt: 0 });
     expect(validateUpgrade(player(), t, 1000)).not.toBeNull();
   });
 
   it('allows upgrading a completed tier-1 building the player owns', () => {
-    const t = tile({ buildingId: 'cottage', tier: 1, readyAt: 0 });
+    const t = tile({ buildingId: 'house', tier: 1, readyAt: 0 });
     expect(validateUpgrade(player(), t, 1000)).toBeNull();
   });
 });
@@ -199,16 +204,16 @@ describe('applyLevelUp', () => {
 
 describe('demolishRefund', () => {
   it('refunds 50% of the invested cost, floored', () => {
-    // cottage tier costs 40 / 100 / 240 → invested 40 / 140 / 380.
-    expect(demolishRefund(CATALOG.cottage, 1)).toBe(20);
-    expect(demolishRefund(CATALOG.cottage, 2)).toBe(70);
-    expect(demolishRefund(CATALOG.cottage, 3)).toBe(190);
+    // wheatfield base cost 60: tier costs 60 / 150 / 360 → invested 60 / 210 / 570.
+    expect(demolishRefund(CATALOG.wheatfield, 1)).toBe(30);
+    expect(demolishRefund(CATALOG.wheatfield, 2)).toBe(105);
+    expect(demolishRefund(CATALOG.wheatfield, 3)).toBe(285);
   });
 });
 
 describe('validateDemolish', () => {
   it('rejects a tile the player does not own', () => {
-    const t = tile({ owner: 'someoneElse', buildingId: 'cottage' });
+    const t = tile({ owner: 'someoneElse', buildingId: 'wheatfield' });
     expect(validateDemolish(player(), t)).not.toBeNull();
   });
 
@@ -216,68 +221,82 @@ describe('validateDemolish', () => {
     expect(validateDemolish(player(), tile())).not.toBeNull();
   });
 
+  it('refuses to demolish the house — your home cannot be torn down', () => {
+    const t = tile({ buildingId: 'house', readyAt: 0 });
+    expect(validateDemolish(player(), t)).toBe('Your house is your home.');
+  });
+
   it('allows demolishing an owned building, even under construction', () => {
-    const done = tile({ buildingId: 'cottage', readyAt: 0 });
+    const done = tile({ buildingId: 'wheatfield', readyAt: 0 });
     expect(validateDemolish(player(), done)).toBeNull();
     // Under construction is still demolishable (build already deducted the cost).
-    const building = tile({ buildingId: 'cottage', readyAt: 9_999_999_999 });
+    const building = tile({ buildingId: 'wheatfield', readyAt: 9_999_999_999 });
     expect(validateDemolish(player(), building)).toBeNull();
   });
 });
 
 describe('applyCollect — coins buildings', () => {
   it('credits a normal gain and advances lastCollect', () => {
-    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
+    // house rate 1/min → 1 coin after 60s.
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0 });
     const now = 60_000;
-    const res = applyCollect(t, player({ coins: 0 }), city(), now, 0, emptyStockpile());
-    expect(res.gained).toEqual({ coins: 2, xp: 1, goods: {} });
-    expect(res.player.coins).toBe(2);
+    const res = applyCollect(t, player({ coins: 0 }), city(), now, 0, emptyStockpile(), 1);
+    expect(res.gained).toEqual({ coins: 1, xp: 1, goods: {} });
+    expect(res.player.coins).toBe(1);
     expect(res.player.xp).toBe(1);
     expect(res.tile.lastCollect).toBe(now);
   });
 
   it('advances the absolute lifetimeEarned counter by the coins gained', () => {
-    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
-    const res = applyCollect(t, player({ coins: 0, lifetimeEarned: 40 }), city(), 60_000, 0, emptyStockpile());
-    expect(res.gained.coins).toBe(2);
-    expect(res.player.lifetimeEarned).toBe(42);
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(t, player({ coins: 0, lifetimeEarned: 40 }), city(), 60_000, 0, emptyStockpile(), 1);
+    expect(res.gained.coins).toBe(1);
+    expect(res.player.lifetimeEarned).toBe(41);
   });
 
   it('is replay-safe: re-applying the same collect yields the same lb:earned score', () => {
-    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0 });
     const start = player({ coins: 0, lifetimeEarned: 40 });
-    const a = applyCollect(t, start, city(), 60_000, 0, emptyStockpile());
-    const b = applyCollect(t, start, city(), 60_000, 0, emptyStockpile());
+    const a = applyCollect(t, start, city(), 60_000, 0, emptyStockpile(), 1);
+    const b = applyCollect(t, start, city(), 60_000, 0, emptyStockpile(), 1);
     expect(a.player.lifetimeEarned).toBe(b.player.lifetimeEarned);
-    expect(a.player.lifetimeEarned).toBe(42);
+    expect(a.player.lifetimeEarned).toBe(41);
   });
 
   it('preserves fractional progress on a zero gain (lastCollect NOT advanced)', () => {
-    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
-    const res = applyCollect(t, player({ coins: 0 }), city(), 1000, 0, emptyStockpile());
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(t, player({ coins: 0 }), city(), 1000, 0, emptyStockpile(), 1);
     expect(res.gained).toEqual({ coins: 0, xp: 0, goods: {} });
     expect(res.tile.lastCollect).toBe(0);
   });
 
   it('clears an expired boost after a producing collect', () => {
-    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0, boostUntil: 30_000, boostBy: 'bob' });
-    const res = applyCollect(t, player({ coins: 0 }), city(), 120_000, 0, emptyStockpile());
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0, boostUntil: 30_000, boostBy: 'bob' });
+    const res = applyCollect(t, player({ coins: 0 }), city(), 120_000, 0, emptyStockpile(), 1);
     expect(res.gained.coins).toBeGreaterThan(0);
     expect(res.tile.boostUntil).toBe(0);
     expect(res.tile.boostBy).toBeUndefined();
   });
 
   it('keeps an unexpired boost after collecting', () => {
-    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0, boostUntil: 300_000, boostBy: 'bob' });
-    const res = applyCollect(t, player({ coins: 0 }), city(), 120_000, 0, emptyStockpile());
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0, boostUntil: 300_000, boostBy: 'bob' });
+    const res = applyCollect(t, player({ coins: 0 }), city(), 120_000, 0, emptyStockpile(), 1);
     expect(res.tile.boostUntil).toBe(300_000);
     expect(res.tile.boostBy).toBe('bob');
   });
 
   it('clamps to the tier cap on a long absence', () => {
-    const t = tile({ buildingId: 'cottage', lastCollect: 0, readyAt: 0 });
-    const res = applyCollect(t, player({ coins: 0 }), city(), 1_000_000_000, 0, emptyStockpile());
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(t, player({ coins: 0 }), city(), 1_000_000_000, 0, emptyStockpile(), 1);
     expect(res.gained.coins).toBe(60);
+  });
+
+  it('excludes the house itself from its own +2%/tier aura (isHouse)', () => {
+    // A tier-3 house would grant +6% to OTHER buildings, but never to itself.
+    const t = tile({ buildingId: 'house', tier: 1, lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(t, player({ coins: 0 }), city(), 600_000, 0, emptyStockpile(), 3);
+    // 10 min × 1/min = 10 coins, unscaled (house excluded from its own aura).
+    expect(res.gained.coins).toBe(10);
   });
 });
 
@@ -290,7 +309,8 @@ describe('applyCollect — raw producers (goods, not lb:earned)', () => {
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      emptyStockpile()
+      emptyStockpile(),
+      0
     );
     // wheatfield tier-1 cap is 90.
     expect(res.gained.goods.wheat).toBe(90);
@@ -309,7 +329,8 @@ describe('applyCollect — raw producers (goods, not lb:earned)', () => {
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      emptyStockpile()
+      emptyStockpile(),
+      0
     );
     expect(res.player.xp).toBe(340);
     expect(res.player.level).toBe(3);
@@ -326,7 +347,8 @@ describe('applyCollect — processors', () => {
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      stock({ wheat: 100 })
+      stock({ wheat: 100 }),
+      0
     );
     // cap 45 flour; priceFor(100, wheat) === 3, per 2 → cost 3×90 = 270.
     expect(res.gained.goods.flour).toBe(45);
@@ -344,7 +366,8 @@ describe('applyCollect — processors', () => {
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      stock({ wheat: 100 })
+      stock({ wheat: 100 }),
+      0
     );
     // cost/run = price 3 × per 2 = 6; floor(10/6) = 1 run only.
     expect(res.gained.goods.flour).toBe(1);
@@ -360,7 +383,8 @@ describe('applyCollect — processors', () => {
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      stock({ wheat: 100 })
+      stock({ wheat: 100 }),
+      0
     );
     // floor(5/6) = 0 runs.
     expect(res.gained.goods.flour).toBeUndefined();
@@ -376,7 +400,8 @@ describe('applyCollect — processors', () => {
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      stock({ flour: 100 })
+      stock({ flour: 100 }),
+      0
     );
     // cap 480 → 40 runs × 12 = 480 coins; priceFor(100, flour) === 5, cost 5×40 = 200.
     expect(res.consumed).toEqual({ flour: 40 });
@@ -386,24 +411,40 @@ describe('applyCollect — processors', () => {
   });
 });
 
-describe('applyStageBuff', () => {
-  it('is a no-op at stage 0', () => {
+describe('applyHallBuff', () => {
+  it('is a no-op at Hall level 0 with no house aura', () => {
     const g = { coins: 100, xp: 5, goods: { wheat: 10 } };
-    expect(applyStageBuff(g, 0)).toEqual(g);
+    expect(applyHallBuff(g, 0, 0, false)).toEqual(g);
   });
 
-  it('adds +3% per stage, floored, and never buffs xp', () => {
+  it('adds +3% per Hall level, floored, and never buffs xp', () => {
     const g = { coins: 100, xp: 5, goods: { wheat: 10 } };
-    const out = applyStageBuff(g, 3); // ×1.09
+    const out = applyHallBuff(g, 3, 0, false); // ×1.09
     expect(out.coins).toBe(109);
     expect(out.goods.wheat).toBe(10); // 10.9 → 10
     expect(out.xp).toBe(5);
   });
 
-  it('caps the multiplier at +15% (5 stages)', () => {
+  it('caps the Hall multiplier at +15% (5 levels)', () => {
     const g = { coins: 100, xp: 0, goods: {} };
-    expect(applyStageBuff(g, 5).coins).toBe(115);
-    expect(applyStageBuff(g, 10).coins).toBe(115);
+    expect(applyHallBuff(g, 5, 0, false).coins).toBe(115);
+    expect(applyHallBuff(g, 10, 0, false).coins).toBe(115);
+  });
+
+  it("adds the owner's house aura (+2%/tier) to non-house buildings", () => {
+    const g = { coins: 100, xp: 0, goods: {} };
+    // Hall 0, house tier 3 → +6%.
+    expect(applyHallBuff(g, 0, 3, false).coins).toBe(106);
+    // The house itself is excluded from its own aura.
+    expect(applyHallBuff(g, 0, 3, true).coins).toBe(100);
+  });
+
+  it('sums the Hall and house percentages exactly (single integer numerator)', () => {
+    const g = { coins: 100, xp: 0, goods: { wheat: 10 } };
+    // +9% (Hall 3) + 4% (house tier 2) = +13% → 113; wheat floor(11.3) = 11.
+    const out = applyHallBuff(g, 3, 2, false);
+    expect(out.coins).toBe(113);
+    expect(out.goods.wheat).toBe(11);
   });
 });
 
@@ -423,67 +464,94 @@ describe('affordableRuns', () => {
 describe('applyKeepContribution', () => {
   const costs = KEEP_STAGE_COSTS; // [(30,15),(60,40),...]
 
-  it('fills only the contributed good and does not complete a mixed stage', () => {
+  it('fills only the contributed good, recording a split for the current level', () => {
     const res = applyKeepContribution(city(), 'planks', 20, costs);
     expect(res.applied).toBe(20);
     expect(res.refunded).toBe(0);
     expect(res.stagePlanks).toBe(20);
     expect(res.stageBricks).toBe(0);
-    expect(res.landmarkStage).toBe(0);
-    expect(res.completed).toEqual([]);
     expect(res.splits).toEqual([{ stage: 0, amount: 20 }]);
   });
 
-  it('refunds excess of a completed good when the stage cannot advance', () => {
-    // 50 planks: 30 fills the requirement, the other 20 cannot be used (bricks
-    // requirement unmet) and cannot carry, so they are refunded.
+  it('caps at the current level need and refunds the excess (no carry to next level)', () => {
+    // 50 planks: 30 fills the level-0 planks requirement; the other 20 cannot
+    // pre-pay a future level and are refunded.
     const res = applyKeepContribution(city(), 'planks', 50, costs);
     expect(res.applied).toBe(30);
     expect(res.refunded).toBe(20);
     expect(res.stagePlanks).toBe(30);
-    expect(res.landmarkStage).toBe(0);
-    expect(res.completed).toEqual([]);
   });
 
-  it('completes a stage once BOTH goods are met', () => {
+  it('fills a good to its requirement without itself advancing the level', () => {
+    // Resources completing does NOT level up on its own — tryHallLevelUp does,
+    // and only when the population threshold is also met.
     const res = applyKeepContribution(
-      city({ landmarkStage: 0, stagePlanks: 30, stageBricks: 0 }),
+      city({ hallLevel: 0, stagePlanks: 30, stageBricks: 0 }),
       'bricks',
       15,
       costs
     );
     expect(res.applied).toBe(15);
-    expect(res.landmarkStage).toBe(1);
-    expect(res.stagePlanks).toBe(0);
-    expect(res.stageBricks).toBe(0);
-    expect(res.completed).toEqual([1]);
+    expect(res.stagePlanks).toBe(30);
+    expect(res.stageBricks).toBe(15);
+    expect(res.splits).toEqual([{ stage: 0, amount: 15 }]);
   });
 
-  it('carries leftover into the next stage across a completion, then refunds', () => {
-    // Stage 0 planks already full (30), bricks 14/15. A big bricks contribution
-    // finishes stage 0 (carry into stage 1's bricks), fills stage 1 bricks (40),
-    // but stage 1 planks are 0 so the rest is refunded.
+  it('refunds beyond an almost-full requirement', () => {
+    // Bricks at 14/15: only 1 more is needed, the other 99 are refunded.
     const res = applyKeepContribution(
-      city({ landmarkStage: 0, stagePlanks: 30, stageBricks: 14 }),
+      city({ hallLevel: 0, stagePlanks: 30, stageBricks: 14 }),
       'bricks',
       100,
       costs
     );
-    expect(res.completed).toEqual([1]);
-    expect(res.landmarkStage).toBe(1);
-    expect(res.stageBricks).toBe(40);
-    expect(res.stagePlanks).toBe(0);
-    expect(res.applied).toBe(1 + 40);
-    expect(res.refunded).toBe(100 - 41);
-    expect(res.splits).toEqual([
-      { stage: 0, amount: 1 },
-      { stage: 1, amount: 40 },
-    ]);
+    expect(res.applied).toBe(1);
+    expect(res.refunded).toBe(99);
+    expect(res.stageBricks).toBe(15);
+    expect(res.stagePlanks).toBe(30);
+    expect(res.splits).toEqual([{ stage: 0, amount: 1 }]);
   });
 
-  it('reports the keep complete once every stage is built', () => {
-    expect(landmarkComplete(city({ landmarkStage: KEEP_STAGE_COSTS.length }))).toBe(true);
-    expect(landmarkComplete(city({ landmarkStage: 4 }))).toBe(false);
+  it('reports the Village Hall complete once every level is built', () => {
+    expect(landmarkComplete(city({ hallLevel: KEEP_STAGE_COSTS.length }))).toBe(true);
+    expect(landmarkComplete(city({ hallLevel: 4 }))).toBe(false);
+  });
+});
+
+describe('tryHallLevelUp (resources AND population gate)', () => {
+  const costs = KEEP_STAGE_COSTS; // level 0 needs planks 30, bricks 15; pop 2.
+
+  it('does not level up when resources are met but population is short', () => {
+    const c = city({ hallLevel: 0, stagePlanks: 30, stageBricks: 15 });
+    const res = tryHallLevelUp(c, 1, costs); // HALL_POPULATION[0] = 2
+    expect(res.hallLevel).toBe(0);
+    expect(res.leveled).toEqual([]);
+    expect(res.stagePlanks).toBe(30);
+    expect(res.stageBricks).toBe(15);
+  });
+
+  it('does not level up when population is met but resources are short', () => {
+    const c = city({ hallLevel: 0, stagePlanks: 10, stageBricks: 5 });
+    const res = tryHallLevelUp(c, 5, costs);
+    expect(res.hallLevel).toBe(0);
+    expect(res.leveled).toEqual([]);
+  });
+
+  it('levels up and resets resources when BOTH gates are met', () => {
+    const c = city({ hallLevel: 0, stagePlanks: 30, stageBricks: 15 });
+    const res = tryHallLevelUp(c, 2, costs);
+    expect(res.hallLevel).toBe(1);
+    expect(res.leveled).toEqual([1]);
+    expect(res.stagePlanks).toBe(0);
+    expect(res.stageBricks).toBe(0);
+  });
+
+  it('gains at most one level per call (resources reset each level)', () => {
+    // Even with a huge population, only the current level is funded.
+    const c = city({ hallLevel: 0, stagePlanks: 30, stageBricks: 15 });
+    const res = tryHallLevelUp(c, 99, costs);
+    expect(res.hallLevel).toBe(1);
+    expect(res.leveled).toEqual([1]);
   });
 });
 
@@ -511,28 +579,24 @@ describe('stage payout (pro-rata)', () => {
 
 describe('expansion claim gating', () => {
   it('allows a tile inside the current ring', () => {
-    // population 0 → ring [5,11].
+    // Hall level 0 → ring [5,11].
     expect(expansionGate(5, 5, 0)).toBeNull();
     expect(expansionGate(11, 11, 0)).toBeNull();
   });
 
-  it('rejects a locked outer tile, naming the villagers needed', () => {
-    // (4,4) is outside [5,11]; next ring unlocks at population 3.
+  it('rejects a locked outer tile with the Village Hall nudge', () => {
+    // (4,4) is outside [5,11]; the next ring opens when the Hall levels up.
     expect(expansionGate(4, 4, 0)).toBe(
-      'The village must grow first (3 more villagers unlock new land).'
-    );
-    // population 2 needs 1 more to reach the pop-3 ring.
-    expect(expansionGate(4, 10, 2)).toBe(
-      'The village must grow first (1 more villagers unlock new land).'
+      'Upgrade the Village Hall to unlock this land.'
     );
   });
 
-  it('opens the next ring after crossing a threshold', () => {
-    // population 3 → ring [4,13]; (4,4) is now unlocked, (3,3) still locked.
-    expect(expansionGate(4, 4, 3)).toBeNull();
-    expect(expansionGate(3, 3, 3)).not.toBeNull();
-    // population 6 → ring [3,14]; (3,3) unlocks.
-    expect(expansionGate(3, 3, 6)).toBeNull();
+  it('opens the next ring as the Hall levels up', () => {
+    // Hall level 1 → ring [4,13]; (4,4) is now unlocked, (3,3) still locked.
+    expect(expansionGate(4, 4, 1)).toBeNull();
+    expect(expansionGate(3, 3, 1)).not.toBeNull();
+    // Hall level 2 → ring [3,14]; (3,3) unlocks.
+    expect(expansionGate(3, 3, 2)).toBeNull();
   });
 });
 
@@ -611,34 +675,40 @@ describe('check-in xp', () => {
 
 describe('boost validation', () => {
   const producer = (over: Partial<TileState> = {}): TileState =>
-    tile({ owner: 'owner', buildingId: 'cottage', readyAt: 1000, ...over });
+    tile({ owner: 'owner', buildingId: 'wheatfield', readyAt: 1000, ...over });
 
   it("rejects boosting one's own plot", () => {
-    expect(validateBoost('me', producer({ owner: 'me' }), 5000, 0)).not.toBeNull();
+    expect(validateBoost('me', producer({ owner: 'me' }), 5000, 0, 5)).not.toBeNull();
   });
 
   it('rejects a plot with no building', () => {
-    expect(validateBoost('me', tile({ owner: 'owner', readyAt: 0 }), 5000, 0)).not.toBeNull();
+    expect(validateBoost('me', tile({ owner: 'owner', readyAt: 0 }), 5000, 0, 5)).not.toBeNull();
   });
 
   it('rejects a decoration (non-producer)', () => {
-    expect(validateBoost('me', producer({ buildingId: 'well' }), 5000, 0)).not.toBeNull();
+    expect(validateBoost('me', producer({ buildingId: 'well' }), 5000, 0, 5)).not.toBeNull();
   });
 
   it('rejects a building still under construction', () => {
-    expect(validateBoost('me', producer({ readyAt: 10_000 }), 5000, 0)).not.toBeNull();
+    expect(validateBoost('me', producer({ readyAt: 10_000 }), 5000, 0, 5)).not.toBeNull();
   });
 
   it('rejects a tile that already has an active boost', () => {
-    expect(validateBoost('me', producer({ boostUntil: 9000 }), 5000, 0)).not.toBeNull();
+    expect(validateBoost('me', producer({ boostUntil: 9000 }), 5000, 0, 5)).not.toBeNull();
   });
 
   it('rejects once the daily boost limit is reached', () => {
-    expect(validateBoost('me', producer(), 5000, 5)).not.toBeNull();
+    expect(validateBoost('me', producer(), 5000, 5, 5)).not.toBeNull();
   });
 
   it('allows boosting a completed neighbour producer under the limit', () => {
-    expect(validateBoost('me', producer(), 5000, 4)).toBeNull();
+    expect(validateBoost('me', producer(), 5000, 4, 5)).toBeNull();
+  });
+
+  it('honours a raised limit from the Hall boostLimit perk', () => {
+    // Used 5 today: blocked at the base limit, allowed at the level-4 limit of 7.
+    expect(validateBoost('me', producer(), 5000, 5, 5)).not.toBeNull();
+    expect(validateBoost('me', producer(), 5000, 5, 7)).toBeNull();
   });
 
   it('counts boosts only for the current day (date rollover resets)', () => {
@@ -710,7 +780,7 @@ describe('processedUnits quest counter', () => {
 
   it('is 0 for non-processor buildings and empty tiles', () => {
     expect(processedUnits('wheatfield', gained({ wheat: 9 }), {})).toBe(0);
-    expect(processedUnits('cottage', gained({}, 12), {})).toBe(0);
+    expect(processedUnits('house', gained({}, 12), {})).toBe(0);
     expect(processedUnits(undefined, gained({}), {})).toBe(0);
   });
 });

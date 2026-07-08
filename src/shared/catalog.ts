@@ -18,18 +18,25 @@ export type BuildingSpec = {
   output?: Good | 'coins';
   /** Bakery only: coins minted per flour consumed (output === 'coins'). */
   coinsPerFlour?: number;
+  /** A building that is placed automatically (never sold in the build grid). The
+   * `house` is placed free when a player settles their first plot; it is the
+   * player's homestead anchor and cannot be demolished. Its `cost` is retained
+   * only for the tier-cost maths on upgrades (the initial placement is free). */
+  special?: 'house';
 };
 
 export const CATALOG: Record<BuildingId, BuildingSpec> = {
-  cottage: {
-    id: 'cottage',
-    name: 'Cottage',
+  house: {
+    id: 'house',
+    name: 'House',
     role: 'coins',
     unlockLevel: 1,
-    cost: 40,
-    ratePerMin: 2,
+    // Placed free on the first claim; `cost` drives only the upgrade tier maths.
+    cost: 60,
+    ratePerMin: 1,
     cap: 60,
-    buildSeconds: 20,
+    buildSeconds: 10,
+    special: 'house',
   },
   wheatfield: {
     id: 'wheatfield',
@@ -215,7 +222,7 @@ export const PAINT_COST: number = 25;
  * so the paint option is hidden for them.
  */
 export const STACKED_BUILDINGS: ReadonlySet<BuildingId> = new Set<BuildingId>([
-  'cottage',
+  'house',
   'windmill',
   'sawmill',
   'kiln',
@@ -297,7 +304,10 @@ export const MARKET: Record<Good, { base: number; target: number }> = {
 // Grand Keep.
 // ---------------------------------------------------------------------------
 
-/** Cost (planks + bricks) to complete each of the 5 keep stages, in order. */
+/** Resource cost (planks + bricks) to raise the Village Hall to each of its 5
+ * levels, in order (`KEEP_STAGE_COSTS[hallLevel]` is what the next level-up
+ * needs). Every level-up ALSO requires a population threshold (see
+ * `HALL_POPULATION`). The name is retained for the contribution/pot code. */
 export const KEEP_STAGE_COSTS: Array<{ planks: number; bricks: number }> = [
   { planks: 30, bricks: 15 },
   { planks: 60, bricks: 40 },
@@ -305,6 +315,50 @@ export const KEEP_STAGE_COSTS: Array<{ planks: number; bricks: number }> = [
   { planks: 200, bricks: 140 },
   { planks: 320, bricks: 220 },
 ];
+
+// ---------------------------------------------------------------------------
+// Village Hall progression (Village Level 0→5). A level-up needs BOTH the
+// resource cost above AND a population threshold below; each level unlocks a
+// land ring (RING_BY_LEVEL) and cumulative perks (hallPerks).
+// ---------------------------------------------------------------------------
+
+/** The Village Hall's top level (number of resource stages). */
+export const HALL_MAX_LEVEL: number = KEEP_STAGE_COSTS.length;
+
+/** Population (house count) required to reach each Hall level 1..5:
+ * `HALL_POPULATION[hallLevel]` is the villagers needed to advance FROM the
+ * current level to the next. */
+export const HALL_POPULATION: number[] = [2, 4, 8, 14, 22];
+
+/** The perks a given Village Hall level grants, cumulative by level. */
+export type HallPerks = {
+  /** Village-wide production bonus in whole percent (+3% per level). */
+  productionPct: number;
+  /** Daily wandering-trader offer count (3, then 4 from level 1). */
+  traderOffers: number;
+  /** Maximum units a player may sell in one market order (500, 750 from L2). */
+  sellCap: number;
+  /** Extra plots granted to every player (0, then +1 from level 3). */
+  bonusPlot: number;
+  /** Neighbour boosts allowed per day (5, then 7 from level 4). */
+  boostLimit: number;
+};
+
+/** The cumulative perks unlocked at a Village Hall level (clamped 0..5). Pure. */
+export const hallPerks = (level: number): HallPerks => {
+  const l = Math.max(0, Math.min(level, HALL_MAX_LEVEL));
+  return {
+    productionPct: 3 * l,
+    traderOffers: l >= 1 ? 4 : 3,
+    sellCap: l >= 2 ? 750 : 500,
+    bonusPlot: l >= 3 ? 1 : 0,
+    boostLimit: l >= 4 ? 7 : 5,
+  };
+};
+
+/** A house's personal aura: +2 percentage points of production per house tier,
+ * applied to the owner's OTHER buildings (never the house itself). Pure. */
+export const houseBonus = (tier: number): number => 2 * Math.max(0, tier);
 
 /** Coin pot per stage is `stage × STAGE_POT`, split pro-rata by contributed
  * units (minimum 25 per contributor). */
@@ -380,14 +434,17 @@ export const STAGE_NAME_WORDS: {
 // Land expansion rings.
 // ---------------------------------------------------------------------------
 
-/** Ring inclusive bounds `[lo, hi]` on both axes, keyed by the minimum distinct
- * -owner population that unlocks them. Ordered ascending by `pop`. */
-export const RING_THRESHOLDS: Array<{ pop: number; lo: number; hi: number }> = [
-  { pop: 0, lo: 5, hi: 11 },
-  { pop: 3, lo: 4, hi: 13 },
-  { pop: 6, lo: 3, hi: 14 },
-  { pop: 12, lo: 1, hi: 16 },
-  { pop: 20, lo: 0, hi: 17 },
+/** Ring inclusive bounds `[lo, hi]` (same on both axes) unlocked at each Village
+ * Hall level: `RING_BY_LEVEL[hallLevel]` is the land opened at that level. Levels
+ * 4 and 5 share the maximum ring (the array has 5 entries, indices 0..4; Hall
+ * level 5 clamps to index 4). Replaces the old population-keyed thresholds — land
+ * now expands with the Hall level, not the raw villager count. */
+export const RING_BY_LEVEL: Array<{ lo: number; hi: number }> = [
+  { lo: 5, hi: 11 },
+  { lo: 4, hi: 13 },
+  { lo: 3, hi: 14 },
+  { lo: 1, hi: 16 },
+  { lo: 0, hi: 17 },
 ];
 
 export const GRID_SIZE: number = 18;

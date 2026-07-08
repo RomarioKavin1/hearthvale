@@ -24,7 +24,7 @@ import {
   canClaim,
   CHAIN_PAIRS,
   goodsTotal,
-  plotsForLevel,
+  plotsAllowed,
   roleToFestival,
 } from '../../shared/logic/economy';
 import { isRiver } from '../../shared/logic/expansion';
@@ -152,8 +152,8 @@ const renderClaim = (
 ): void => {
   setSheetTitle('Open plot');
   const owned = ownedCount(data, me.id);
-  const max = plotsForLevel(me.level);
-  const reason = canClaim(data.grid, x, y, me, owned);
+  const max = plotsAllowed(me.level, data.city.hallLevel);
+  const reason = canClaim(data.grid, x, y, me, owned, data.city.hallLevel);
 
   const stack = el('div', { cls: 'hv-stack' });
   stack.appendChild(el('p', { cls: 'hv-note', text: 'A patch of open grass, waiting for a home.' }));
@@ -220,6 +220,8 @@ const renderBuildGrid = (
   const cards = el('div', { cls: 'hv-cards' });
 
   for (const spec of Object.values(CATALOG)) {
+    // The house is placed free on the first claim — never sold in the grid.
+    if (spec.special === 'house') continue;
     const locked = me.level < spec.unlockLevel;
     const broke = me.coins < spec.cost;
 
@@ -462,8 +464,8 @@ const renderProducerStats = (
   if (adj > 0) {
     stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Placement bonus +${Math.round(adj * 100)}%` }));
   }
-  if (data.city.landmarkStage > 0) {
-    stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Grand Keep +${3 * data.city.landmarkStage}%` }));
+  if (data.city.hallLevel > 0) {
+    stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Village Hall +${3 * data.city.hallLevel}%` }));
   }
 
   // Processor starvation: no input in the village stockpile.
@@ -734,10 +736,12 @@ export const openMenuSheet = (): void => {
       // Expansion status line.
       if (data) {
         const { population, nextThreshold } = data.ring;
+        // Land now opens when the Village Hall levels up (which needs both
+        // resources and this villager threshold), not by raw population alone.
         const text =
           nextThreshold === null
             ? `Village: ${fmtInt(population)} villagers · fully settled`
-            : `Village: ${fmtInt(population)} villagers · next land at ${fmtInt(nextThreshold)}`;
+            : `Village: ${fmtInt(population)} villagers · ${fmtInt(nextThreshold)} needed for the next Hall level`;
         stack.appendChild(el('p', { cls: 'hv-note', text }));
       }
 

@@ -323,19 +323,24 @@ const buildKeepPill = (): HTMLButtonElement => {
 };
 
 const renderKeepPill = (data: StateResponse): void => {
-  const stage = data.city.landmarkStage;
+  const level = data.city.hallLevel;
   const stages = KEEP_STAGE_COSTS.length;
-  if (stage >= stages) {
-    keepLabel.textContent = 'Keep complete';
+  if (level >= stages) {
+    keepLabel.textContent = 'Hall complete';
     keepFill.style.width = '100%';
     return;
   }
-  const cost = KEEP_STAGE_COSTS[stage] ?? { planks: 0, bricks: 0 };
+  const cost = KEEP_STAGE_COSTS[level] ?? { planks: 0, bricks: 0 };
   const have = data.city.stagePlanks + data.city.stageBricks;
   const need = cost.planks + cost.bricks;
   const frac = need > 0 ? have / need : 0;
-  keepLabel.textContent = `Keep · Stage ${stage + 1}`;
-  keepFill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+  const pct = Math.round(Math.max(0, Math.min(1, frac)) * 100);
+  // The population half of the level-up gate: villagers here / needed next.
+  const popNeed = data.ring.nextThreshold;
+  const villagers =
+    popNeed !== null ? ` · villagers ${data.ring.population}/${popNeed}` : '';
+  keepLabel.textContent = `Hall L${level} · resources ${pct}%${villagers}`;
+  keepFill.style.width = `${pct}%`;
 };
 
 const doCollectAll = (): void => {
@@ -519,8 +524,8 @@ const renderHud = (): void => {
   else renderLoggedOut();
   renderFabs(data, me);
 
-  // A landmark stage the whole village just raised together — offer a share.
-  const stage = data.city.landmarkStage;
+  // A Village Hall level the whole village just raised together — offer a share.
+  const stage = data.city.hallLevel;
   if (prevStage !== null && stage > prevStage && stage >= 1) {
     promptShare('stage', stage);
   }

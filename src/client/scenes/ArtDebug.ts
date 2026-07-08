@@ -17,7 +17,7 @@ import {
 } from '../art/render';
 
 const IDS: BuildingId[] = [
-  'cottage',
+  'house',
   'wheatfield',
   'grove',
   'quarry',

@@ -32,6 +32,7 @@ scheduler.post('/daily-cycle', async (c) => {
     weather: Weather;
     dayNumber: number;
     villageName: string;
+    hallLevel: number;
     stockpile: Stockpile;
     prices: Prices;
     offers: TraderOffer[];
@@ -46,7 +47,7 @@ scheduler.post('/daily-cycle', async (c) => {
     );
   }
 
-  const { festival, weather, dayNumber, villageName, prices } = rotation;
+  const { festival, weather, dayNumber, villageName, hallLevel, prices } = rotation;
   let post: Awaited<ReturnType<typeof createDailyPost>>;
   try {
     post = await createDailyPost(festival, dayNumber, weather, villageName);
@@ -65,7 +66,7 @@ scheduler.post('/daily-cycle', async (c) => {
   try {
     await reddit.submitComment({
       id: post.id,
-      text: marketReportText(prices, weather),
+      text: marketReportText(prices, weather, hallLevel),
       runAs: 'APP',
     });
   } catch (error) {
