@@ -108,7 +108,13 @@ const positionTip = (target: HTMLElement, text: string): void => {
   tip.style.top = `${top}px`;
 };
 
-const hideTip = (): void => {
+/**
+ * Hide the shared tooltip bubble and cancel any pending show. Exported so the
+ * sheet manager can dismiss a bubble whose target is about to be re-rendered or
+ * torn down (pointerleave never fires on a destroyed node, which would leave a
+ * stale bubble floating).
+ */
+export const hideTip = (): void => {
   if (tipTimer !== undefined) {
     window.clearTimeout(tipTimer);
     tipTimer = undefined;
@@ -1081,7 +1087,7 @@ const CSS = `
 /* ── Top-left column: Journal banner + Keep pill ─────────── */
 .hv-topleft {
   position: absolute;
-  top: calc(var(--sat) + 58px);
+  top: calc(var(--sat) + 62px);
   left: calc(var(--sal) + 10px);
   z-index: 4;
   display: flex;
@@ -1402,7 +1408,7 @@ const CSS = `
   position: absolute;
   left: calc(var(--sal) + 8px);
   right: calc(var(--sar) + 8px);
-  top: calc(var(--sat) + 60px);
+  top: calc(var(--sat) + 64px);
   z-index: 5;
   pointer-events: none;
   display: grid;

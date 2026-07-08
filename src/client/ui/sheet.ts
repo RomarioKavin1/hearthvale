@@ -4,6 +4,7 @@ import {
   clearNode,
   clearPending,
   el,
+  hideTip,
   iconEl,
   isPending,
   markPending,
@@ -45,6 +46,9 @@ let tickTimer: number | undefined;
 
 const rerender = (): void => {
   if (!current || !bodyEl) return;
+  // Any visible tooltip is anchored to a node about to be destroyed — hide it
+  // first, or it would float with stale text (pointerleave never fires).
+  hideTip();
   clearNode(bodyEl);
   current.render(bodyEl);
 };
@@ -60,6 +64,9 @@ export const setSheetTitle = (text: string): void => {
 export const isSheetOpen = (): boolean => current !== undefined;
 
 const teardown = (): void => {
+  // The sheet's content (and any tooltip anchored inside it) is going away —
+  // dismiss the shared bubble so it can't linger over the map.
+  hideTip();
   if (onStoreChange) {
     store.off('change', onStoreChange);
     onStoreChange = undefined;
