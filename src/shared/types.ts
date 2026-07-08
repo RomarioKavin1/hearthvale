@@ -104,6 +104,25 @@ export type PlayerState = {
   lifetimeEarned: number;
   /** Lifetime goods contributed — the `lb:contrib` absolute score. */
   lifetimeContributed: number;
+  // --- Villager's Journal quest counters (all monotonic; legacy players = 0) ---
+  /** Lifetime successful collects (collect + collect-all tiles that produced). */
+  collects: number;
+  /** Lifetime goods sold at the market. */
+  soldUnits: number;
+  /** Lifetime processed-output units produced by processors (incl. bakery runs). */
+  processedUnits: number;
+  /** Lifetime boosts handed to neighbours. */
+  boostsGiven: number;
+  /** Lifetime festival ballots cast. */
+  votesCast: number;
+  /** Lifetime accepted wandering-trader deals. */
+  tradesDone: number;
+  /** Index into the quest ladder: 0..17 is the chain, ≥18 is repeatable tiers. */
+  questIndex: number;
+  /** Repeatable-tier lap; scales repeatable targets/rewards by 1.6^lap. */
+  questLap: number;
+  /** Metric value captured when a repeatable quest became active (delta base). */
+  questBaseline: number;
 };
 
 export type LeaderRow = { name: string; score: number; me: boolean };
@@ -148,6 +167,27 @@ export type StateResponse = {
   trader: TraderState;
   /** Land-expansion ring state. */
   ring: RingState;
+  /** The player's active Villager's Journal quest (progress + reward). */
+  quest: QuestView;
+};
+
+/** The active quest as surfaced to the client (StateResponse.quest). */
+export type QuestView = {
+  index: number;
+  lap: number;
+  title: string;
+  blurb: string;
+  have: number;
+  target: number;
+  reward: { coins?: number; xp?: number };
+  done: boolean;
+};
+
+/** Result of POST /api/claim-quest: the claimed quest's slot + reward paid. */
+export type ClaimQuestResponse = {
+  me: PlayerState;
+  quest: { index: number; lap: number };
+  gained: { coins: number; xp: number };
 };
 
 /** Splash summary (GET /api/summary). */

@@ -173,6 +173,16 @@ const parsePlayer = (
   valueSpent: num(h.valueSpent, 0),
   lifetimeEarned: num(h.lifetimeEarned, 0),
   lifetimeContributed: num(h.lifetimeContributed, 0),
+  // Quest counters — legacy players parse to 0 (chain starts at quest #1).
+  collects: num(h.collects, 0),
+  soldUnits: num(h.soldUnits, 0),
+  processedUnits: num(h.processedUnits, 0),
+  boostsGiven: num(h.boostsGiven, 0),
+  votesCast: num(h.votesCast, 0),
+  tradesDone: num(h.tradesDone, 0),
+  questIndex: num(h.questIndex, 0),
+  questLap: num(h.questLap, 0),
+  questBaseline: num(h.questBaseline, 0),
 });
 
 /** Hash serialization of a player — exported for watch transactions. */
@@ -192,6 +202,15 @@ export const playerFields = (p: PlayerState): Record<string, string> => ({
   valueSpent: String(p.valueSpent),
   lifetimeEarned: String(p.lifetimeEarned),
   lifetimeContributed: String(p.lifetimeContributed),
+  collects: String(p.collects),
+  soldUnits: String(p.soldUnits),
+  processedUnits: String(p.processedUnits),
+  boostsGiven: String(p.boostsGiven),
+  votesCast: String(p.votesCast),
+  tradesDone: String(p.tradesDone),
+  questIndex: String(p.questIndex),
+  questLap: String(p.questLap),
+  questBaseline: String(p.questBaseline),
 });
 
 export const getPlayer = async (
@@ -222,6 +241,15 @@ export const initPlayer = async (
     valueSpent: 0,
     lifetimeEarned: 0,
     lifetimeContributed: 0,
+    collects: 0,
+    soldUnits: 0,
+    processedUnits: 0,
+    boostsGiven: 0,
+    votesCast: 0,
+    tradesDone: 0,
+    questIndex: 0,
+    questLap: 0,
+    questBaseline: 0,
   };
   await redis.hSet(playerKey(userId), playerFields(player));
   return player;

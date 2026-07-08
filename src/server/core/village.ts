@@ -2,12 +2,14 @@ import { context, reddit, realtime, redis } from '@devvit/web/server';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type {
   CityState,
+  ClaimQuestResponse,
   FestivalCategory,
   Gained,
   Good,
   LeaderRow,
   PlayerState,
   Prices,
+  QuestView,
   StateResponse,
   Stockpile,
   Summary,
@@ -46,6 +48,14 @@ import {
 import { buyValue, priceFor, pricesFor, sellValue } from '../../shared/logic/market';
 import { isUnlocked, nextThreshold, ringBounds } from '../../shared/logic/expansion';
 import { offersForDay, weatherForDay } from '../../shared/logic/trader';
+import {
+  advanceQuest,
+  claimQuestError,
+  questAt,
+  questBaselineFor,
+  questProgress,
+  questSnapshot,
+} from '../../shared/quests';
 import { parseKey, tileKey } from '../../shared/logic/grid';
 import {
   STOCKPILE_KEY,
@@ -390,6 +400,26 @@ export const applyStageBuff = (gained: Gained, stage: number): Gained => {
   return { coins: scale(gained.coins), xp: gained.xp, goods };
 };
 
+// --- Quest counters (pure) --------------------------------------------------
+
+/**
+ * Processed-output units a collect yielded, for the `processedUnits` quest
+ * counter: for a goods processor (windmill/sawmill/kiln) the output-good units
+ * produced; for the bakery the flour runs consumed (its output is coins). 0 for
+ * any non-processor. Pure — unit-tested.
+ */
+export const processedUnits = (
+  buildingId: BuildingId | undefined,
+  gained: Gained,
+  consumed: Partial<Record<Good, number>>
+): number => {
+  if (!buildingId) return 0;
+  const spec = CATALOG[buildingId];
+  if (spec.role !== 'processor' || !spec.input || !spec.output) return 0;
+  if (spec.output === 'coins') return consumed[spec.input.good] ?? 0;
+  return gained.goods[spec.output] ?? 0;
+};
+
 // --- Sharing -----------------------------------------------------------------
 
 export type ShareKind = 'levelup' | 'stage';
@@ -728,6 +758,30 @@ export const expansionGate = (
   return `The village must grow first (${need} more villagers unlock new land).`;
 };
 
+/** The player's active-quest view for a state response. The grid is already
+ * loaded, so the snapshot is cheap. Falls back to the first quest at 0 progress
+ * for a not-yet-initialised (null) player. */
+const questView = (
+  grid: Record<string, TileState>,
+  me: PlayerState | null
+): QuestView => {
+  const index = me ? me.questIndex : 0;
+  const lap = me ? me.questLap : 0;
+  const quest = questAt(index, lap);
+  const base = {
+    index,
+    lap,
+    title: quest.title,
+    blurb: quest.blurb,
+    target: quest.target,
+    reward: quest.reward,
+  };
+  if (!me) return { ...base, have: 0, done: false };
+  const snap = questSnapshot(grid, me.id);
+  const { have, done } = questProgress(quest, me, snap, me.questBaseline);
+  return { ...base, have, done };
+};
+
 export const loadState = async (
   userId: string | undefined
 ): Promise<StateResponse> => {
@@ -772,6 +826,7 @@ export const loadState = async (
       nextThreshold: nextThreshold(city.population),
       population: city.population,
     },
+    quest: questView(grid, me),
   };
 };
 
@@ -1061,19 +1116,27 @@ export const doCollect = async (
   const stockChanged = goodsTotal(result.consumed) > 0;
   const produced = banked > 0 || stockChanged;
 
+  // Quest counters: one collect (banked > 0) and any processed output produced.
+  const proc = processedUnits(tile.buildingId, gained, result.consumed);
+  const me: PlayerState = {
+    ...result.player,
+    collects: result.player.collects + (banked > 0 ? 1 : 0),
+    processedUnits: result.player.processedUnits + proc,
+  };
+
   await putTile(key, result.tile);
   if (produced) {
-    await putPlayer(result.player);
+    await putPlayer(me);
     if (gained.coins > 0) {
       await redis.zAdd(LB_EARNED, {
         member: userId,
-        score: result.player.lifetimeEarned,
+        score: me.lifetimeEarned,
       });
     }
     await putCity({
       totalCollected: city.totalCollected + banked,
     });
-    await maybeFlair(player.level, result.player);
+    await maybeFlair(player.level, me);
   }
   if (stockChanged) {
     for (const g of GOODS) stockpile[g] -= result.consumed[g] ?? 0;
@@ -1083,7 +1146,7 @@ export const doCollect = async (
   if (stockChanged && anyPriceChanged(pricesBefore, pricesFor(stockpile))) {
     await broadcastMarket(stockpile);
   }
-  return { tile: result.tile, me: result.player, gained };
+  return { tile: result.tile, me, gained };
 };
 
 export const doCollectAll = async (
@@ -1105,6 +1168,9 @@ export const doCollectAll = async (
   const total: Gained = { coins: 0, xp: 0, goods: {} };
   const changed: Array<{ key: string; tile: TileState }> = [];
   let stockChanged = false;
+  // Quest counters: one collect per producing tile, plus total processed output.
+  let collectsBump = 0;
+  let processedBump = 0;
 
   for (const [key, tile] of Object.entries(grid)) {
     if (tile.owner !== userId || !tile.buildingId) continue;
@@ -1122,11 +1188,19 @@ export const doCollectAll = async (
       stockChanged = true;
     }
     const banked = result.gained.coins + goodsTotal(result.gained.goods);
+    if (banked > 0) collectsBump += 1;
+    processedBump += processedUnits(tile.buildingId, result.gained, result.consumed);
     const boostChanged = result.tile.boostUntil !== tile.boostUntil;
     if (banked > 0 || boostChanged || consumedUnits > 0) {
       changed.push({ key, tile: result.tile });
     }
   }
+
+  me = {
+    ...me,
+    collects: me.collects + collectsBump,
+    processedUnits: me.processedUnits + processedBump,
+  };
 
   for (const { key, tile } of changed) {
     await putTile(key, tile);
@@ -1291,6 +1365,8 @@ export const doBoost = async (
       coins: player.coins + BOOST_COINS,
       boostsToday: used + 1,
       boostsDate: today,
+      // Lifetime quest counter (distinct from the per-day boostsToday cap).
+      boostsGiven: player.boostsGiven + 1,
     },
     BOOST_XP
   );
@@ -1449,11 +1525,12 @@ export const doSell = async (
     const coins = sellValue(amount, before, good);
 
     // Market income is deliberately NOT counted toward lb:earned (production
-    // only).
+    // only). soldUnits (a quest counter) tracks the units actually sold.
     const me: PlayerState = {
       ...player,
       coins: player.coins + coins,
       wallet: { ...player.wallet, [good]: held - amount },
+      soldUnits: player.soldUnits + amount,
     };
     const nextStock: Stockpile = { ...stockpile, [good]: before + amount };
     return { me, nextStock };
@@ -1563,7 +1640,11 @@ export const doTrade = async (
     wallet[offer.get.good] += offer.get.qty;
   }
 
-  const me: PlayerState = { ...player, wallet };
+  const me: PlayerState = {
+    ...player,
+    wallet,
+    tradesDone: player.tradesDone + 1,
+  };
   await putPlayer(me);
   return { me, ...(cosmeticTile ? { tile: cosmeticTile } : {}) };
 };
@@ -1634,9 +1715,55 @@ export const doVote = async (
   if (await hasVoted(today, userId)) {
     throw new OpError(400, 'You have already voted today.');
   }
+  // Vote is per-day gated in redis but the lifetime votesCast quest counter needs
+  // a player write — doVote otherwise never touches the player hash.
+  const player = await ensurePlayer(userId);
   await recordVote(today, userId, category);
+  await putPlayer({ ...player, votesCast: player.votesCast + 1 });
   const counts = await getBallot(today);
   return { counts };
+};
+
+/**
+ * Claim the reward for the player's active Villager's Journal quest and advance
+ * the ladder. Personal self-mutation (no broadcast): the standard
+ * read-modify-write is sufficient, matching check-in. Validates completion with
+ * a baseline-aware snapshot; credits coins directly and xp through the level-up
+ * helper; then advances questIndex/lap and captures the next repeatable baseline.
+ */
+export const doClaimQuest = async (
+  userId: string
+): Promise<ClaimQuestResponse> => {
+  const [grid, player] = await Promise.all([getGrid(), ensurePlayer(userId)]);
+  const quest = questAt(player.questIndex, player.questLap);
+  const snap = questSnapshot(grid, userId);
+  const err = claimQuestError(quest, player, snap, player.questBaseline);
+  if (err) throw new OpError(400, err);
+
+  const coins = quest.reward.coins ?? 0;
+  const xp = quest.reward.xp ?? 0;
+  const before = player.level;
+  const next = advanceQuest(player.questIndex, player.questLap);
+
+  let me: PlayerState = {
+    ...player,
+    coins: player.coins + coins,
+    questIndex: next.index,
+    questLap: next.lap,
+  };
+  // Credit xp through the level-up helper (like check-in) so a reward can level.
+  if (xp > 0) me = creditXp(me, xp);
+  // Baseline for the next quest: 0 for chain, else the current metric value (the
+  // grid is unchanged and reward coins/xp never move a repeatable's metric).
+  me = { ...me, questBaseline: questBaselineFor(next.index, next.lap, me, snap) };
+
+  await putPlayer(me);
+  await maybeFlair(before, me);
+  return {
+    me,
+    quest: { index: player.questIndex, lap: player.questLap },
+    gained: { coins, xp },
+  };
 };
 
 const topRows = async (

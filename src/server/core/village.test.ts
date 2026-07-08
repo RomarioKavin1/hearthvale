@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CityState, PlayerState, TileState } from '../../shared/types';
+import type { CityState, Gained, Good, PlayerState, TileState } from '../../shared/types';
 import { CATALOG, KEEP_STAGE_COSTS } from '../../shared/catalog';
 import { emptyStockpile } from '../../shared/logic/economy';
 import {
@@ -18,6 +18,7 @@ import {
   landmarkComplete,
   nextFestival,
   nextStreak,
+  processedUnits,
   proRataPayout,
   shareText,
   stageNameFromWords,
@@ -47,6 +48,15 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   valueSpent: 0,
   lifetimeEarned: 0,
   lifetimeContributed: 0,
+  collects: 0,
+  soldUnits: 0,
+  processedUnits: 0,
+  boostsGiven: 0,
+  votesCast: 0,
+  tradesDone: 0,
+  questIndex: 0,
+  questLap: 0,
+  questBaseline: 0,
   ...overrides,
 });
 
@@ -641,5 +651,28 @@ describe('sharing', () => {
     expect(shareText('stage', 3, 'ada', 'cozytown')).toBe(
       'The Grand Keep reached Stage 3/5 — built together by the villagers of r/cozytown!'
     );
+  });
+});
+
+describe('processedUnits quest counter', () => {
+  const gained = (
+    goods: Partial<Record<Good, number>>,
+    coins = 0
+  ): Gained => ({ coins, xp: 0, goods });
+
+  it('counts output-good units for a goods processor (windmill)', () => {
+    // Windmill: input wheat/2 → 1 flour per run; 4 flour produced === 4 runs.
+    expect(processedUnits('windmill', gained({ flour: 4 }), { wheat: 8 })).toBe(4);
+  });
+
+  it('counts flour runs consumed for the bakery (output is coins)', () => {
+    // Bakery: input flour/1 → coins; 5 flour consumed === 5 runs processed.
+    expect(processedUnits('bakery', gained({}, 60), { flour: 5 })).toBe(5);
+  });
+
+  it('is 0 for non-processor buildings and empty tiles', () => {
+    expect(processedUnits('wheatfield', gained({ wheat: 9 }), {})).toBe(0);
+    expect(processedUnits('cottage', gained({}, 12), {})).toBe(0);
+    expect(processedUnits(undefined, gained({}), {})).toBe(0);
   });
 });

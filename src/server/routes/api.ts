@@ -8,6 +8,7 @@ import {
   doBuy,
   doCheckIn,
   doClaim,
+  doClaimQuest,
   doCollect,
   doCollectAll,
   doContribute,
@@ -175,6 +176,18 @@ api.post('/checkin', async (c) => {
     if (error instanceof OpError) return c.json(...fail(error.message, error.status));
     console.error('POST /api/checkin failed:', error);
     return c.json(...fail('Failed to check in.', 500));
+  }
+});
+
+api.post('/claim-quest', async (c) => {
+  try {
+    const userId = requireUser();
+    const result = await doClaimQuest(userId);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/claim-quest failed:', error);
+    return c.json(...fail('Failed to claim quest.', 500));
   }
 });
 

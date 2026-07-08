@@ -29,6 +29,15 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   valueSpent: 0,
   lifetimeEarned: 0,
   lifetimeContributed: 0,
+  collects: 0,
+  soldUnits: 0,
+  processedUnits: 0,
+  boostsGiven: 0,
+  votesCast: 0,
+  tradesDone: 0,
+  questIndex: 0,
+  questLap: 0,
+  questBaseline: 0,
   ...overrides,
 });
 
