@@ -641,6 +641,8 @@ const renderNeighbour = (
   if (bid === undefined) return;
   const spec = CATALOG[bid];
   const now = store.serverNow();
+  // The daily boost cap follows the Village Hall's boostLimit perk (5 → 7 at L4).
+  const hallLevel = store.data?.city.hallLevel ?? 0;
   setSheetTitle(`${tile.ownerName}’s plot`);
 
   const stack = el('div', { cls: 'hv-stack' });
@@ -656,7 +658,7 @@ const renderNeighbour = (
   if (spec.role === 'decor') reason = 'Decorations can’t be boosted.';
   else if (now < tile.readyAt) reason = 'Still under construction.';
   else if (tile.boostUntil > now) reason = `Already boosted — ${fmtDur(tile.boostUntil - now)} left.`;
-  else if (me !== null && boostsLeft(me) <= 0) reason = 'No boosts left today.';
+  else if (me !== null && boostsLeft(me, hallLevel) <= 0) reason = 'No boosts left today.';
 
   const btn = el('button', {
     cls: 'hv-btn hv-btn-accent',
@@ -677,7 +679,7 @@ const renderNeighbour = (
   });
   stack.appendChild(btn);
 
-  if (me) stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: `${boostsLeft(me)} boosts left today.` }));
+  if (me) stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: `${boostsLeft(me, hallLevel)} boosts left today.` }));
   if (me !== null && reason !== null) stack.appendChild(el('p', { cls: 'hv-note hv-muted', text: reason }));
   body.appendChild(stack);
 };
@@ -698,7 +700,7 @@ const renderPlaza = (body: HTMLElement): void => {
   body.appendChild(
     el('p', {
       cls: 'hv-note',
-      text: 'The village square — a shared gathering place at the heart of Hearthvale. The Grand Keep rises here; plots can’t be claimed on the plaza.',
+      text: 'The village square — a shared gathering place at the heart of Hearthvale. The Village Hall rises here; plots can’t be claimed on the plaza.',
     })
   );
 };
@@ -720,7 +722,7 @@ const MENU: MenuItem[] = [
     open: openTraderSheet,
     badge: () => store.data?.trader.done === false,
   },
-  { icon: 'castle-tower', label: 'Grand Keep', open: openKeepSheet },
+  { icon: 'castle-tower', label: 'Village Hall', open: openKeepSheet },
   { icon: 'icon-star', label: 'Festival ballot', open: openBallotSheet },
   { icon: 'icon-trophy', label: 'Leaderboards', open: openLeaderboardsSheet },
   { icon: 'icon-question', label: 'How to play', open: openHowToSheet },

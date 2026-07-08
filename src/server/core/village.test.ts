@@ -755,9 +755,9 @@ describe('sharing', () => {
     );
   });
 
-  it('builds a Grand Keep stage comment crediting the subreddit', () => {
+  it('builds a Village Hall level comment crediting the subreddit', () => {
     expect(shareText('stage', 3, 'ada', 'cozytown')).toBe(
-      'The Grand Keep reached Stage 3/5 — built together by the villagers of r/cozytown!'
+      'The Village Hall reached Level 3/5 — built together by the villagers of r/cozytown!'
     );
   });
 });

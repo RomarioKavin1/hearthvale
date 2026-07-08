@@ -450,5 +450,5 @@ export const RING_BY_LEVEL: Array<{ lo: number; hi: number }> = [
 export const GRID_SIZE: number = 18;
 export const MAX_LEVEL: number = 15;
 export const PLOT_LEVELS: number[] = [1, 2, 4, 7, 10];
-/** Neighbour boosts a player may hand out per UTC day. */
-export const BOOST_DAILY_LIMIT: number = 5;
+// The daily neighbour-boost limit lives in `hallPerks(level).boostLimit`
+// (5 at Hall level 0, 7 from level 4) — there is no separate flat constant.

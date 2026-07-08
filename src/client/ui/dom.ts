@@ -12,7 +12,7 @@ import type {
   Weather,
 } from '../../shared/types';
 import { questAt, questProgress, questSnapshot } from '../../shared/quests';
-import { BOOST_DAILY_LIMIT } from '../../shared/catalog';
+import { hallPerks } from '../../shared/catalog';
 import type { SpriteKey } from '../art/manifest';
 import { BUILDING_ART, isIconKey, SPRITES } from '../art/manifest';
 import { parseKey } from '../../shared/logic/grid';
@@ -266,10 +266,12 @@ export const activeQuest = (data: StateResponse): QuestView | null => {
   };
 };
 
-/** Boosts a player still has today (accounting for the UTC date rollover). */
-export const boostsLeft = (me: PlayerState): number => {
+/** Boosts a player still has today (accounting for the UTC date rollover). The
+ * daily limit rises with the Village Hall's `boostLimit` perk (5 → 7 at L4),
+ * matching the server-side check in doBoost. */
+export const boostsLeft = (me: PlayerState, hallLevel: number): number => {
   const used = me.boostsDate === todayUtc() ? me.boostsToday : 0;
-  return Math.max(0, BOOST_DAILY_LIMIT - used);
+  return Math.max(0, hallPerks(hallLevel).boostLimit - used);
 };
 
 // ── Pending-action registry ──────────────────────────────────────────────────

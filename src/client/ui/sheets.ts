@@ -469,7 +469,7 @@ const contributeControls = (good: KeepGood): HTMLElement => {
       const res = await api.contribute(good, amount);
       store.applyMutation({ city: res.city, me: res.me });
       const applied = Math.max(0, before - res.me.wallet[good]);
-      toast(`+${fmtInt(applied)} ${GOOD_LABEL[good]} to the Grand Keep!`, 'celebrate');
+      toast(`+${fmtInt(applied)} ${GOOD_LABEL[good]} to the Village Hall!`, 'celebrate');
     });
   });
   seg.appendChild(btn);
@@ -905,10 +905,10 @@ export const openLeaderboardsSheet = (): void => {
 // ── How to play ──────────────────────────────────────────────────────────────
 
 const HOW_STEPS: Array<{ icon: SpriteKey; title: string; text: string }> = [
-  { icon: 'icon-home', title: 'Settle', text: 'Tap any open grass tile to claim a plot. More villagers unlock more land.' },
+  { icon: 'icon-home', title: 'Settle', text: 'Tap any open grass tile to claim a plot. Your first claim builds your House; later plots must sit within 2 tiles of it.' },
   { icon: 'furrow-crop-wheat', title: 'Produce', text: 'Wheat Fields, Groves and Quarries make raw goods. The village always needs grain.' },
   { icon: 'icon-cart', title: 'Sell or process', text: 'Sell raw goods on the Market when prices rise, or feed them to a Windmill, Sawmill or Kiln.' },
-  { icon: 'icon-trophy', title: 'Raise the Keep', text: 'Contribute planks and bricks to the Grand Keep. Every stage boosts the whole village.' },
+  { icon: 'icon-trophy', title: 'Raise the Village Hall', text: 'Contribute planks and bricks to the Village Hall. Every level boosts the whole village and unlocks new land.' },
   { icon: 'icon-scroll', title: 'Trader & weather', text: 'A trader offers one daily swap, and the weather changes what pays best each day.' },
 ];
 

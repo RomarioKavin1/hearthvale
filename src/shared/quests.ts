@@ -164,8 +164,8 @@ export const QUEST_CHAIN: Quest[] = [
   },
   {
     id: 'q16',
-    title: 'Contribute 20 planks or bricks to the Keep',
-    blurb: 'Give twenty planks or bricks toward the rising Grand Keep.',
+    title: 'Contribute 20 planks or bricks to the Village Hall',
+    blurb: 'Give twenty planks or bricks toward raising the Village Hall.',
     metric: 'lifetimeContributed',
     target: 20,
     reward: { coins: 100 },
@@ -209,8 +209,8 @@ export const REPEATABLE: Quest[] = [
   },
   {
     id: 'r-contrib',
-    title: 'Contribute another 100 to the Keep',
-    blurb: 'Pour another hundred goods into the ever-rising Grand Keep.',
+    title: 'Contribute another 100 to the Village Hall',
+    blurb: 'Pour another hundred goods into the ever-rising Village Hall.',
     metric: 'lifetimeContributed',
     target: 100,
     reward: { coins: 150, xp: 100 },

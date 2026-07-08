@@ -299,14 +299,14 @@ const buildFabs = (): HTMLElement => {
   });
 };
 
-// ── Keep pill (collective goal, always in view) ──────────────────────────────
+// ── Hall pill (collective goal, always in view) ──────────────────────────────
 
 const buildKeepPill = (): HTMLButtonElement => {
-  keepLabel = el('span', { cls: 'hv-keep-label', text: 'Keep' });
+  keepLabel = el('span', { cls: 'hv-keep-label', text: 'Hall' });
   keepFill = el('i');
   keepPill = el('button', {
     cls: 'hv-keep-pill',
-    attrs: { type: 'button', 'aria-label': 'Grand Keep progress' },
+    attrs: { type: 'button', 'aria-label': 'Village Hall progress' },
     children: [
       iconEl('icon-trophy', 15),
       el('div', {

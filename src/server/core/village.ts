@@ -499,7 +499,7 @@ export const shareText = (
   if (kind === 'levelup') {
     return `u/${name} just reached Level ${value} in Hearthvale — ${flairTitle(value)}!`;
   }
-  return `The Grand Keep reached Stage ${value}/${KEEP_STAGES} — built together by the villagers of r/${subredditName}!`;
+  return `The Village Hall reached Level ${value}/${KEEP_STAGES} — built together by the villagers of r/${subredditName}!`;
 };
 
 export type CollectResult = {
