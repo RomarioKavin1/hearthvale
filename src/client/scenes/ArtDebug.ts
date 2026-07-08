@@ -1,19 +1,26 @@
 import { Input, Scene } from 'phaser';
 import { PAL } from '../../shared/palette';
+import { isoToScreen } from '../../shared/logic/grid';
 import type { BuildingId, Tier } from '../../shared/types';
 import { BUILDING_ART, SPRITES } from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
   addSurface,
+  bandBlockFor,
   BASE_DY,
   BG,
   castleParts,
   CASTLE_TOP_DY,
   LOCKED_ALPHA,
   LOCKED_TINT,
+  PATH_HI,
+  PATH_LO,
+  plazaFencePieces,
   ROOF_DY,
+  terrainFor,
   TILE_H,
+  TILE_W,
 } from '../art/render';
 
 const IDS: BuildingId[] = [
@@ -181,6 +188,48 @@ export class ArtDebug extends Scene {
       this.label(ox - 6, y + 150, `${stage}`, 11);
     }
     y += ROW + 60;
+
+    // Plaza fence railing (option-b composite): a 4×4 plaza block with the
+    // two-front-edge railing, to verify the fence-wood orientation reads right.
+    this.label(16, y + 20, 'plaza fence railing (front two edges)', 12);
+    {
+      const ox = 260;
+      const oy = y + 90;
+      const local = (gx: number, gy: number): { sx: number; sy: number } => {
+        const s = isoToScreen(gx - PATH_LO, gy - PATH_LO, TILE_W, TILE_H);
+        return { sx: ox + s.sx, sy: oy + s.sy };
+      };
+      for (let gy = PATH_LO; gy <= PATH_HI; gy++) {
+        for (let gx = PATH_LO; gx <= PATH_HI; gx++) {
+          const { sx, sy } = local(gx, gy);
+          addBlock(this, 'grass-path', sx, sy).setDepth(sy);
+        }
+      }
+      for (const p of plazaFencePieces()) {
+        const { sx, sy } = local(p.x, p.y);
+        addSurface(this, p.key, sx, sy)
+          .setFlipX(p.flipX)
+          .setDepth(sy + 0.4);
+      }
+    }
+
+    // Seeded terrain: a raised locked-band strip for two different village seeds.
+    this.label(16, y + 20 + 190, 'seeded band (two seeds)', 12);
+    [1111, 9999].forEach((seed, si) => {
+      const ox = 240 + si * 360;
+      const oy = y + 90 + 190;
+      for (let gx = 0; gx < 6; gx++) {
+        const sx = ox + gx * (TILE_W / 2);
+        const sy = oy + gx * (TILE_H / 2) * 0;
+        const { height } = terrainFor(seed, gx, si + 3);
+        addBlock(this, bandBlockFor(height), sx, sy, -16 * height)
+          .setDepth(sy + gx)
+          .setAlpha(LOCKED_ALPHA)
+          .setTint(LOCKED_TINT);
+      }
+      this.label(ox - 20, oy + 70, `seed ${seed}`, 10);
+    });
+    y += ROW + 220;
 
     const contentHeight = y + 40;
     const maxScroll = Math.max(0, contentHeight - this.scale.height);

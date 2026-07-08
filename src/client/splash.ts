@@ -1,5 +1,7 @@
 import { context, requestExpandedMode } from '@devvit/web/client';
 import { PAL } from '../shared/palette';
+import { SPRITES } from './art/manifest';
+import type { SpriteKey } from './art/manifest';
 
 /**
  * Hearthvale inline splash — the storefront every redditor meets in the feed.
@@ -91,30 +93,88 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   return node;
 };
 
-// ── Scene assembly (all shapes are CSS; roofs/windows are pseudo-elements) ─────
+// ── Scene assembly (a real Sketch Town mini-diorama of <img> block sprites) ────
+//
+// Each Kenney block PNG is 128×176 with its top-face diamond centre at (64, 95).
+// We lay the blocks out on the same iso pitch the game uses (TILE_W 128 / TILE_H
+// 64), scaled down, and lift bases/roofs by the same block-step the renderer
+// uses (BASE −45, ROOF −90 from the ground; the keep cap −70). Painter order is
+// front-to-back via a z-index keyed on the tile's screen row (x+y).
 
-const buildScene = (): { scene: HTMLDivElement; keepEl: HTMLDivElement } => {
+const SCALE = 0.36;
+const HALFW = (128 / 2) * SCALE; // screen dx per (x−y) unit
+const HALFH = (64 / 2) * SCALE; // screen dy per (x+y) unit
+const IMG_W = 128 * SCALE;
+const TOP_CX = 64 * SCALE; // top-face centre offset within the scaled image
+const TOP_CY = 95 * SCALE;
+const ORIGIN_X = 120; // diorama-local centre (matches .hv-diorama width/2)
+const ORIGIN_Y = 46;
+
+/** Lift constants (native px, before scaling) mirroring art/render.ts. */
+const LIFT_BASE = 45;
+const LIFT_ROOF = 90;
+const LIFT_CAP = 70;
+
+/** Place one block sprite at iso tile (x,y), lifted `lift` native px, layered by
+ * `layer` within its screen row. Returns the <img> so callers can toggle it. */
+const placeBlock = (
+  host: HTMLElement,
+  key: SpriteKey,
+  x: number,
+  y: number,
+  lift: number,
+  layer: number
+): HTMLImageElement => {
+  const img = el('img', { cls: 'hv-blk' });
+  img.src = SPRITES[key];
+  img.alt = '';
+  img.draggable = false;
+  const cx = ORIGIN_X + (x - y) * HALFW;
+  const cy = ORIGIN_Y + (x + y) * HALFH - lift * SCALE;
+  img.style.left = `${cx - TOP_CX}px`;
+  img.style.top = `${cy - TOP_CY}px`;
+  img.style.width = `${IMG_W}px`;
+  img.style.zIndex = String((x + y) * 10 + layer);
+  host.appendChild(img);
+  return img;
+};
+
+const buildScene = (): { scene: HTMLDivElement; capEl: HTMLImageElement } => {
   const scene = el('div', { cls: 'hv-scene' });
   scene.appendChild(el('div', { cls: 'hv-cloud c1' }));
   scene.appendChild(el('div', { cls: 'hv-cloud c2' }));
 
-  const island = el('div', { cls: 'hv-island' });
+  const diorama = el('div', { cls: 'hv-diorama' });
 
-  const hamlet = el('div', { cls: 'hv-hamlet' });
-  hamlet.appendChild(el('div', { cls: 'hv-house r-red' }));
-  const keepEl = el('div', { cls: 'hv-keep is-hidden' });
-  hamlet.appendChild(keepEl);
-  hamlet.appendChild(el('div', { cls: 'hv-house r-blue' }));
-  hamlet.appendChild(el('div', { cls: 'hv-house r-straw' }));
+  // Grass island (a compact hex of blocks) with a path tile leading in.
+  const ground: Array<[number, number, SpriteKey]> = [
+    [1, 1, 'grass-block'],
+    [2, 1, 'grass-block'],
+    [3, 1, 'grass-block'],
+    [1, 2, 'grass-block'],
+    [2, 2, 'grass-block'],
+    [3, 2, 'grass-block'],
+    [2, 3, 'grass-path'],
+    [3, 3, 'grass-block'],
+  ];
+  for (const [x, y, key] of ground) placeBlock(diorama, key, x, y, 0, 0);
 
-  island.appendChild(hamlet);
-  island.appendChild(el('div', { cls: 'hv-grass' }));
-  island.appendChild(el('div', { cls: 'hv-dirt' }));
-  island.appendChild(el('div', { cls: 'hv-leg l1' }));
-  island.appendChild(el('div', { cls: 'hv-leg l2' }));
+  // Two cottages (base wall + tier-coloured roof).
+  placeBlock(diorama, 'building-door', 1, 1, LIFT_BASE, 2);
+  placeBlock(diorama, 'roof-gable-brown', 1, 1, LIFT_ROOF, 4);
+  placeBlock(diorama, 'building-window', 3, 1, LIFT_BASE, 2);
+  placeBlock(diorama, 'roof-point-green', 3, 1, LIFT_ROOF, 4);
 
-  scene.appendChild(island);
-  return { scene, keepEl };
+  // The Grand Keep at the centre — its crown cap fades in once the Hall levels up.
+  placeBlock(diorama, 'castle-tower', 2, 2, LIFT_BASE, 2);
+  const capEl = placeBlock(diorama, 'castle-tower-top', 2, 2, LIFT_CAP, 5);
+  capEl.classList.add('is-hidden');
+
+  // A pine on the front corner.
+  placeBlock(diorama, 'tree-pine', 3, 3, LIFT_BASE, 3);
+
+  scene.appendChild(diorama);
+  return { scene, capEl };
 };
 
 // ── Live-stats plumbing ───────────────────────────────────────────────────────
@@ -155,7 +215,17 @@ const isSummary = (body: unknown): body is Summary =>
 
 const fmtInt = (n: number): string => Math.round(n).toLocaleString('en-US');
 
-const chip = (text: string): HTMLSpanElement => el('span', { cls: 'hv-chip', text });
+/** A stat pill: a small white icon sprite beside its label. */
+const pill = (icon: SpriteKey, text: string): HTMLSpanElement => {
+  const span = el('span', { cls: 'hv-pill' });
+  const img = el('img', { cls: 'hv-pill-icon' });
+  img.src = SPRITES[icon];
+  img.alt = '';
+  img.draggable = false;
+  span.appendChild(img);
+  span.appendChild(el('span', { text }));
+  return span;
+};
 
 const THEME_CLASSES: Record<Theme, string> = {
   meadow: 'hv-theme-meadow',
@@ -169,7 +239,7 @@ const fillStats = (
   titleEl: HTMLHeadingElement,
   statsEl: HTMLDivElement,
   hookEl: HTMLDivElement,
-  keepEl: HTMLDivElement,
+  capEl: HTMLImageElement,
   s: Summary
 ): void => {
   // Village name in the title line; sky theme on the root.
@@ -178,13 +248,13 @@ const fillStats = (
   root.classList.add(THEME_CLASSES[s.theme]);
 
   statsEl.replaceChildren(
-    chip(`${fmtInt(s.buildings)} buildings`),
-    chip(`${fmtInt(s.players)} villagers`),
-    chip(`Village Hall L${s.hallLevel}/5`)
+    pill('icon-home', `${fmtInt(s.buildings)} buildings`),
+    pill('icon-star', `${fmtInt(s.players)} villagers`),
+    pill('icon-trophy', `Hall L${s.hallLevel}/5`)
   );
 
-  if (s.hallLevel >= 1) keepEl.classList.remove('is-hidden');
-  else keepEl.classList.add('is-hidden');
+  if (s.hallLevel >= 1) capEl.classList.remove('is-hidden');
+  else capEl.classList.add('is-hidden');
 
   if (s.readyForMe > 0) {
     const plots = s.readyForMe === 1 ? 'plot is' : 'plots are';
@@ -203,14 +273,14 @@ const loadSummary = async (
   titleEl: HTMLHeadingElement,
   statsEl: HTMLDivElement,
   hookEl: HTMLDivElement,
-  keepEl: HTMLDivElement
+  capEl: HTMLImageElement
 ): Promise<void> => {
   try {
     const res = await fetch('/api/summary');
     if (!res.ok) throw new Error('summary unavailable');
     const body: unknown = await res.json();
     if (!isSummary(body)) throw new Error('bad summary shape');
-    fillStats(root, titleEl, statsEl, hookEl, keepEl, body);
+    fillStats(root, titleEl, statsEl, hookEl, capEl, body);
   } catch {
     // Silent in the feed: drop the stats + hook, keep the scene, title and CTA.
     statsEl.classList.add('is-hidden');
@@ -263,7 +333,7 @@ const mount = (): void => {
   if (!root) return;
 
   injectPaletteVars();
-  const { scene, keepEl } = buildScene();
+  const { scene, capEl } = buildScene();
   root.appendChild(scene);
 
   const { content, titleEl, statsEl, hookEl, cta } = buildContent();
@@ -284,7 +354,7 @@ const mount = (): void => {
   root.addEventListener('click', enter);
 
   // Fetch after first paint — nothing blocks the initial render.
-  void loadSummary(root, titleEl, statsEl, hookEl, keepEl);
+  void loadSummary(root, titleEl, statsEl, hookEl, capEl);
 };
 
 if (document.readyState === 'loading') {

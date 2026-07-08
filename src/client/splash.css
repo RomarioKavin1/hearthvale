@@ -138,18 +138,19 @@ body {
   }
 }
 
-/* ── The floating island ──────────────────────────────────────── */
-.hv-island {
+/* ── The floating mini-diorama (real Sketch Town block sprites) ──── */
+.hv-diorama {
   position: absolute;
   left: 50%;
-  bottom: 26px;
-  transform: translateX(-50%);
-  width: 236px;
-  height: 132px;
-  /* Centring lives on `transform`; the float animates the independent
-     `translate` property so the two never clobber each other (e.g. the
-     scaled-down variant in the short-height media query below). */
-  animation: hv-float 5.2s ease-in-out infinite;
+  bottom: 22px;
+  width: 240px;
+  height: 200px;
+  margin-left: -120px;
+  /* One shared soft drop-shadow grounds the whole island for depth. */
+  filter: drop-shadow(0 10px 8px var(--ink-shadow));
+  /* Centring lives on the negative margin; the float animates the independent
+     `translate` property so the two never clobber each other. */
+  animation: hv-float 5.6s ease-in-out infinite;
 }
 @keyframes hv-float {
   0%,
@@ -157,145 +158,21 @@ body {
     translate: 0 0;
   }
   50% {
-    translate: 0 -6px;
+    translate: 0 -7px;
   }
 }
 
-/* Grass plateau — a shallow slab, widest at the top surface. */
-.hv-grass {
+/* Every diorama block is absolutely positioned by splash.ts (left/top/width/
+   z-index) on the iso grid; the sprites already carry their own shading. */
+.hv-blk {
   position: absolute;
-  left: 18px;
-  right: 18px;
-  top: 44px;
-  height: 30px;
-  background: linear-gradient(
-    180deg,
-    var(--grass-light) 0%,
-    var(--grass) 55%,
-    var(--grass-dark) 100%
-  );
-  clip-path: polygon(0 0, 100% 0, 90% 100%, 10% 100%);
+  image-rendering: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none;
 }
-
-/* Dirt underside — narrows to a floating-rock base. */
-.hv-dirt {
-  position: absolute;
-  left: 44px;
-  right: 44px;
-  top: 70px;
-  height: 42px;
-  background: linear-gradient(180deg, var(--dirt) 0%, var(--dirt-dark) 100%);
-  clip-path: polygon(0 0, 100% 0, 70% 100%, 30% 100%);
-}
-
-/* Two wooden stilt legs hanging under the island. */
-.hv-leg {
-  position: absolute;
-  top: 106px;
-  width: 8px;
-  height: 20px;
-  background: linear-gradient(180deg, var(--wood) 0%, var(--wood-dark) 100%);
-  border-radius: 0 0 3px 3px;
-}
-.hv-leg.l1 {
-  left: 96px;
-  transform: rotate(-6deg);
-}
-.hv-leg.l2 {
-  left: 132px;
-  transform: rotate(6deg);
-}
-
-/* Buildings sit along the grass surface. */
-.hv-hamlet {
-  position: absolute;
-  left: 20px;
-  right: 20px;
-  top: 0;
-  height: 48px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 12px;
-}
-
-/* Each cottage is a plaster block with a border-triangle roof and a lit window. */
-.hv-house {
-  position: relative;
-  width: 26px;
-  height: 28px;
-  background: linear-gradient(180deg, var(--wall) 0%, var(--wall-shade) 100%);
-  border-radius: 2px 2px 0 0;
-}
-.hv-house::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: -12px;
-  transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-left: 16px solid transparent;
-  border-right: 16px solid transparent;
-  border-bottom: 13px solid var(--roof, var(--roof-red));
-}
-.hv-house::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 9px;
-  transform: translateX(-50%);
-  width: 9px;
-  height: 9px;
-  background: var(--glow);
-  border-radius: 2px;
-  box-shadow: 0 0 6px var(--glow-soft);
-}
-.hv-house.r-red {
-  --roof: var(--roof-red);
-}
-.hv-house.r-blue {
-  --roof: var(--roof-blue);
-}
-.hv-house.r-straw {
-  --roof: var(--roof-straw);
-  height: 24px;
-  width: 22px;
-}
-
-/* The Grand Keep — a stone tower with a peaked roof, shown once stage ≥ 1. */
-.hv-keep {
-  position: relative;
-  width: 30px;
-  height: 48px;
-  background: linear-gradient(180deg, var(--stone) 0%, var(--stone-dark) 100%);
-  border-radius: 3px 3px 0 0;
-}
-.hv-keep.is-hidden {
+.hv-blk.is-hidden {
   display: none;
-}
-.hv-keep::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: -15px;
-  transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-left: 18px solid transparent;
-  border-right: 18px solid transparent;
-  border-bottom: 16px solid var(--roof-red);
-}
-.hv-keep::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  width: 11px;
-  height: 15px;
-  background: var(--wood-dark);
-  border-radius: 5px 5px 0 0;
 }
 
 /* ── Content (title, stats, CTA) ──────────────────────────────── */
@@ -320,12 +197,15 @@ body {
 }
 
 .hv-title {
-  font-size: clamp(26px, 8vw, 40px);
+  font-size: clamp(30px, 9vw, 48px);
   font-weight: 800;
-  letter-spacing: 0.5px;
-  line-height: 1;
+  letter-spacing: 0.4px;
+  line-height: 0.98;
   color: var(--cream);
-  text-shadow: 0 2px 0 var(--wood-dark), 0 4px 0 var(--ink-shadow);
+  text-shadow:
+    0 2px 0 var(--wood-dark),
+    0 4px 0 var(--ink-shadow),
+    0 6px 12px var(--ink-shadow);
 }
 
 .hv-tagline {
@@ -351,15 +231,26 @@ body {
   display: none;
 }
 
-/* Plain-text stat chips. */
-.hv-chip {
-  display: inline-block;
-  padding: 3px 9px;
+/* Stat pills: a white icon sprite beside its label on a soft dark lozenge. */
+.hv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 7px;
   border-radius: 999px;
-  background: var(--cream);
-  border: 1.5px solid var(--wood-dark);
-  color: var(--ink);
-  box-shadow: 0 1.5px 0 var(--wood-dark);
+  background: var(--ink);
+  color: var(--cream);
+  box-shadow: 0 2px 0 var(--ink-shadow);
+}
+.hv-pill-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  /* Icons ship white; keep them crisp and bright on the dark pill. */
+  filter: drop-shadow(0 0 0.5px var(--ink));
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none;
 }
 
 /* Skeleton shimmer shown until /api/summary resolves. */
@@ -438,9 +329,10 @@ body {
     gap: 4px;
     padding-top: 4px;
   }
-  .hv-island {
-    bottom: 14px;
-    transform: translateX(-50%) scale(0.82);
+  .hv-diorama {
+    bottom: 8px;
+    transform: scale(0.78);
+    transform-origin: bottom center;
   }
   .hv-cta {
     min-height: 40px;
@@ -449,7 +341,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .hv-cloud,
-  .hv-island,
+  .hv-diorama,
   .hv-skel {
     animation: none;
   }

@@ -30,11 +30,11 @@ import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
   addSurface,
+  bandBlockFor,
   BASE_DY,
   BG,
   castleParts,
   CASTLE_TOP_DY,
-  decorSprinkle,
   isKeepPad,
   isPathRing,
   isTreeDecor,
@@ -46,6 +46,7 @@ import {
   plazaFencePieces,
   riverPiece,
   ROOF_DY,
+  terrainFor,
   THEMES,
   TILE_H,
   TILE_W,
@@ -181,7 +182,7 @@ const AMBIENT_CAP = 40;
 /** Once-generated soft-circle / chevron textures (see ensureAmbientTextures). */
 const SMOKE_TEX = 'hv-smoke';
 const BIRD_TEX = 'hv-bird';
-/** Six PAL-family cloth colours for villager bodies (deterministic per walker). */
+/** Six PAL-family cloth colours for villager shirts (deterministic per variant). */
 const WALKER_CLOTH: readonly number[] = [
   hexNum(PAL.roofRed),
   hexNum(PAL.roofBlue),
@@ -190,8 +191,27 @@ const WALKER_CLOTH: readonly number[] = [
   hexNum(PAL.accent),
   hexNum(PAL.wood),
 ];
-/** Three warm skin tones for villager heads. */
+/** Three warm skin tones for villager faces. */
 const WALKER_SKIN: readonly number[] = [0xf1c9a5, 0xe0a878, 0xc08552];
+/** Four hair colours (drawn as a cap over the head). */
+const WALKER_HAIR: readonly number[] = [0x4a3728, 0x2b2b2b, 0xcaa15a, 0x7a4a2b];
+/** Number of pre-baked villager texture variants (a cloth×skin×hair combo each). */
+const VILLAGER_VARIANTS = 8;
+/** Villager sprite footprint (px) fed to generateTexture. */
+const VILLAGER_W = 16;
+const VILLAGER_H = 22;
+/** Gait cadence: swap between the idle + step frame this often while moving. */
+const GAIT_MS = 180;
+/** Hard ceiling on live strolling villagers. */
+const MAX_WALKERS = 12;
+
+/** Darken a 0xRRGGBB colour by a factor (for the two-tone shirt hem). */
+const shade = (color: number, f: number): number => {
+  const r = Math.round(((color >> 16) & 0xff) * f);
+  const g = Math.round(((color >> 8) & 0xff) * f);
+  const b = Math.round((color & 0xff) * f);
+  return (r << 16) | (g << 8) | b;
+};
 /** Butterfly wing tints (PAL glow / accent / roofBlue). */
 const BUTTERFLY_TINT: readonly number[] = [
   hexNum(PAL.glow),
@@ -201,16 +221,22 @@ const BUTTERFLY_TINT: readonly number[] = [
 /** Buildings that puff chimney smoke (producing coin buildings). */
 const SMOKE_BUILDINGS: ReadonlySet<string> = new Set(['house', 'bakery', 'manor']);
 
-/** A strolling villager: a `root` container that carries screen position + depth,
- * and an inner `vis` container that bobs/flips independently of the path travel. */
+/** A strolling villager: a `root` container carries screen position + depth (and
+ * a soft shadow), while an inner `vis` container holds the character sprite and
+ * bobs/flips independently of the path travel. The `body` image swaps between the
+ * variant's idle + step textures for a 2-frame walk gait. */
 type Walker = {
   root: Phaser.GameObjects.Container;
   vis: Phaser.GameObjects.Container;
+  body: Phaser.GameObjects.Image;
+  variant: number;
+  frame: 0 | 1;
   tx: number;
   ty: number;
   moveTween: Phaser.Tweens.Tween | undefined;
   bobTween: Phaser.Tweens.Tween | undefined;
   idle: Phaser.Time.TimerEvent | undefined;
+  gait: Phaser.Time.TimerEvent | undefined;
 };
 
 /** A butterfly fluttering a lazy figure-eight around a tree. `anchorKey` is the
@@ -391,6 +417,13 @@ export class Village extends Scene {
     return store.data?.city.theme ?? 'meadow';
   }
 
+  /** The stable per-village terrain seed (city.foundedAt): identical for every
+   * viewer of this village, unique per subreddit install, and never changes
+   * mid-session — so the generated landscape is stable and shared. */
+  private seed(): number {
+    return store.data?.city.foundedAt ?? 0;
+  }
+
   // ── Ground ──────────────────────────────────────────────────────────────────
 
   private buildGround(): void {
@@ -439,8 +472,10 @@ export class Village extends Scene {
     let img: Phaser.GameObjects.Image;
 
     if (!this.isUnlockedTile(x, y)) {
-      // Locked land: a soft desaturated grass band just beyond the ring; deeper
-      // locked tiles are not rendered at all (background void). Not interactive.
+      // Locked land: a soft desaturated band just beyond the ring, raised into
+      // seeded rolling hills so the map edge reads as uneven terrain (safe —
+      // these tiles are never interactive, so the lift can't skew hit-testing).
+      // Deeper locked tiles are not rendered at all (background void).
       const { lo, hi } = this.ringLoHi();
       const inBand =
         x >= lo - LOCKED_BAND &&
@@ -448,7 +483,8 @@ export class Village extends Scene {
         y >= lo - LOCKED_BAND &&
         y <= hi + LOCKED_BAND;
       if (!inBand) return undefined;
-      img = addBlock(this, 'grass-center', sx, sy)
+      const { height } = terrainFor(this.seed(), x, y);
+      img = addBlock(this, bandBlockFor(height), sx, sy, -16 * height)
         .setAlpha(LOCKED_ALPHA)
         .setTint(style.lockedTint);
     } else if (isRiver(x, y)) {
@@ -464,11 +500,19 @@ export class Village extends Scene {
       const p = pathPiece(x, y);
       img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
     } else {
-      img = addBlock(this, 'grass-center', sx, sy);
-      if (style.grassTint !== undefined) img.setTint(style.grassTint);
-      // Sparse deterministic decor on unowned, non-plaza open tiles.
-      if (store.data?.grid[key] === undefined && !isPlaza(x, y)) {
-        const d = decorSprinkle(x, y);
+      // Open grass — seeded per village: an occasional worn-dirt patch breaks up
+      // the flat green, and a density-zoned decor sprinkle adds groves + rocks.
+      const open = store.data?.grid[key] === undefined && !isPlaza(x, y);
+      const terr = terrainFor(this.seed(), x, y);
+      if (open && terr.patch === 'dirt') {
+        img = addBlock(this, 'dirt-center', sx, sy);
+        if (style.dirtTint !== undefined) img.setTint(style.dirtTint);
+      } else {
+        img = addBlock(this, 'grass-center', sx, sy);
+        if (style.grassTint !== undefined) img.setTint(style.grassTint);
+      }
+      if (open) {
+        const d = terr.decor;
         if (d) {
           const sprite = addSurface(this, d, sx, sy).setDepth(sy + 0.5);
           if (style.grassTint !== undefined) sprite.setTint(style.grassTint);
@@ -532,7 +576,7 @@ export class Village extends Scene {
     for (const p of plazaFencePieces()) {
       const { sx, sy } = isoToScreen(p.x, p.y, TILE_W, TILE_H);
       this.dressingParts.push(
-        addSurface(this, p.key, sx, sy).setDepth(sy + 0.4)
+        addSurface(this, p.key, sx, sy).setFlipX(p.flipX).setDepth(sy + 0.4)
       );
     }
     const w = isoToScreen(WELL_TILE.x, WELL_TILE.y, TILE_W, TILE_H);
@@ -586,6 +630,9 @@ export class Village extends Scene {
         this.destroyView(key);
       }
     }
+    // Keep the villager headcount in step with the population (house count),
+    // spawning/despawning only on an actual change — never a random lifecycle.
+    this.reconcileWalkers();
   }
 
   private newView(): TileView {
@@ -1385,6 +1432,72 @@ export class Village extends Scene {
       g.generateTexture(BIRD_TEX, 12, 6);
       g.destroy();
     }
+    this.ensureVillagerTextures();
+  }
+
+  /** Pre-bake the villager sprite set ONCE: a soft shadow, plus every variant
+   * (a cloth×skin×hair combo) in two frames — an idle stance and a mid-step
+   * stance — swapped at runtime for a simple two-frame walk gait. */
+  private ensureVillagerTextures(): void {
+    if (!this.textures.exists('hv-vill-shadow')) {
+      const sg = this.add.graphics();
+      sg.fillStyle(hexNum(PAL.ink), 0.3).fillEllipse(9, 4, 16, 7);
+      sg.generateTexture('hv-vill-shadow', 18, 8);
+      sg.destroy();
+    }
+    for (let v = 0; v < VILLAGER_VARIANTS; v++) {
+      this.drawVillager(v, 0);
+      this.drawVillager(v, 1);
+    }
+  }
+
+  /** Draw one villager variant/frame into a texture. A little rounded character:
+   * a two-tone shirt over stubby legs, a skin-toned face under a hair cap, all
+   * with a soft 1px ink outline. Frame 1 lifts one leg for the walk cycle. */
+  private drawVillager(variant: number, frame: 0 | 1): void {
+    const key = `hv-vill-${variant}-${frame}`;
+    if (this.textures.exists(key)) return;
+    const cloth = WALKER_CLOTH[variant % WALKER_CLOTH.length] ?? hexNum(PAL.roofRed);
+    const clothDark = shade(cloth, 0.78);
+    const skin = WALKER_SKIN[variant % WALKER_SKIN.length] ?? WALKER_SKIN[0]!;
+    const hair = WALKER_HAIR[variant % WALKER_HAIR.length] ?? WALKER_HAIR[0]!;
+    const ink = hexNum(PAL.ink);
+    const legCol = hexNum(PAL.woodDark);
+    const g = this.add.graphics();
+
+    // Legs (behind the torso). Frame 1 strides: left leg forward + up, right back.
+    const legs =
+      frame === 0
+        ? [
+            { x: 4.5, y: 17 },
+            { x: 9, y: 17 },
+          ]
+        : [
+            { x: 3.5, y: 16 },
+            { x: 9.5, y: 17 },
+          ];
+    for (const l of legs) {
+      g.fillStyle(ink, 1).fillRect(l.x - 1, l.y - 1, 4.5, 6);
+      g.fillStyle(legCol, 1).fillRect(l.x, l.y, 2.5, 4);
+    }
+
+    // Torso — rounded, two-tone (shirt over a darker hem).
+    g.fillStyle(ink, 1).fillRoundedRect(3, 8, 10, 11, 4);
+    g.fillStyle(cloth, 1).fillRoundedRect(4, 9, 8, 9, 3);
+    g.fillStyle(clothDark, 1).fillRoundedRect(4, 14, 8, 4, {
+      tl: 0,
+      tr: 0,
+      bl: 3,
+      br: 3,
+    });
+
+    // Head — hair cap sits above a slightly-lower face circle for a peeking rim.
+    g.fillStyle(ink, 1).fillCircle(8, 6, 5);
+    g.fillStyle(hair, 1).fillCircle(8, 5.2, 4.2);
+    g.fillStyle(skin, 1).fillCircle(8, 6.9, 3.4);
+
+    g.generateTexture(key, VILLAGER_W, VILLAGER_H);
+    g.destroy();
   }
 
   /** Live ambient GameObject count (group auto-drops destroyed members). */
@@ -1414,59 +1527,81 @@ export class Village extends Scene {
 
   // ── Villager walkers ─────────────────────────────────────────────────────────
 
-  /** Spawn strolling villagers on the plaza path ring. Count scales with the
-   * village population, clamped to [2,10]; positions are deterministic (seeded by
-   * index). Under reduced motion they stand idle (no tweens) rather than roam. */
-  private spawnWalkers(): void {
+  /** The plaza path-ring tiles villagers spawn onto (deterministic order). */
+  private walkerRing(): Array<{ x: number; y: number }> {
     const ring: Array<{ x: number; y: number }> = [];
     for (let y = PATH_LO; y <= PATH_HI; y++) {
       for (let x = PATH_LO; x <= PATH_HI; x++) {
         if (isPathRing(x, y)) ring.push({ x, y });
       }
     }
+    return ring;
+  }
+
+  /** First spawn — just reconcile to the current population. */
+  private spawnWalkers(): void {
+    this.reconcileWalkers();
+  }
+
+  /** Keep exactly min(population, 12) villagers alive, spawning/despawning only
+   * to close the gap when the house count changes — no random lifecycle. Each
+   * walker's appearance is deterministic by its index (variant = index % 8), and
+   * new ones start on a stable ring tile. */
+  private reconcileWalkers(): void {
+    if (!this.ambient) return;
+    const ring = this.walkerRing();
     if (ring.length === 0) return;
-    const count = Phaser.Math.Clamp(
-      2 + Math.floor(this.population() * 1.5),
-      2,
-      10
-    );
-    for (let i = 0; i < count; i++) {
+    const target = Math.min(this.population(), MAX_WALKERS);
+    while (this.walkers.length > target) {
+      this.removeWalker(this.walkers.length - 1);
+    }
+    while (this.walkers.length < target) {
+      const i = this.walkers.length;
       const tile = ring[(i * 7 + 1) % ring.length];
-      if (!tile) continue;
+      if (!tile) break;
       this.makeWalker(i, tile.x, tile.y);
     }
   }
 
-  private makeWalker(index: number, tx: number, ty: number): void {
-    const cloth = WALKER_CLOTH[index % WALKER_CLOTH.length] ?? hexNum(PAL.roofRed);
-    const skin =
-      WALKER_SKIN[this.hash(index, tx + ty) % WALKER_SKIN.length] ??
-      WALKER_SKIN[0]!;
-    // Contact point at local y=0 (feet on the tile face); the figure rises upward.
-    const outline = this.add.graphics();
-    outline.fillStyle(hexNum(PAL.ink), 0.9).fillRoundedRect(-6, -18, 12, 16, 4);
-    const body = this.add.graphics();
-    body.fillStyle(cloth, 1).fillRoundedRect(-5, -17, 10, 14, 3);
-    const feet = this.add.rectangle(0, -2, 7, 3, hexNum(PAL.woodDark));
-    const head = this.add.circle(0, -19, 3.5, skin);
-    const vis = this.add.container(0, 0, [outline, body, feet, head]);
+  private removeWalker(index: number): void {
+    const w = this.walkers[index];
+    if (!w) return;
+    w.moveTween?.remove();
+    w.bobTween?.remove();
+    w.idle?.remove(false);
+    w.gait?.remove(false);
+    w.root.destroy();
+    this.walkers.splice(index, 1);
+  }
 
+  private makeWalker(index: number, tx: number, ty: number): void {
+    const variant = index % VILLAGER_VARIANTS;
     const { sx, sy } = isoToScreen(tx, ty, TILE_W, TILE_H);
-    const root = this.add.container(sx, sy, [vis]).setDepth(sy + 0.6);
+
+    // Soft shadow sits at the feet on the root (so it never bobs); the character
+    // sprite bobs inside `vis`, its origin at the feet (local 0,0 = tile point).
+    const shadow = this.add.image(0, 0, 'hv-vill-shadow').setAlpha(0.85);
+    const body = this.add.image(0, 0, `hv-vill-${variant}-0`).setOrigin(0.5, 1);
+    const vis = this.add.container(0, 0, [body]);
+    const root = this.add.container(sx, sy, [shadow, vis]).setDepth(sy + 0.6);
     this.ambient?.add(root);
 
     const walker: Walker = {
       root,
       vis,
+      body,
+      variant,
+      frame: 0,
       tx,
       ty,
       moveTween: undefined,
       bobTween: undefined,
       idle: undefined,
+      gait: undefined,
     };
     this.walkers.push(walker);
 
-    if (this.reducedMotion) return; // stand idle — no bob, no roaming
+    if (this.reducedMotion) return; // stand idle — no bob, no gait, no roaming
     walker.bobTween = this.tweens.add({
       targets: vis,
       y: -2,
@@ -1475,7 +1610,23 @@ export class Village extends Scene {
       repeat: -1,
       ease: 'Sine.inOut',
     });
+    walker.gait = this.time.addEvent({
+      delay: GAIT_MS,
+      loop: true,
+      callback: () => this.stepGait(walker),
+    });
     this.walkerStep(walker);
+  }
+
+  /** Advance a walker's 2-frame gait: alternate idle/step textures while it is
+   * actually moving, and settle on the idle frame the moment it stops. */
+  private stepGait(w: Walker): void {
+    if (this.reducedMotion) return;
+    const moving = w.moveTween?.isPlaying() ?? false;
+    const next: 0 | 1 = moving ? (w.frame === 0 ? 1 : 0) : 0;
+    if (next === w.frame) return;
+    w.frame = next;
+    w.body.setTexture(`hv-vill-${w.variant}-${next}`);
   }
 
   /** Pick an adjacent walkable tile (path preferred) and stroll there with a
@@ -1522,10 +1673,9 @@ export class Village extends Scene {
   private spawnButterflies(): void {
     if (this.reducedMotion) return;
     const trees: Array<{ key: string; sx: number; sy: number }> = [];
-    for (const [key] of this.decorImgs) {
-      const { x, y } = parseKey(key);
-      const d = decorSprinkle(x, y);
-      if (d && isTreeDecor(d)) {
+    for (const [key, img] of this.decorImgs) {
+      if (isTreeDecor(img.texture.key)) {
+        const { x, y } = parseKey(key);
         const p = isoToScreen(x, y, TILE_W, TILE_H);
         trees.push({ key, sx: p.sx, sy: p.sy });
       }
@@ -1718,6 +1868,7 @@ export class Village extends Scene {
       w.moveTween?.remove();
       w.bobTween?.remove();
       w.idle?.remove(false);
+      w.gait?.remove(false);
     }
     for (const b of this.butterflies) {
       b.path?.remove();

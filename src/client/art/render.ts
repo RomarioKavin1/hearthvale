@@ -24,6 +24,7 @@
 import type { GameObjects, Scene } from 'phaser';
 import type { SpriteKey } from './manifest';
 import type { VillageTheme } from '../../shared/types';
+import { GRID_SIZE } from '../../shared/catalog';
 import { tileKey } from '../../shared/logic/grid';
 import { isRiver } from '../../shared/logic/expansion';
 
@@ -210,51 +211,152 @@ export const riverPiece = (x: number, y: number): Piece => {
   return { key: 'grass-river-bend', flipX };
 };
 
-// ── Deterministic decor sprinkle ────────────────────────────────────────────
+// ── Decor identity ───────────────────────────────────────────────────────────
 
-const hash2 = (x: number, y: number): number => {
-  let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0;
-  h ^= h >>> 13;
-  h = Math.imul(h, 0x5bd1e995) >>> 0;
-  h ^= h >>> 15;
-  return h >>> 0;
-};
-
-/** Weighted decor palette (trees ~4:1 over rocks) for a lusher village green.
- * Repeats bias the pick; a plain modulo over the array does the weighting. */
-const DECOR_WEIGHTED: readonly SpriteKey[] = [
-  'tree-single',
-  'tree-single',
-  'tree-multiple',
-  'tree-multiple',
-  'tree-pine',
-  'tree-pine',
-  'tree-single',
-  'tree-multiple',
-  'rocks-grass',
-  'rocks-dirt',
-];
-
-/** Decor sprite keys that are trees — the scene gives these a gentle idle sway. */
-export const TREE_DECOR: ReadonlySet<SpriteKey> = new Set<SpriteKey>([
+/** Decor sprite keys that are trees — the scene gives these a gentle idle sway
+ * and hangs butterflies off them. Typed as `string` so the scene can test the
+ * live texture key of a placed decor sprite without a cast. */
+export const TREE_DECOR: ReadonlySet<string> = new Set<string>([
   'tree-single',
   'tree-multiple',
   'tree-pine',
   'tree-pine-large',
 ]);
 
-export const isTreeDecor = (key: SpriteKey): boolean => TREE_DECOR.has(key);
+export const isTreeDecor = (key: string): boolean => TREE_DECOR.has(key);
+
+// ── Seeded per-village terrain ───────────────────────────────────────────────
+//
+// Every village gets its own terrain from a single stable seed — city.foundedAt
+// (identical for every viewer of that village, unique per subreddit install).
+// The functions here are PURE (seed + coords in → terrain out), so the same
+// village always regenerates the same landscape and it only ever changes when
+// the seed changes (never mid-session).
+
+/** mulberry32: a compact, well-distributed seedable PRNG. Same seed → same
+ * stream. Exposed for any future seeded sequence (and unit-tested for stability). */
+export const mulberry32 = (seed: number): (() => number) => {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+/** Hash three integers (seed + tile coords) to a uint32. */
+const hash3 = (s: number, x: number, y: number): number => {
+  let h =
+    (Math.imul(s | 0, 0x27d4eb2d) ^
+      Math.imul(x, 73856093) ^
+      Math.imul(y, 19349663)) >>>
+    0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x5bd1e995) >>> 0;
+  h ^= h >>> 15;
+  return h >>> 0;
+};
+
+/** A stable [0,1) value at an integer lattice point for this seed. */
+const latticeVal = (s: number, gx: number, gy: number): number =>
+  hash3(s, gx, gy) / 4294967296;
+
+/** Smooth value noise at (x,y) on a given cell size: bilinear blend of the four
+ * surrounding lattice values with a smoothstep fade. */
+const valueNoise = (s: number, x: number, y: number, cell: number): number => {
+  const fx = x / cell;
+  const fy = y / cell;
+  const x0 = Math.floor(fx);
+  const y0 = Math.floor(fy);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sy = ty * ty * (3 - 2 * ty);
+  const v00 = latticeVal(s, x0, y0);
+  const v10 = latticeVal(s, x0 + 1, y0);
+  const v01 = latticeVal(s, x0, y0 + 1);
+  const v11 = latticeVal(s, x0 + 1, y0 + 1);
+  const a = v00 + (v10 - v00) * sx;
+  const b = v01 + (v11 - v01) * sx;
+  return a + (b - a) * sy;
+};
+
+/** Two-octave fractal value noise in [0,1]. */
+const fractalNoise = (s: number, x: number, y: number): number => {
+  const n =
+    valueNoise(s, x, y, 3.1) * 0.64 +
+    valueNoise(s ^ 0x9e3779b9, x, y, 1.6) * 0.36;
+  return Math.min(1, Math.max(0, n));
+};
+
+export type Terrain = {
+  /** Quantized elevation 0/1/2 (the value-noise height field). The scene applies
+   * this ONLY to the decorative locked band / void edge so the surrounding land
+   * reads as rolling hills — the claimable playfield is kept flat so hit-testing
+   * (which assumes flat ground) stays pixel-exact. */
+  height: number;
+  /** Ground surface for an open playfield grass tile (a sprinkle of worn dirt). */
+  patch: 'grass' | 'dirt';
+  /** Seeded decor sprite for an open, unclaimed tile (null = bare grass). */
+  decor: SpriteKey | null;
+};
+
+const TREE_PICKS: readonly SpriteKey[] = [
+  'tree-single',
+  'tree-single',
+  'tree-multiple',
+  'tree-pine',
+];
+const ROCK_PICKS: readonly SpriteKey[] = ['rocks-grass', 'rocks-dirt'];
+
+/** Tiles this close to the outer frame of the map are where rock clusters gather. */
+const NEAR_EDGE = 3;
+const isNearEdge = (x: number, y: number): boolean =>
+  x < NEAR_EDGE ||
+  y < NEAR_EDGE ||
+  x >= GRID_SIZE - NEAR_EDGE ||
+  y >= GRID_SIZE - NEAR_EDGE;
 
 /**
- * Deterministic decoration (~14%) for unowned open grass tiles, weighted toward
- * trees with a rock here and there. Purely cosmetic — never affects hit-testing
- * (the scene hit-tests by maths, not sprite picking).
+ * The seeded terrain for one tile: a rolling height field (applied by the scene
+ * only to the outer band), an occasional worn-dirt patch, and a density-zoned
+ * decor sprinkle (lush groves inland, clustered rocks along the wild edges).
+ * Purely cosmetic — never consulted by hit-testing.
  */
-export const decorSprinkle = (x: number, y: number): SpriteKey | null => {
-  const h = hash2(x, y);
-  if (h % 100 >= 14) return null;
-  return DECOR_WEIGHTED[(h >>> 7) % DECOR_WEIGHTED.length] ?? null;
+export const terrainFor = (seed: number, x: number, y: number): Terrain => {
+  const h = fractalNoise(seed, x, y);
+  const height = h > 0.72 ? 2 : h > 0.5 ? 1 : 0;
+
+  const cell = hash3(seed ^ 0x51ed270b, x, y);
+  const patch: 'grass' | 'dirt' = cell % 100 < 6 ? 'dirt' : 'grass';
+
+  let decor: SpriteKey | null = null;
+  if (patch === 'grass') {
+    const r = cell >>> 8;
+    const rockZone = valueNoise(seed ^ 0x1b56c4e9, x, y, 2.3);
+    if (isNearEdge(x, y) && rockZone > 0.62) {
+      // A coarse rock-zone along the map frame — rocks gather in loose clusters.
+      decor = r % 100 < 40 ? (ROCK_PICKS[r % ROCK_PICKS.length] ?? null) : null;
+    } else {
+      // Inland: a low-frequency density zone makes some meadows groves, others open.
+      const zone = valueNoise(seed ^ 0x2545f491, x, y, 4.3);
+      const density = 4 + Math.round(zone * 22); // ~4%..26%
+      if (r % 100 < density) {
+        decor =
+          r % 9 === 0
+            ? (ROCK_PICKS[(r >>> 3) % ROCK_PICKS.length] ?? null)
+            : (TREE_PICKS[(r >>> 3) % TREE_PICKS.length] ?? null);
+      }
+    }
+  }
+  return { height, patch, decor };
 };
+
+/** The block sprite used for a raised locked-band tile at a given seeded height:
+ * a chunky grass block for a low rise, a rocky cap at the highest step. */
+export const bandBlockFor = (height: number): SpriteKey =>
+  height >= 2 ? 'cliff-top' : height >= 1 ? 'grass-block' : 'grass-center';
 
 // ── Plaza dressing: village-square fence + well ──────────────────────────────
 
@@ -262,25 +364,32 @@ export const decorSprinkle = (x: number, y: number): SpriteKey | null => {
  * of the path ring). Non-claimable already (it's inside the plaza block). */
 export const WELL_TILE: { x: number; y: number } = { x: PATH_LO, y: PATH_LO };
 
-export type FencePiece = { x: number; y: number; key: SpriteKey };
+export type FencePiece = { x: number; y: number; key: SpriteKey; flipX: boolean };
 
 /**
- * A low wooden fence hugging the outer edge of the path ring — the 12 border
- * tiles of the [7,10]² plaza block, corners as `fence-wood-corner`, edges as
- * `fence-wood`. The well's corner (WELL_TILE) is skipped so the two don't stack.
- * Deterministic + decorative; these tiles never take a building (plaza block).
+ * A low wooden railing along the TWO camera-facing front edges of the plaza path
+ * ring (the y=PATH_HI and x=PATH_HI edges, which meet at the near corner).
+ *
+ * Fence decision (playtest: "fences are randomly arranged"): Kenney ships
+ * `fence-wood` in a single `_N` orientation only — it cannot face all four sides
+ * of an iso diamond, and the old ring placed the same unflipped sprite on every
+ * border tile (plus a single-orientation corner on all four corners), so three
+ * of every four pieces pointed the wrong way. We keep option (b) but restrict it
+ * to a proven-correct subset: only the two front edges, reusing the EXACT flipX
+ * routing convention that already makes the path tiles read right (native along
+ * the y=const "x-run" edge, flipX along the x=const "y-run" edge). The
+ * single-orientation corner/end sprites are dropped entirely, and the shared
+ * near corner is left open as a natural plaza entrance. The back two edges are
+ * skipped — they sit behind the keep and would only clutter. Result: a tidy,
+ * deliberately-oriented railing framing the front of the village square.
  */
 export const plazaFencePieces = (): FencePiece[] => {
   const pieces: FencePiece[] = [];
-  for (let x = PATH_LO; x <= PATH_HI; x++) {
-    for (let y = PATH_LO; y <= PATH_HI; y++) {
-      const onBorder = x === PATH_LO || x === PATH_HI || y === PATH_LO || y === PATH_HI;
-      if (!onBorder) continue;
-      if (x === WELL_TILE.x && y === WELL_TILE.y) continue;
-      const corner =
-        (x === PATH_LO || x === PATH_HI) && (y === PATH_LO || y === PATH_HI);
-      pieces.push({ x, y, key: corner ? 'fence-wood-corner' : 'fence-wood' });
-    }
+  for (let i = PATH_LO; i < PATH_HI; i++) {
+    // Front-right edge (y = PATH_HI): native orientation runs along x.
+    pieces.push({ x: i, y: PATH_HI, key: 'fence-wood', flipX: false });
+    // Front-left edge (x = PATH_HI): flipX to run along y (matches pathPiece).
+    pieces.push({ x: PATH_HI, y: i, key: 'fence-wood', flipX: true });
   }
   return pieces;
 };
