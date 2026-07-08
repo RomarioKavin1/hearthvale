@@ -22,8 +22,9 @@ import type {
   CityState,
   TileState,
   VillageMessage,
+  VillageTheme,
 } from '../../shared/types';
-import { BUILDING_ART } from '../art/manifest';
+import { BUILDING_ART, roofKeyFor } from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
@@ -38,11 +39,11 @@ import {
   isTreeDecor,
   LOCKED_ALPHA,
   LOCKED_BAND,
-  LOCKED_TINT,
   pathPiece,
   plazaFencePieces,
   riverPiece,
   ROOF_DY,
+  THEMES,
   TILE_H,
   TILE_W,
   WELL_TILE,
@@ -175,6 +176,9 @@ export class Village extends Scene {
   private highlight: Phaser.GameObjects.Graphics | undefined;
   private conn: ReturnType<typeof connectRealtime> | undefined;
   private me: string | null = null;
+  /** The village theme the ground + background were last painted with, so a
+   * {t:'city'} theme change repaints exactly once. */
+  private paintedTheme: VillageTheme = 'meadow';
 
   private pollTimer: number | null = null;
   private lastBarTick = 0;
@@ -305,10 +309,34 @@ export class Village extends Scene {
     return x >= lo && x <= hi && y >= lo && y <= hi;
   }
 
+  /** The current village theme (from the store), defaulting to meadow. */
+  private theme(): VillageTheme {
+    return store.data?.city.theme ?? 'meadow';
+  }
+
   // ── Ground ──────────────────────────────────────────────────────────────────
 
   private buildGround(): void {
     this.paintedRing = this.ringLoHi();
+    this.paintedTheme = this.theme();
+    this.cameras.main.setBackgroundColor(THEMES[this.paintedTheme].skyBg);
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        this.paintGround(x, y);
+      }
+    }
+  }
+
+  /**
+   * Repaint the whole ground + background when the store's theme differs from
+   * what was last painted (mod changed the theme via {t:'city'}). Idempotent —
+   * the paintedTheme guard makes realtime + poll double-delivery a no-op.
+   */
+  private repaintTheme(): void {
+    const theme = this.theme();
+    if (theme === this.paintedTheme) return;
+    this.paintedTheme = theme;
+    this.cameras.main.setBackgroundColor(THEMES[theme].skyBg);
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         this.paintGround(x, y);
@@ -330,6 +358,7 @@ export class Village extends Scene {
     }
 
     const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
+    const style = THEMES[this.theme()];
     let img: Phaser.GameObjects.Image;
 
     if (!this.isUnlockedTile(x, y)) {
@@ -344,23 +373,28 @@ export class Village extends Scene {
       if (!inBand) return undefined;
       img = addBlock(this, 'grass-center', sx, sy)
         .setAlpha(LOCKED_ALPHA)
-        .setTint(LOCKED_TINT);
+        .setTint(style.lockedTint);
     } else if (isRiver(x, y)) {
+      // Rivers untinted — water stays readable across themes.
       const p = riverPiece(x, y);
       img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
     } else if (isKeepPad(x, y)) {
       // Dirt only under the keep 2×2 — the rest of the plaza square is grass.
       img = addBlock(this, 'dirt-center', sx, sy);
+      if (style.dirtTint !== undefined) img.setTint(style.dirtTint);
     } else if (isPathRing(x, y)) {
+      // Paths untinted — kept readable per the theme spec.
       const p = pathPiece(x, y);
       img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
     } else {
       img = addBlock(this, 'grass-center', sx, sy);
+      if (style.grassTint !== undefined) img.setTint(style.grassTint);
       // Sparse deterministic decor on unowned, non-plaza open tiles.
       if (store.data?.grid[key] === undefined && !isPlaza(x, y)) {
         const d = decorSprinkle(x, y);
         if (d) {
           const sprite = addSurface(this, d, sx, sy).setDepth(sy + 0.5);
+          if (style.grassTint !== undefined) sprite.setTint(style.grassTint);
           this.decorImgs.set(key, sprite);
           if (isTreeDecor(d) && !this.reducedMotion) {
             this.tweens.add({
@@ -465,6 +499,8 @@ export class Village extends Scene {
     // Ring bounds can also change via the poll/refresh path (a dropped realtime
     // {t:'ring'} message) — repaint the ground whenever they differ.
     this.repaintRing();
+    // A theme change (mod form) can also arrive via poll — repaint if it differs.
+    this.repaintTheme();
     for (const [key, tile] of Object.entries(data.grid)) {
       this.syncTile(key, tile);
     }
@@ -506,7 +542,8 @@ export class Village extends Scene {
     const hasBuilding = tile.buildingId !== undefined;
     const constructing = hasBuilding && this.now() < tile.readyAt;
     const cosmetic = tile.cosmetic ?? '-';
-    const sig = `${tile.buildingId ?? '-'}|${tile.tier}|${constructing ? 'c' : 'd'}|${mine ? 'm' : 'o'}|${cosmetic}`;
+    const roofColor = tile.roofColor ?? '-';
+    const sig = `${tile.buildingId ?? '-'}|${tile.tier}|${constructing ? 'c' : 'd'}|${mine ? 'm' : 'o'}|${cosmetic}|${roofColor}`;
 
     // A claimed tile never keeps a loose decor sprinkle beneath it.
     const decor = this.decorImgs.get(key);
@@ -582,9 +619,14 @@ export class Village extends Scene {
     if (art.kind === 'stacked') {
       // Base lifted one block step onto the tile face; roof one more step up.
       const base = addBlock(this, art.base, sx, sy, BASE_DY).setDepth(sy + 1);
+      // Painted roofs keep the building's shape but swap colour; fall back to the
+      // default tier colour progression when unpainted.
+      const roofKey =
+        roofKeyFor(tile.buildingId, tile.tier, tile.roofColor) ??
+        art.roofByTier[tile.tier];
       const roof = addBlock(
         this,
-        art.roofByTier[tile.tier],
+        roofKey,
         sx,
         sy,
         BASE_DY + ROOF_DY
@@ -993,6 +1035,8 @@ export class Village extends Scene {
       case 'city': {
         store.patchCity(msg.city);
         this.updateLandmark();
+        // Mod may have changed the theme — repaint ground + background if so.
+        this.repaintTheme();
         break;
       }
       case 'stage': {

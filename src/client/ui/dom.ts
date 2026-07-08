@@ -766,6 +766,22 @@ const CSS = `
 .hv-row-line b { font-variant-numeric: tabular-nums; }
 .hv-stars { color: var(--straw); letter-spacing: 2px; font-size: 15px; }
 
+.hv-swatches { display: flex; gap: 10px; }
+.hv-swatch {
+  flex: 1 1 0;
+  height: 34px;
+  border: 3px solid var(--ink);
+  border-radius: 9px;
+  box-shadow: 0 3px 0 var(--wood-dark);
+  cursor: pointer;
+  padding: 0;
+}
+.hv-swatch:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark); }
+.hv-swatch.is-selected { outline: 3px solid var(--glow); outline-offset: 2px; }
+.hv-swatch[disabled] { cursor: default; }
+.hv-swatch.is-selected[disabled] { opacity: 1; }
+.hv-swatch[disabled]:not(.is-selected) { opacity: 0.55; }
+
 .hv-fill {
   position: relative;
   height: 16px;

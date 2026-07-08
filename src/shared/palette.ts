@@ -57,6 +57,13 @@ export const PAL = {
   cream: '#fff3d9',
   ink: '#3b3347',
   accent: '#e8905a',
+
+  // Paintable-roof swatches — CSS approximations of the four Kenney roof colours
+  // (brown/green/purple/beige), used for the tile-sheet colour buttons.
+  roofBrown: '#a3623f',
+  roofGreen: '#6fa653',
+  roofPurple: '#8b6fb5',
+  roofBeige: '#e3c58f',
 } as const;
 
 export type PaletteKey = keyof typeof PAL;

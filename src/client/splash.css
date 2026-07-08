@@ -51,6 +51,25 @@ body {
   );
 }
 
+/* Per-theme sky variants (mod-set). Meadow keeps the default warm gradient;
+   the others re-tint the three sky stops. Kept subtle so the diorama still
+   reads as the same floating village. */
+#splash-root.hv-theme-autumn {
+  --sky-top: #ffe9c9;
+  --sky-mid: #f6b06a;
+  --sky-low: #d97b4a;
+}
+#splash-root.hv-theme-twilight {
+  --sky-top: #d7cbf0;
+  --sky-mid: #9a86c7;
+  --sky-low: #6a5a9a;
+}
+#splash-root.hv-theme-pale {
+  --sky-top: #f4f8ee;
+  --sky-mid: #dfe9d5;
+  --sky-low: #c3d4b6;
+}
+
 /* ── Scene (warm sky with the floating island) ────────────────── */
 .hv-scene {
   position: relative;

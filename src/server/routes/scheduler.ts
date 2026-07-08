@@ -31,6 +31,7 @@ scheduler.post('/daily-cycle', async (c) => {
     festival: FestivalCategory;
     weather: Weather;
     dayNumber: number;
+    villageName: string;
     stockpile: Stockpile;
     prices: Prices;
     offers: TraderOffer[];
@@ -45,10 +46,10 @@ scheduler.post('/daily-cycle', async (c) => {
     );
   }
 
-  const { festival, weather, dayNumber, prices } = rotation;
+  const { festival, weather, dayNumber, villageName, prices } = rotation;
   let post: Awaited<ReturnType<typeof createDailyPost>>;
   try {
-    post = await createDailyPost(festival, dayNumber, weather);
+    post = await createDailyPost(festival, dayNumber, weather, villageName);
   } catch (error) {
     console.error('daily-cycle: daily post creation failed:', error);
     return c.json<CycleResponse>(

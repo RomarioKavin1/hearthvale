@@ -1,7 +1,17 @@
 import type { BuildingSpec, TierStats } from '../../shared/catalog';
-import { CATALOG, DEMOLISH_REFUND, investedCost, tierStats } from '../../shared/catalog';
+import {
+  CATALOG,
+  DEMOLISH_REFUND,
+  PAINT_COST,
+  investedCost,
+  isStackedBuilding,
+  tierStats,
+  villageDisplayName,
+} from '../../shared/catalog';
+import { PAL } from '../../shared/palette';
 import type {
   PlayerState,
+  RoofColor,
   StateResponse,
   Tier,
   TileState,
@@ -301,8 +311,79 @@ const renderMineBuilding = (
   }
 
   renderUpgrade(stack, me, spec, tile, x, y, key);
+  renderPaint(stack, me, tile, x, y, key);
   renderDemolish(stack, spec, tile, x, y, key);
   body.appendChild(stack);
+};
+
+// ── Paintable roofs (stacked buildings only) ─────────────────────────────────
+
+/** The four paintable roof colours and their CSS swatch colours (from PAL). */
+const ROOF_SWATCHES: ReadonlyArray<{ color: RoofColor; label: string; css: string }> = [
+  { color: 'brown', label: 'Brown', css: PAL.roofBrown },
+  { color: 'green', label: 'Green', css: PAL.roofGreen },
+  { color: 'purple', label: 'Purple', css: PAL.roofPurple },
+  { color: 'beige', label: 'Beige', css: PAL.roofBeige },
+];
+
+/**
+ * A "Paint roof — 25 coins" row of four colour swatches, shown only for stacked
+ * buildings (flat crops/decor have no roof). The current colour is highlighted;
+ * tapping a swatch spends PAINT_COST and repaints. Pending-guarded; errors toast.
+ */
+const renderPaint = (
+  stack: HTMLElement,
+  me: PlayerState,
+  tile: TileState,
+  x: number,
+  y: number,
+  key: string
+): void => {
+  const bid = tile.buildingId;
+  if (bid === undefined || !isStackedBuilding(bid)) return;
+
+  const affordable = me.coins >= PAINT_COST;
+  stack.appendChild(
+    el('div', {
+      cls: 'hv-row-line',
+      children: [
+        el('span', { text: 'Paint roof' }),
+        el('b', {
+          cls: 'hv-chain',
+          children: [iconEl('icon-coin', 14), el('span', { text: fmtInt(PAINT_COST) })],
+        }),
+      ],
+    })
+  );
+
+  const row = el('div', { cls: 'hv-swatches' });
+  for (const sw of ROOF_SWATCHES) {
+    const selected = tile.roofColor === sw.color;
+    const btn = el('button', {
+      cls: `hv-swatch${selected ? ' is-selected' : ''}`,
+      attrs: {
+        type: 'button',
+        title: sw.label,
+        'aria-label': `Paint roof ${sw.label}`,
+        style: `background:${sw.css}`,
+      },
+    });
+    if (selected || !affordable || isPending('paint')) btn.disabled = true;
+    btn.addEventListener('click', () => {
+      void action('paint', async () => {
+        const res = await api.paint(x, y, sw.color);
+        store.applyMutation({ key, tile: res.tile, me: res.me });
+        toast(`Roof painted ${sw.label.toLowerCase()}`, 'gain');
+      });
+    });
+    row.appendChild(btn);
+  }
+  stack.appendChild(row);
+  if (!affordable) {
+    stack.appendChild(
+      el('p', { cls: 'hv-note hv-muted', text: `Need ${fmtInt(PAINT_COST)} coins to paint.` })
+    );
+  }
 };
 
 /** Weather line for a producer, or null when today's weather doesn't apply. */
@@ -645,7 +726,7 @@ const MENU: MenuItem[] = [
 
 export const openMenuSheet = (): void => {
   openSheet({
-    title: 'Menu',
+    title: villageDisplayName(store.data?.city.villageName ?? ''),
     render: (body) => {
       const data = store.data;
       const stack = el('div', { cls: 'hv-stack' });

@@ -1,4 +1,4 @@
-import type { BuildingId, BuildingRole, Good, Tier } from './types';
+import type { BuildingId, BuildingRole, Good, Tier, VillageTheme } from './types';
 
 export type BuildingSpec = {
   id: BuildingId;
@@ -200,6 +200,83 @@ export const investedCost = (spec: BuildingSpec, tier: Tier): number => {
 
 /** Fraction of a building's invested cost refunded when it is demolished. */
 export const DEMOLISH_REFUND: number = 0.5;
+
+// ---------------------------------------------------------------------------
+// Roof painting (player customization).
+// ---------------------------------------------------------------------------
+
+/** Coins charged to repaint a building's roof (constant across tiers/colours). */
+export const PAINT_COST: number = 25;
+
+/**
+ * The buildings whose art is a wall+roof stack — the only ones a paintable roof
+ * applies to. Mirrors the `kind: 'stacked'` entries in the client art manifest
+ * (`BUILDING_ART`): flat buildings (crops/trees/rocks/decor) have no roof sprite
+ * so the paint option is hidden for them.
+ */
+export const STACKED_BUILDINGS: ReadonlySet<BuildingId> = new Set<BuildingId>([
+  'cottage',
+  'windmill',
+  'sawmill',
+  'kiln',
+  'bakery',
+  'manor',
+]);
+
+/** True when a building renders as a wall+roof stack (roof is paintable). */
+export const isStackedBuilding = (id: BuildingId): boolean =>
+  STACKED_BUILDINGS.has(id);
+
+// ---------------------------------------------------------------------------
+// Village name + theme (mod customization).
+// ---------------------------------------------------------------------------
+
+/** Display fallback when a subreddit has not set a village name. */
+export const DEFAULT_VILLAGE_NAME: string = 'Hearthvale';
+
+/** Maximum length of a mod-set village name. */
+export const MAX_VILLAGE_NAME: number = 24;
+
+/** Allowed village-name characters: letters, numbers, spaces, apostrophe, hyphen. */
+const VILLAGE_NAME_RE = /^[\p{L}\p{N} '-]+$/u;
+
+/**
+ * Validate a (trimmed) mod-set village name. Empty is valid (clears the name,
+ * reverting to the fallback); otherwise it must be within the length limit and
+ * contain only letters, numbers, spaces, apostrophes and hyphens.
+ */
+export const isValidVillageName = (name: string): boolean => {
+  if (name.length === 0) return true;
+  if (name.length > MAX_VILLAGE_NAME) return false;
+  return VILLAGE_NAME_RE.test(name);
+};
+
+/** The name to display for a village: the mod-set name, or the fallback. */
+export const villageDisplayName = (name: string): string =>
+  name.trim().length > 0 ? name.trim() : DEFAULT_VILLAGE_NAME;
+
+/** The four selectable themes, in a stable order for the mod form + guards. */
+export const VILLAGE_THEMES: VillageTheme[] = [
+  'meadow',
+  'autumn',
+  'twilight',
+  'pale',
+];
+
+/** Human labels for each theme (mod form select options). */
+export const THEME_LABELS: Record<VillageTheme, string> = {
+  meadow: 'Meadow (green)',
+  autumn: 'Autumn (warm)',
+  twilight: 'Twilight (purple)',
+  pale: 'Pale (light)',
+};
+
+/** Runtime guard: true when a string is one of the four village themes. */
+export const isVillageTheme = (value: unknown): value is VillageTheme =>
+  value === 'meadow' ||
+  value === 'autumn' ||
+  value === 'twilight' ||
+  value === 'pale';
 
 // ---------------------------------------------------------------------------
 // Market pricing.

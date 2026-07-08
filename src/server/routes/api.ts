@@ -14,6 +14,7 @@ import {
   doContribute,
   doDemolish,
   doNameStage,
+  doPaint,
   doSell,
   doShare,
   doTrade,
@@ -23,6 +24,7 @@ import {
   isCategory,
   isGood,
   isProcessedGood,
+  isRoofColor,
   isShareKind,
   loadLeaderboards,
   loadState,
@@ -136,6 +138,23 @@ api.post('/demolish', async (c) => {
     if (error instanceof OpError) return c.json(...fail(error.message, error.status));
     console.error('POST /api/demolish failed:', error);
     return c.json(...fail('Failed to demolish.', 500));
+  }
+});
+
+api.post('/paint', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown; color?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid tile coordinates.', 400));
+    if (!isRoofColor(body.color)) return c.json(...fail('Unknown roof colour.', 400));
+    const result = await doPaint(userId, x, y, body.color);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/paint failed:', error);
+    return c.json(...fail('Failed to paint roof.', 500));
   }
 });
 

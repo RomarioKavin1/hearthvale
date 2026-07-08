@@ -17,7 +17,11 @@ import { PAL } from '../shared/palette';
 
 type Weather = 'sunny' | 'rain' | 'clear' | 'harvestmoon';
 
+type Theme = 'meadow' | 'autumn' | 'twilight' | 'pale';
+
 type Summary = {
+  villageName: string;
+  theme: Theme;
   buildings: number;
   players: number;
   landmarkStage: number;
@@ -26,6 +30,11 @@ type Summary = {
   hotGood: string;
   hotPrice: number;
 };
+
+const DEFAULT_VILLAGE_NAME = 'Hearthvale';
+
+const displayName = (name: string): string =>
+  name.trim().length > 0 ? name.trim() : DEFAULT_VILLAGE_NAME;
 
 const WEATHER_LABEL: Record<Weather, string> = {
   sunny: 'Sunny',
@@ -116,9 +125,19 @@ const isWeather = (value: unknown): value is Weather =>
   value === 'clear' ||
   value === 'harvestmoon';
 
+const isTheme = (value: unknown): value is Theme =>
+  value === 'meadow' ||
+  value === 'autumn' ||
+  value === 'twilight' ||
+  value === 'pale';
+
 const isSummary = (body: unknown): body is Summary =>
   typeof body === 'object' &&
   body !== null &&
+  'villageName' in body &&
+  typeof body.villageName === 'string' &&
+  'theme' in body &&
+  isTheme(body.theme) &&
   'buildings' in body &&
   typeof body.buildings === 'number' &&
   'players' in body &&
@@ -138,12 +157,26 @@ const fmtInt = (n: number): string => Math.round(n).toLocaleString('en-US');
 
 const chip = (text: string): HTMLSpanElement => el('span', { cls: 'hv-chip', text });
 
+const THEME_CLASSES: Record<Theme, string> = {
+  meadow: 'hv-theme-meadow',
+  autumn: 'hv-theme-autumn',
+  twilight: 'hv-theme-twilight',
+  pale: 'hv-theme-pale',
+};
+
 const fillStats = (
+  root: HTMLElement,
+  titleEl: HTMLHeadingElement,
   statsEl: HTMLDivElement,
   hookEl: HTMLDivElement,
   keepEl: HTMLDivElement,
   s: Summary
 ): void => {
+  // Village name in the title line; sky theme on the root.
+  titleEl.textContent = displayName(s.villageName);
+  for (const cls of Object.values(THEME_CLASSES)) root.classList.remove(cls);
+  root.classList.add(THEME_CLASSES[s.theme]);
+
   statsEl.replaceChildren(
     chip(`${fmtInt(s.buildings)} buildings`),
     chip(`${fmtInt(s.players)} villagers`),
@@ -166,6 +199,8 @@ const fillStats = (
 };
 
 const loadSummary = async (
+  root: HTMLElement,
+  titleEl: HTMLHeadingElement,
   statsEl: HTMLDivElement,
   hookEl: HTMLDivElement,
   keepEl: HTMLDivElement
@@ -175,7 +210,7 @@ const loadSummary = async (
     if (!res.ok) throw new Error('summary unavailable');
     const body: unknown = await res.json();
     if (!isSummary(body)) throw new Error('bad summary shape');
-    fillStats(statsEl, hookEl, keepEl, body);
+    fillStats(root, titleEl, statsEl, hookEl, keepEl, body);
   } catch {
     // Silent in the feed: drop the stats + hook, keep the scene, title and CTA.
     statsEl.classList.add('is-hidden');
@@ -187,6 +222,7 @@ const loadSummary = async (
 
 const buildContent = (): {
   content: HTMLDivElement;
+  titleEl: HTMLHeadingElement;
   statsEl: HTMLDivElement;
   hookEl: HTMLDivElement;
   cta: HTMLButtonElement;
@@ -198,7 +234,9 @@ const buildContent = (): {
     content.appendChild(el('div', { cls: 'hv-greet', text: `Welcome back, u/${name}` }));
   }
 
-  content.appendChild(el('h1', { cls: 'hv-title', text: 'Hearthvale' }));
+  // Defaults to the fallback name; the live summary swaps in the mod-set name.
+  const titleEl = el('h1', { cls: 'hv-title', text: DEFAULT_VILLAGE_NAME });
+  content.appendChild(titleEl);
   content.appendChild(
     el('p', { cls: 'hv-tagline', text: 'a village your subreddit builds together' })
   );
@@ -215,7 +253,7 @@ const buildContent = (): {
   cta.type = 'button';
   content.appendChild(cta);
 
-  return { content, statsEl, hookEl, cta };
+  return { content, titleEl, statsEl, hookEl, cta };
 };
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -228,7 +266,7 @@ const mount = (): void => {
   const { scene, keepEl } = buildScene();
   root.appendChild(scene);
 
-  const { content, statsEl, hookEl, cta } = buildContent();
+  const { content, titleEl, statsEl, hookEl, cta } = buildContent();
   root.appendChild(content);
 
   // Whole card taps through; the button is the visual affordance. A one-shot
@@ -246,7 +284,7 @@ const mount = (): void => {
   root.addEventListener('click', enter);
 
   // Fetch after first paint — nothing blocks the initial render.
-  void loadSummary(statsEl, hookEl, keepEl);
+  void loadSummary(root, titleEl, statsEl, hookEl, keepEl);
 };
 
 if (document.readyState === 'loading') {

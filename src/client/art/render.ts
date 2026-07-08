@@ -23,12 +23,57 @@
 
 import type { GameObjects, Scene } from 'phaser';
 import type { SpriteKey } from './manifest';
+import type { VillageTheme } from '../../shared/types';
 import { tileKey } from '../../shared/logic/grid';
 import { isRiver } from '../../shared/logic/expansion';
 
 /** Warm ink backdrop behind the diorama (see Task V3 — chosen over near-black
  * PAL.night so the smooth Sketch Town blocks read warmer). */
 export const BG = '#322a3d';
+
+/**
+ * Per-theme recolouring applied to the diorama's GROUND (grass + dirt + decor)
+ * and background — buildings, paths and rivers stay untinted so the art stays
+ * readable. Tints are deliberately gentle multiply-style shifts so the base
+ * Sketch Town look is still recognizable.
+ *
+ * - `grassTint` / `dirtTint`: Phaser `setTint` colour on grass / dirt ground
+ *   tiles + decor (undefined = leave the sprite's native colour).
+ * - `skyBg`: the Phaser camera background colour.
+ * - `lockedTint`: the tint for the desaturated locked-land band.
+ */
+export type ThemeStyle = {
+  grassTint?: number;
+  dirtTint?: number;
+  skyBg: string;
+  lockedTint: number;
+};
+
+export const THEMES: Record<VillageTheme, ThemeStyle> = {
+  // Meadow: the untouched base look (lockedTint mirrors LOCKED_TINT below).
+  meadow: { skyBg: BG, lockedTint: 0x3a3550 },
+  // Autumn: warm orange wash over the greens, a slightly warmer backdrop.
+  autumn: {
+    grassTint: 0xffcf8a,
+    dirtTint: 0xffcaa0,
+    skyBg: '#3a2e33',
+    lockedTint: 0x4a3a44,
+  },
+  // Twilight: cool purple shift over the ground on a darker sky.
+  twilight: {
+    grassTint: 0xcdc0ff,
+    dirtTint: 0xbcaee6,
+    skyBg: '#28243a',
+    lockedTint: 0x342f4e,
+  },
+  // Pale: desaturated, brighter ground on a lighter backdrop.
+  pale: {
+    grassTint: 0xe8f0e0,
+    dirtTint: 0xe4e0d4,
+    skyBg: '#3c3a46',
+    lockedTint: 0x45455a,
+  },
+};
 
 export const IMG_W = 128;
 export const IMG_H = 176;

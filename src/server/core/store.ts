@@ -9,6 +9,7 @@ import type {
 } from '../../shared/types';
 import type { TileState } from '../../shared/types';
 import { GOODS, emptyStockpile } from '../../shared/logic/economy';
+import { isVillageTheme } from '../../shared/catalog';
 
 const GRID_KEY = 'city:grid';
 const CITY_KEY = 'city:state';
@@ -91,6 +92,8 @@ export const getCity = async (): Promise<CityState> => {
   const h = await redis.hGetAll(CITY_KEY);
   return {
     foundedAt: num(h.foundedAt, Date.now()),
+    villageName: h.villageName ?? '',
+    theme: isVillageTheme(h.theme) ? h.theme : 'meadow',
     festival: isCategory(h.festival) ? h.festival : 'coins',
     festivalDate: h.festivalDate ? h.festivalDate : todayUtc(),
     landmarkStage: num(h.landmarkStage, 0),
@@ -108,6 +111,8 @@ export const getCity = async (): Promise<CityState> => {
 export const putCity = async (c: Partial<CityState>): Promise<void> => {
   const fields: Record<string, string> = {};
   if (c.foundedAt !== undefined) fields.foundedAt = String(c.foundedAt);
+  if (c.villageName !== undefined) fields.villageName = c.villageName;
+  if (c.theme !== undefined) fields.theme = c.theme;
   if (c.festival !== undefined) fields.festival = c.festival;
   if (c.festivalDate !== undefined) fields.festivalDate = c.festivalDate;
   if (c.landmarkStage !== undefined) fields.landmarkStage = String(c.landmarkStage);

@@ -2,7 +2,7 @@
 // Generated for Task V0 of the v2 rework (docs/plans/2026-07-08-hearthvale-v2.md).
 // Nothing imports this file yet — it is wired up in Task V3 (renderer) and Task V4 (HUD).
 
-import type { BuildingId, Tier } from '../../shared/types';
+import type { BuildingId, RoofColor, Tier } from '../../shared/types';
 
 /** All bundled sprite + icon keys. File name (kebab-case, no extension) is the key. */
 export type SpriteKey =
@@ -291,8 +291,81 @@ export function isIconKey(key: SpriteKey): boolean {
  *   (no roof layer — used for crops/trees/rocks/decor that aren't wall+roof buildings).
  */
 export type BuildingArt =
-  | { kind: 'stacked'; base: SpriteKey; roofByTier: Record<Tier, SpriteKey> }
+  | {
+      kind: 'stacked';
+      base: SpriteKey;
+      /** The roof silhouette shape (one of the six); a painted roof keeps this
+       * shape but swaps the colour. */
+      shape: RoofShape;
+      roofByTier: Record<Tier, SpriteKey>;
+    }
   | { kind: 'flat'; byTier: Record<Tier, SpriteKey[]> };
+
+/** The six roof silhouette shapes shared across stacked buildings. */
+export type RoofShape =
+  | 'gable'
+  | 'point'
+  | 'round'
+  | 'rounded'
+  | 'slant'
+  | 'church';
+
+/** Every roof sprite keyed by shape then colour — the full 6×4 grid. Used by
+ * `roofKeyFor` to swap a painted roof's colour while keeping its shape. */
+export const ROOF_SHAPE: Record<RoofShape, Record<RoofColor, SpriteKey>> = {
+  gable: {
+    brown: 'roof-gable-brown',
+    green: 'roof-gable-green',
+    purple: 'roof-gable-purple',
+    beige: 'roof-gable-beige',
+  },
+  point: {
+    brown: 'roof-point-brown',
+    green: 'roof-point-green',
+    purple: 'roof-point-purple',
+    beige: 'roof-point-beige',
+  },
+  round: {
+    brown: 'roof-round-brown',
+    green: 'roof-round-green',
+    purple: 'roof-round-purple',
+    beige: 'roof-round-beige',
+  },
+  rounded: {
+    brown: 'roof-rounded-brown',
+    green: 'roof-rounded-green',
+    purple: 'roof-rounded-purple',
+    beige: 'roof-rounded-beige',
+  },
+  slant: {
+    brown: 'roof-slant-brown',
+    green: 'roof-slant-green',
+    purple: 'roof-slant-purple',
+    beige: 'roof-slant-beige',
+  },
+  church: {
+    brown: 'roof-church-brown',
+    green: 'roof-church-green',
+    purple: 'roof-church-purple',
+    beige: 'roof-church-beige',
+  },
+};
+
+/**
+ * The roof sprite for a stacked building: its painted colour at any tier when
+ * `roofColor` is set, otherwise the default tier colour progression. Returns
+ * null for flat buildings (no roof sprite to paint).
+ */
+export const roofKeyFor = (
+  buildingId: BuildingId,
+  tier: Tier,
+  roofColor?: RoofColor
+): SpriteKey | null => {
+  const art = BUILDING_ART[buildingId];
+  if (art.kind !== 'stacked') return null;
+  if (roofColor) return ROOF_SHAPE[art.shape][roofColor];
+  return art.roofByTier[tier];
+};
 
 /**
  * Tier color progression used across every stacked building for a consistent read at a
@@ -303,6 +376,7 @@ export const BUILDING_ART: Record<BuildingId, BuildingArt> = {
   cottage: {
     kind: 'stacked',
     base: 'building-door',
+    shape: 'gable',
     roofByTier: { 1: 'roof-gable-brown', 2: 'roof-gable-green', 3: 'roof-gable-purple' },
   },
   // Windmill: stack base (taller silhouette) + point roof — closest available shape to a
@@ -310,30 +384,35 @@ export const BUILDING_ART: Record<BuildingId, BuildingArt> = {
   windmill: {
     kind: 'stacked',
     base: 'building-stack',
+    shape: 'point',
     roofByTier: { 1: 'roof-point-brown', 2: 'roof-point-green', 3: 'roof-point-purple' },
   },
   // Sawmill: corner base (angled silhouette, reads distinct from cottage) + slant roof.
   sawmill: {
     kind: 'stacked',
     base: 'building-corner',
+    shape: 'slant',
     roofByTier: { 1: 'roof-slant-brown', 2: 'roof-slant-green', 3: 'roof-slant-purple' },
   },
   // Mason's Kiln: window-beige base (stone-toned wall) + rounded (kiln-dome-like) roof.
   kiln: {
     kind: 'stacked',
     base: 'building-window-beige',
+    shape: 'rounded',
     roofByTier: { 1: 'roof-rounded-brown', 2: 'roof-rounded-green', 3: 'roof-rounded-purple' },
   },
   // Bakery: door-windows base (shopfront silhouette) + round roof.
   bakery: {
     kind: 'stacked',
     base: 'building-door-windows',
+    shape: 'round',
     roofByTier: { 1: 'roof-round-brown', 2: 'roof-round-green', 3: 'roof-round-purple' },
   },
   // Manor: stack-beige base (grandest wall) + church roof (most ornate shape) — prestige tier.
   manor: {
     kind: 'stacked',
     base: 'building-stack-beige',
+    shape: 'church',
     roofByTier: { 1: 'roof-church-brown', 2: 'roof-church-green', 3: 'roof-church-purple' },
   },
   // Wheat Field: furrow crop growth-state progression, no base/roof (flat crop tile).

@@ -1,6 +1,7 @@
 import { reddit } from '@devvit/web/server';
 import type { FestivalCategory, Prices, Weather } from '../../shared/types';
 import { GOODS } from '../../shared/logic/economy';
+import { villageDisplayName } from '../../shared/catalog';
 
 export const createPost = async () => {
   return await reddit.submitCustomPost({
@@ -30,16 +31,19 @@ export const festivalName = (festival: FestivalCategory): string =>
 export const weatherName = (weather: Weather): string => WEATHER_NAME[weather];
 
 /**
- * The daily village post. Title carries the day number, the day's festival, and
- * today's weather — e.g. `Hearthvale Day 4 — Harvest Festival · Rain`.
+ * The daily village post. Title leads with the village name (falling back to
+ * "Hearthvale"), then the day number, the day's festival, and today's weather —
+ * e.g. `Willowbrook — Day 4: Harvest Festival · Rain`.
  */
 export const createDailyPost = async (
   festival: FestivalCategory,
   dayNumber: number,
-  weather: Weather
+  weather: Weather,
+  villageName: string
 ) => {
+  const name = villageDisplayName(villageName);
   return await reddit.submitCustomPost({
-    title: `Hearthvale Day ${dayNumber} — ${festivalName(festival)} Festival · ${weatherName(weather)}`,
+    title: `${name} — Day ${dayNumber}: ${festivalName(festival)} Festival · ${weatherName(weather)}`,
   });
 };
 

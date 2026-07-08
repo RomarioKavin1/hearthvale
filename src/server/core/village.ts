@@ -10,12 +10,14 @@ import type {
   PlayerState,
   Prices,
   QuestView,
+  RoofColor,
   StateResponse,
   Stockpile,
   Summary,
   Tier,
   TileState,
   TraderOffer,
+  VillageTheme,
 } from '../../shared/types';
 import type { BuildingId } from '../../shared/types';
 import {
@@ -25,10 +27,14 @@ import {
   KEEP_STAGE_COSTS,
   MARKET,
   MAX_LEVEL,
+  PAINT_COST,
   STAGE_MIN_PAYOUT,
   STAGE_NAME_WORDS,
   STAGE_POT,
   investedCost,
+  isStackedBuilding,
+  isValidVillageName,
+  isVillageTheme,
   tierStats,
 } from '../../shared/catalog';
 import type { BuildingSpec } from '../../shared/catalog';
@@ -152,6 +158,27 @@ export const validateDemolish = (
 /** Coins refunded on demolish: floor(DEMOLISH_REFUND × invested cost). Pure. */
 export const demolishRefund = (spec: BuildingSpec, tier: Tier): number =>
   Math.floor(DEMOLISH_REFUND * investedCost(spec, tier));
+
+/**
+ * A roof may be painted by the plot's owner when it holds a completed stacked
+ * building and the player can afford the flat PAINT_COST. Flat buildings
+ * (crops/trees/decor) have no roof, so they are rejected. Returns an error
+ * message or null. Pure — unit-tested in village.test.ts.
+ */
+export const validatePaint = (
+  player: PlayerState,
+  tile: TileState,
+  now: number
+): string | null => {
+  if (tile.owner !== player.id) return 'You do not own this plot.';
+  if (!tile.buildingId) return 'There is no building here to paint.';
+  if (!isStackedBuilding(tile.buildingId)) {
+    return 'This building has no roof to paint.';
+  }
+  if (now < tile.readyAt) return 'This building is still under construction.';
+  if (player.coins < PAINT_COST) return 'Not enough coins to paint this roof.';
+  return null;
+};
 
 /** Recompute level/plots from current xp. Only ever advances. */
 export const applyLevelUp = (player: PlayerState): PlayerState => {
@@ -1295,6 +1322,8 @@ export const loadSummary = async (
 
   const hot = hottestGood(stockpile);
   return {
+    villageName: city.villageName,
+    theme: city.theme,
     buildings,
     players: owners.size,
     landmarkStage: stage,
@@ -1376,6 +1405,58 @@ export const doBoost = async (
   await maybeFlair(before, me);
   await broadcastTile(key, boosted);
   return { tile: boosted, me };
+};
+
+/**
+ * Paint a stacked building's roof a chosen colour for a flat PAINT_COST. The
+ * roof colour is purely cosmetic; the golden-roof cosmetic still overrides it
+ * visually on the client. Broadcasts the updated tile.
+ */
+export const doPaint = async (
+  userId: string,
+  x: number,
+  y: number,
+  color: RoofColor
+): Promise<{ tile: TileState; me: PlayerState }> => {
+  const key = tileKey(x, y);
+  const [tile, player] = await Promise.all([getTile(key), ensurePlayer(userId)]);
+  if (!tile) throw new OpError(404, 'You must claim this plot first.');
+
+  const now = Date.now();
+  const err = validatePaint(player, tile, now);
+  if (err) throw new OpError(400, err);
+
+  const painted: TileState = { ...tile, roofColor: color };
+  const me: PlayerState = { ...player, coins: player.coins - PAINT_COST };
+
+  await putTile(key, painted);
+  await putPlayer(me);
+  await broadcastTile(key, painted);
+  return { tile: painted, me };
+};
+
+/**
+ * Mod-set village name + theme (from the "Village settings" form). Validates the
+ * name server-side, persists both to city:state, then broadcasts the fresh city
+ * so open clients rename/retheme live. Returns the updated city.
+ */
+export const doVillageSettings = async (
+  rawName: unknown,
+  rawTheme: unknown
+): Promise<CityState> => {
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
+  if (!isValidVillageName(name)) {
+    throw new OpError(
+      400,
+      'Village name may use up to 24 letters, numbers, spaces, apostrophes or hyphens.'
+    );
+  }
+  const theme: VillageTheme = isVillageTheme(rawTheme) ? rawTheme : 'meadow';
+
+  await putCity({ villageName: name, theme });
+  const city = await getCity();
+  await broadcastCity(city);
+  return city;
 };
 
 export const doContribute = async (
@@ -1807,6 +1888,7 @@ export const runFestivalRotation = async (
   festival: FestivalCategory;
   weather: CityState['weather'];
   dayNumber: number;
+  villageName: string;
   stockpile: Stockpile;
   prices: Prices;
   offers: TraderOffer[];
@@ -1827,6 +1909,7 @@ export const runFestivalRotation = async (
     festival,
     weather,
     dayNumber,
+    villageName: city.villageName,
     stockpile,
     prices: pricesFor(stockpile),
     offers: offersForDay(today),
@@ -1917,3 +2000,9 @@ export const isGood = (value: unknown): value is Good =>
 
 export const isProcessedGood = (value: unknown): value is 'planks' | 'bricks' =>
   value === 'planks' || value === 'bricks';
+
+export const isRoofColor = (value: unknown): value is RoofColor =>
+  value === 'brown' ||
+  value === 'green' ||
+  value === 'purple' ||
+  value === 'beige';

@@ -33,6 +33,7 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 - **Check-in streaks and neighbour boosts** — reward showing up and helping other players' plots.
 - **Demolish and rebuild** — clear any building for a 50% coin refund, so no plot is ever a dead end.
 - **Leaderboards and flair** — village value, lifetime earnings, and Keep contributions, with titles to match.
+- **Per-subreddit customization** — moderators name their village and pick a colour theme (meadow, autumn, twilight, or pale) from a mod menu form, and any player can paint their building roofs one of four colours.
 - **Mobile-first** — designed for the phone-sized Reddit feed, with a comfortable touch HUD.
 
 ## The hook

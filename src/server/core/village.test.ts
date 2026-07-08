@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CityState, Gained, Good, PlayerState, TileState } from '../../shared/types';
-import { CATALOG, KEEP_STAGE_COSTS } from '../../shared/catalog';
+import { CATALOG, KEEP_STAGE_COSTS, PAINT_COST } from '../../shared/catalog';
 import { emptyStockpile } from '../../shared/logic/economy';
 import {
   CHECKIN_XP,
@@ -28,6 +28,7 @@ import {
   validateBuild,
   validateDemolish,
   validateNaming,
+  validatePaint,
   validateTrade,
   validateUpgrade,
 } from './village';
@@ -73,6 +74,8 @@ const tile = (overrides: Partial<TileState> = {}): TileState => ({
 
 const city = (overrides: Partial<CityState> = {}): CityState => ({
   foundedAt: 0,
+  villageName: '',
+  theme: 'meadow',
   festival: 'raw',
   festivalDate: '2026-07-07',
   landmarkStage: 0,
@@ -113,6 +116,41 @@ describe('validateBuild', () => {
 
   it('allows a valid build on an owned empty plot with funds and level', () => {
     expect(validateBuild(player({ coins: 100, level: 1 }), tile(), CATALOG.cottage)).toBeNull();
+  });
+});
+
+describe('validatePaint', () => {
+  it('rejects a tile the player does not own', () => {
+    const t = tile({ owner: 'someoneElse', buildingId: 'cottage', readyAt: 0 });
+    expect(validatePaint(player(), t, 1000)).not.toBeNull();
+  });
+
+  it('rejects a tile with no building', () => {
+    expect(validatePaint(player(), tile(), 1000)).not.toBeNull();
+  });
+
+  it('rejects a flat building with no roof (e.g. a wheat field)', () => {
+    const t = tile({ buildingId: 'wheatfield', readyAt: 0 });
+    expect(validatePaint(player(), t, 1000)).not.toBeNull();
+  });
+
+  it('rejects while construction is still in progress', () => {
+    const t = tile({ buildingId: 'cottage', readyAt: 5000 });
+    expect(validatePaint(player(), t, 1000)).not.toBeNull();
+  });
+
+  it('rejects when the player cannot afford PAINT_COST', () => {
+    const t = tile({ buildingId: 'cottage', readyAt: 0 });
+    expect(validatePaint(player({ coins: PAINT_COST - 1 }), t, 1000)).not.toBeNull();
+  });
+
+  it('allows painting a completed stacked building the player owns and can afford', () => {
+    const t = tile({ buildingId: 'cottage', readyAt: 0 });
+    expect(validatePaint(player({ coins: PAINT_COST }), t, 1000)).toBeNull();
+  });
+
+  it('charges a flat 25 coins', () => {
+    expect(PAINT_COST).toBe(25);
   });
 });
 

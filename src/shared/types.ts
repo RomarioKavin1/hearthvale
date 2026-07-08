@@ -46,6 +46,9 @@ export type BuildingId =
 
 export type Tier = 1 | 2 | 3;
 
+/** The four paintable roof colours a player can apply to a stacked building. */
+export type RoofColor = 'brown' | 'green' | 'purple' | 'beige';
+
 export type TileState = {
   owner: string;
   ownerName: string;
@@ -58,10 +61,20 @@ export type TileState = {
   boostBy?: string;
   /** A cosmetic unlocked via the trader (currently only the golden roof). */
   cosmetic?: 'golden-roof';
+  /** Player-chosen roof colour (stacked buildings only); overrides the tier
+   * colour progression. The golden-roof cosmetic still overrides this visually. */
+  roofColor?: RoofColor;
 };
+
+/** The four mod-selectable village themes that recolour the diorama + splash. */
+export type VillageTheme = 'meadow' | 'autumn' | 'twilight' | 'pale';
 
 export type CityState = {
   foundedAt: number;
+  /** Mod-set village name (empty string → display fallback "Hearthvale"). */
+  villageName: string;
+  /** Mod-set colour theme applied to the diorama + splash (default 'meadow'). */
+  theme: VillageTheme;
   festival: FestivalCategory;
   festivalDate: string;
   /** Current Grand Keep stage under construction (0-indexed; 5 === complete). */
@@ -192,6 +205,10 @@ export type ClaimQuestResponse = {
 
 /** Splash summary (GET /api/summary). */
 export type Summary = {
+  /** Mod-set village name (empty string → display fallback "Hearthvale"). */
+  villageName: string;
+  /** Mod-set colour theme (drives the splash sky variant). */
+  theme: VillageTheme;
   buildings: number;
   players: number;
   landmarkStage: number;

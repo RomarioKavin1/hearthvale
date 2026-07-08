@@ -43,8 +43,18 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
+      },
+      {
+        "label": "Village settings",
+        "description": "Name your village and pick a theme",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/village-settings"
       }
     ]
+  },
+  "forms": {
+    "villageSettings": "/internal/form/village-settings"
   },
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install"

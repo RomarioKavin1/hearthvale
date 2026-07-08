@@ -8,6 +8,7 @@ import type {
   LeaderRow,
   PlayerState,
   Prices,
+  RoofColor,
   StateResponse,
   Stockpile,
   Summary,
@@ -126,6 +127,9 @@ export const api = {
 
   demolish: (x: number, y: number): Promise<TileResult> =>
     post('/api/demolish', { x, y }),
+
+  paint: (x: number, y: number, color: RoofColor): Promise<TileResult> =>
+    post('/api/paint', { x, y, color }),
 
   collect: (x: number, y: number): Promise<CollectResult> =>
     post('/api/collect', { x, y }),
