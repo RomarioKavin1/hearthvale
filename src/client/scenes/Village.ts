@@ -19,6 +19,7 @@ import {
 } from '../../shared/logic/economy';
 import { isRiver, nextThreshold, ringBounds } from '../../shared/logic/expansion';
 import type {
+  BuildingId,
   CityState,
   TileState,
   VillageMessage,
@@ -39,6 +40,8 @@ import {
   isTreeDecor,
   LOCKED_ALPHA,
   LOCKED_BAND,
+  PATH_HI,
+  PATH_LO,
   pathPiece,
   plazaFencePieces,
   riverPiece,
@@ -152,6 +155,10 @@ type TileView = {
   pip: Phaser.GameObjects.Image | undefined;
   boostPip: Phaser.GameObjects.Image | undefined;
   growthKey: SpriteKey | undefined;
+  /** Ambient (C2): chimney-smoke timer + "alive" work-pulse tween, both bound to
+   * this tile's building and torn down in clearStructural when the tile changes. */
+  smokeTimer: Phaser.Time.TimerEvent | undefined;
+  pulseTween: Phaser.Tweens.Tween | undefined;
   sig: string;
   constructing: boolean;
 };
@@ -163,6 +170,56 @@ const PIP_DEPTH = 50000;
 /** Drifting cloud shadows sit above the diorama but below pips/effects. */
 const CLOUD_DEPTH = 40000;
 
+// ── Ambient life (Task C2) ───────────────────────────────────────────────────
+
+/** Birds glide above absolutely everything, clouds and pip/effect layers alike. */
+const BIRD_DEPTH = 200000;
+/** Hard cap on live ambient GameObjects (walkers + butterflies + transient
+ * smoke puffs + birds). Persistent life (≤10 walkers + ≤5 butterflies) leaves
+ * ample head-room for the transient spawns. */
+const AMBIENT_CAP = 40;
+/** Once-generated soft-circle / chevron textures (see ensureAmbientTextures). */
+const SMOKE_TEX = 'hv-smoke';
+const BIRD_TEX = 'hv-bird';
+/** Six PAL-family cloth colours for villager bodies (deterministic per walker). */
+const WALKER_CLOTH: readonly number[] = [
+  hexNum(PAL.roofRed),
+  hexNum(PAL.roofBlue),
+  hexNum(PAL.roofStraw),
+  hexNum(PAL.leaf),
+  hexNum(PAL.accent),
+  hexNum(PAL.wood),
+];
+/** Three warm skin tones for villager heads. */
+const WALKER_SKIN: readonly number[] = [0xf1c9a5, 0xe0a878, 0xc08552];
+/** Butterfly wing tints (PAL glow / accent / roofBlue). */
+const BUTTERFLY_TINT: readonly number[] = [
+  hexNum(PAL.glow),
+  hexNum(PAL.accent),
+  hexNum(PAL.roofBlue),
+];
+/** Buildings that puff chimney smoke (producing coin buildings). */
+const SMOKE_BUILDINGS: ReadonlySet<string> = new Set(['cottage', 'bakery', 'manor']);
+
+/** A strolling villager: a `root` container that carries screen position + depth,
+ * and an inner `vis` container that bobs/flips independently of the path travel. */
+type Walker = {
+  root: Phaser.GameObjects.Container;
+  vis: Phaser.GameObjects.Container;
+  tx: number;
+  ty: number;
+  moveTween: Phaser.Tweens.Tween | undefined;
+  bobTween: Phaser.Tweens.Tween | undefined;
+  idle: Phaser.Time.TimerEvent | undefined;
+};
+
+/** A butterfly fluttering a lazy figure-eight around a tree. */
+type Butterfly = {
+  root: Phaser.GameObjects.Container;
+  path: Phaser.Tweens.Tween | undefined;
+  flap: Phaser.Tweens.Tween | undefined;
+};
+
 export class Village extends Scene {
   private views: Map<string, TileView> = new Map();
   private groundImgs: Map<string, Phaser.GameObjects.Image> = new Map();
@@ -170,6 +227,12 @@ export class Village extends Scene {
   private landmarkParts: Phaser.GameObjects.Image[] = [];
   private dressingParts: Phaser.GameObjects.Image[] = [];
   private clouds: Phaser.GameObjects.Ellipse[] = [];
+  /** Ambient life (C2): every walker / butterfly / smoke puff / bird lives in this
+   * group so it can be counted (cap) and destroyed wholesale on cleanup. */
+  private ambient: Phaser.GameObjects.Group | undefined;
+  private walkers: Walker[] = [];
+  private butterflies: Butterfly[] = [];
+  private birdTimer: Phaser.Time.TimerEvent | undefined;
   private reducedMotion =
     typeof matchMedia === 'function' &&
     matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -269,6 +332,9 @@ export class Village extends Scene {
     this.buildLandmark();
     this.buildDressing();
     this.buildClouds();
+    // Ambient group + shared textures must exist before reconcileAll(), since
+    // buildBuilding() attaches per-building smoke/pulse as tiles are composed.
+    this.initAmbient();
 
     // Selection highlight (a glowing top-face diamond, hidden until a tile is tapped).
     this.highlight = this.add
@@ -278,6 +344,11 @@ export class Village extends Scene {
 
     this.reconcileAll();
     this.updatePips();
+
+    // Walkers, butterflies and the bird scheduler read the now-composed world.
+    this.spawnWalkers();
+    this.spawnButterflies();
+    this.scheduleBirds();
 
     this.setupCamera();
     this.setupInput();
@@ -523,6 +594,8 @@ export class Village extends Scene {
       pip: undefined,
       boostPip: undefined,
       growthKey: undefined,
+      smokeTimer: undefined,
+      pulseTween: undefined,
       sig: '',
       constructing: false,
     };
@@ -558,6 +631,9 @@ export class Village extends Scene {
 
       if (hasBuilding) {
         this.buildBuilding(view, tile, x, y, sx, sy, constructing);
+        if (!constructing && tile.buildingId !== undefined) {
+          this.attachTileAmbient(view, tile.buildingId, x, y, sx, sy);
+        }
       } else {
         // Claimed but empty — a small staked fence marker.
         view.claim = addSurface(this, 'fence-wood', sx, sy)
@@ -704,6 +780,16 @@ export class Village extends Scene {
       this.tweens.killTweensOf(view.goldPip);
       view.goldPip.destroy();
       view.goldPip = undefined;
+    }
+    // Ambient bound to this building — stop before the sprites are replaced so a
+    // rebuild/upgrade never leaves an orphaned smoke timer or pulse tween running.
+    if (view.smokeTimer) {
+      view.smokeTimer.remove(false);
+      view.smokeTimer = undefined;
+    }
+    if (view.pulseTween) {
+      view.pulseTween.remove();
+      view.pulseTween = undefined;
     }
     view.growthKey = undefined;
   }
@@ -1275,6 +1361,356 @@ export class Village extends Scene {
     });
   }
 
+  // ── Ambient life (walkers, smoke, butterflies, birds, work pulse) ────────────
+
+  /** Create the dedicated ambient group + the two shared generated textures (a
+   * soft smoke puff, a dark bird chevron). Idempotent on the textures. */
+  private initAmbient(): void {
+    this.ambient = this.add.group();
+    if (!this.textures.exists(SMOKE_TEX)) {
+      const g = this.add.graphics();
+      g.fillStyle(0xd8d8d8, 1).fillCircle(8, 8, 8);
+      g.generateTexture(SMOKE_TEX, 16, 16);
+      g.destroy();
+    }
+    if (!this.textures.exists(BIRD_TEX)) {
+      const g = this.add.graphics();
+      g.lineStyle(2, 0xffffff, 1);
+      g.beginPath();
+      g.moveTo(0, 4);
+      g.lineTo(6, 0);
+      g.lineTo(12, 4);
+      g.strokePath();
+      g.generateTexture(BIRD_TEX, 12, 6);
+      g.destroy();
+    }
+  }
+
+  /** Live ambient GameObject count (group auto-drops destroyed members). */
+  private ambientCount(): number {
+    return this.ambient?.getLength() ?? 0;
+  }
+
+  /** Coordinate hash → a stable pseudo-random value, for per-tile pulse phase and
+   * deterministic walker spawns (visual only — not shared game logic). */
+  private hash(a: number, b: number): number {
+    let h = (Math.imul(a, 73856093) ^ Math.imul(b, 19349663)) >>> 0;
+    h ^= h >>> 13;
+    h = Math.imul(h, 0x5bd1e995) >>> 0;
+    return (h ^ (h >>> 15)) >>> 0;
+  }
+
+  /** A tile a villager may stand on: unlocked, not river, not the keep pad. Path
+   * ring + open grass qualify; water/river/locked/keep never do. */
+  private isWalkable(x: number, y: number): boolean {
+    return this.isUnlockedTile(x, y) && !isRiver(x, y) && !isKeepPad(x, y);
+  }
+
+  // ── Villager walkers ─────────────────────────────────────────────────────────
+
+  /** Spawn strolling villagers on the plaza path ring. Count scales with the
+   * village population, clamped to [2,10]; positions are deterministic (seeded by
+   * index). Under reduced motion they stand idle (no tweens) rather than roam. */
+  private spawnWalkers(): void {
+    const ring: Array<{ x: number; y: number }> = [];
+    for (let y = PATH_LO; y <= PATH_HI; y++) {
+      for (let x = PATH_LO; x <= PATH_HI; x++) {
+        if (isPathRing(x, y)) ring.push({ x, y });
+      }
+    }
+    if (ring.length === 0) return;
+    const count = Phaser.Math.Clamp(
+      2 + Math.floor(this.population() * 1.5),
+      2,
+      10
+    );
+    for (let i = 0; i < count; i++) {
+      const tile = ring[(i * 7 + 1) % ring.length];
+      if (!tile) continue;
+      this.makeWalker(i, tile.x, tile.y);
+    }
+  }
+
+  private makeWalker(index: number, tx: number, ty: number): void {
+    const cloth = WALKER_CLOTH[index % WALKER_CLOTH.length] ?? hexNum(PAL.roofRed);
+    const skin =
+      WALKER_SKIN[this.hash(index, tx + ty) % WALKER_SKIN.length] ??
+      WALKER_SKIN[0]!;
+    // Contact point at local y=0 (feet on the tile face); the figure rises upward.
+    const outline = this.add.graphics();
+    outline.fillStyle(hexNum(PAL.ink), 0.9).fillRoundedRect(-6, -18, 12, 16, 4);
+    const body = this.add.graphics();
+    body.fillStyle(cloth, 1).fillRoundedRect(-5, -17, 10, 14, 3);
+    const feet = this.add.rectangle(0, -2, 7, 3, hexNum(PAL.woodDark));
+    const head = this.add.circle(0, -19, 3.5, skin);
+    const vis = this.add.container(0, 0, [outline, body, feet, head]);
+
+    const { sx, sy } = isoToScreen(tx, ty, TILE_W, TILE_H);
+    const root = this.add.container(sx, sy, [vis]).setDepth(sy + 0.6);
+    this.ambient?.add(root);
+
+    const walker: Walker = {
+      root,
+      vis,
+      tx,
+      ty,
+      moveTween: undefined,
+      bobTween: undefined,
+      idle: undefined,
+    };
+    this.walkers.push(walker);
+
+    if (this.reducedMotion) return; // stand idle — no bob, no roaming
+    walker.bobTween = this.tweens.add({
+      targets: vis,
+      y: -2,
+      duration: 320,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.inOut',
+    });
+    this.walkerStep(walker);
+  }
+
+  /** Pick an adjacent walkable tile (path preferred) and stroll there with a
+   * depth-tracking tween, then idle 1–3s and repeat. */
+  private walkerStep(w: Walker): void {
+    const neigh = [
+      { x: w.tx - 1, y: w.ty },
+      { x: w.tx + 1, y: w.ty },
+      { x: w.tx, y: w.ty - 1 },
+      { x: w.tx, y: w.ty + 1 },
+    ].filter((n) => this.isWalkable(n.x, n.y));
+    if (neigh.length === 0) {
+      w.idle = this.time.delayedCall(1500, () => this.walkerStep(w));
+      return;
+    }
+    const onPath = neigh.filter((n) => isPathRing(n.x, n.y));
+    const pool = onPath.length > 0 && Math.random() < 0.7 ? onPath : neigh;
+    const target = pool[Math.floor(Math.random() * pool.length)] ?? neigh[0]!;
+    const { sx, sy } = isoToScreen(target.x, target.y, TILE_W, TILE_H);
+    w.vis.scaleX = sx < w.root.x ? -1 : 1;
+    w.moveTween = this.tweens.add({
+      targets: w.root,
+      x: sx,
+      y: sy,
+      duration: Phaser.Math.Between(2500, 4000),
+      ease: 'Sine.inOut',
+      onUpdate: () => w.root.setDepth(w.root.y + 0.6),
+      onComplete: () => {
+        w.tx = target.x;
+        w.ty = target.y;
+        w.root.setDepth(sy + 0.6);
+        w.idle = this.time.delayedCall(Phaser.Math.Between(1000, 3000), () =>
+          this.walkerStep(w)
+        );
+      },
+    });
+  }
+
+  // ── Butterflies ────────────────────────────────────────────────────────────
+
+  /** One butterfly per ~4 trees (grove/tree buildings + tree sprinkle decor),
+   * capped at 5, each looping a lazy figure-eight around its tree. Skipped
+   * entirely under reduced motion. */
+  private spawnButterflies(): void {
+    if (this.reducedMotion) return;
+    const trees: Array<{ sx: number; sy: number }> = [];
+    for (const [key] of this.decorImgs) {
+      const { x, y } = parseKey(key);
+      const d = decorSprinkle(x, y);
+      if (d && isTreeDecor(d)) {
+        const p = isoToScreen(x, y, TILE_W, TILE_H);
+        trees.push({ sx: p.sx, sy: p.sy });
+      }
+    }
+    const grid = store.data?.grid ?? {};
+    for (const [key, tile] of Object.entries(grid)) {
+      if (tile.buildingId === 'grove' || tile.buildingId === 'trees') {
+        const { x, y } = parseKey(key);
+        const p = isoToScreen(x, y, TILE_W, TILE_H);
+        trees.push({ sx: p.sx, sy: p.sy });
+      }
+    }
+    const n = Math.min(5, Math.floor(trees.length / 4));
+    for (let i = 0; i < n; i++) {
+      const t = trees[Math.floor((i / Math.max(1, n)) * trees.length)];
+      if (t) this.makeButterfly(i, t.sx, t.sy);
+    }
+  }
+
+  private makeButterfly(index: number, cx: number, cy: number): void {
+    if (this.ambientCount() >= AMBIENT_CAP) return;
+    const tint = BUTTERFLY_TINT[index % BUTTERFLY_TINT.length] ?? hexNum(PAL.glow);
+    const left = this.add.triangle(0, 0, 0, 0, -4, -3, -4, 3, tint);
+    const right = this.add.triangle(0, 0, 0, 0, 4, -3, 4, 3, tint);
+    const root = this.add.container(cx, cy - 30, [left, right]).setDepth(cy);
+    this.ambient?.add(root);
+    const bf: Butterfly = { root, path: undefined, flap: undefined };
+    this.butterflies.push(bf);
+
+    bf.flap = this.tweens.add({
+      targets: root,
+      scaleX: 0.3,
+      duration: 120,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.inOut',
+    });
+    const state = { t: index * 1.7 };
+    const r = 20;
+    bf.path = this.tweens.add({
+      targets: state,
+      t: state.t + Math.PI * 2,
+      duration: 6000,
+      repeat: -1,
+      ease: 'Linear',
+      onUpdate: () => {
+        root.x = cx + Math.sin(state.t) * r;
+        root.y = cy - 30 + Math.sin(state.t * 2) * (r * 0.5);
+        root.setDepth(root.y);
+      },
+    });
+  }
+
+  // ── Birds ────────────────────────────────────────────────────────────────────
+
+  /** Schedule the next high-flying flock 25–45s out (reschedules itself). */
+  private scheduleBirds(): void {
+    if (this.reducedMotion) return;
+    this.birdTimer = this.time.addEvent({
+      delay: Phaser.Math.Between(25000, 45000),
+      callback: () => {
+        this.spawnFlock();
+        this.scheduleBirds();
+      },
+    });
+  }
+
+  private spawnFlock(): void {
+    if (this.reducedMotion) return;
+    const spanX = (GRID_SIZE - 1) * TILE_W;
+    const midY = ((GRID_SIZE - 1) * TILE_H) / 2;
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    const startX = dir > 0 ? -spanX * 0.8 : spanX * 1.8;
+    const endX = dir > 0 ? spanX * 1.8 : -spanX * 0.8;
+    const y0 = midY - Phaser.Math.Between(240, 360);
+    const flock = Phaser.Math.Between(2, 3);
+    for (let i = 0; i < flock; i++) {
+      if (this.ambientCount() >= AMBIENT_CAP) break;
+      const by = y0 + i * 16;
+      const bird = this.add
+        .image(startX + i * 24 * dir, by, BIRD_TEX)
+        .setTint(hexNum(PAL.ink))
+        .setScale(1.3)
+        .setFlipX(dir < 0)
+        .setDepth(BIRD_DEPTH);
+      this.ambient?.add(bird);
+      this.tweens.add({
+        targets: bird,
+        x: endX + i * 24 * dir,
+        duration: Phaser.Math.Between(8000, 10000),
+        ease: 'Linear',
+        onComplete: () => bird.destroy(),
+      });
+      this.tweens.add({
+        targets: bird,
+        y: by - 8,
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.inOut',
+      });
+    }
+  }
+
+  // ── Per-building ambient: chimney smoke + working pulse ───────────────────────
+
+  /** Bind smoke (coin buildings) and a subtle work-pulse (any non-decor producer)
+   * to a freshly-composed, completed building. Both are torn down in
+   * clearStructural when the tile's building changes. */
+  private attachTileAmbient(
+    view: TileView,
+    buildingId: BuildingId,
+    x: number,
+    y: number,
+    sx: number,
+    sy: number
+  ): void {
+    if (this.reducedMotion) return;
+    const role = CATALOG[buildingId].role;
+    if (role !== 'decor' && view.parts.length > 0) {
+      // Start after any completion dust-pop (≈320ms) so the two never fight over
+      // the primary sprite's scale; phase is deterministic per tile.
+      view.pulseTween = this.tweens.add({
+        targets: view.parts,
+        scale: { from: 1, to: 1.012 },
+        duration: 2400,
+        delay: 400 + (this.hash(x, y) % 2000),
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.inOut',
+      });
+    }
+    if (SMOKE_BUILDINGS.has(buildingId)) {
+      view.smokeTimer = this.time.addEvent({
+        delay: Phaser.Math.Between(2500, 4000),
+        loop: true,
+        callback: () => this.puffSmoke(sx, sy),
+      });
+    }
+  }
+
+  private puffSmoke(sx: number, sy: number): void {
+    // Phaser timers keep ticking while the tab is hidden — gate spawns so a
+    // backgrounded scene doesn't accumulate a burst of puffs on return.
+    if (document.visibilityState !== 'visible') return;
+    if (this.ambientCount() >= AMBIENT_CAP) return;
+    const oy = sy + BASE_DY + ROOF_DY - 6; // just above the roof cap
+    const puff = this.add
+      .image(sx + Phaser.Math.Between(-3, 3), oy, SMOKE_TEX)
+      .setAlpha(0.5)
+      .setScale(0.6)
+      .setDepth(sy + 5);
+    this.ambient?.add(puff);
+    this.tweens.add({
+      targets: puff,
+      y: oy - 25,
+      scale: 1.4,
+      alpha: 0,
+      duration: 2200,
+      ease: 'Sine.out',
+      onComplete: () => puff.destroy(),
+    });
+  }
+
+  /** Tear down every ambient object, timer and tween (called from cleanup). */
+  private cleanupAmbient(): void {
+    for (const w of this.walkers) {
+      w.moveTween?.remove();
+      w.bobTween?.remove();
+      w.idle?.remove(false);
+    }
+    for (const b of this.butterflies) {
+      b.path?.remove();
+      b.flap?.remove();
+    }
+    this.walkers = [];
+    this.butterflies = [];
+    this.birdTimer?.remove(false);
+    this.birdTimer = undefined;
+    // Per-tile smoke/pulse bound in TileViews (not yet torn down by a tile change).
+    for (const view of this.views.values()) {
+      view.smokeTimer?.remove(false);
+      view.smokeTimer = undefined;
+      view.pulseTween?.remove();
+      view.pulseTween = undefined;
+    }
+    this.ambient?.clear(true, true);
+    this.ambient?.destroy(true);
+    this.ambient = undefined;
+  }
+
   // ── Per-frame: construction progress bars + completion pops ──────────────────
 
   override update(time: number, _delta: number): void {
@@ -1311,6 +1747,7 @@ export class Village extends Scene {
   }
 
   private cleanup(): void {
+    this.cleanupAmbient();
     this.stopPolling();
     if (this.conn) {
       disconnectRealtime('village');
