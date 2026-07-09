@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { GRID_SIZE } from '../../shared/catalog';
 import {
+  backgroundIslets,
+  backgroundStars,
   bandBlockFor,
   mulberry32,
-  plazaFencePieces,
   terrainFor,
-  PATH_HI,
 } from './render';
 
 describe('mulberry32', () => {
@@ -83,22 +83,37 @@ describe('bandBlockFor', () => {
   });
 });
 
-describe('plazaFencePieces', () => {
-  it('lines only the two front edges of the plaza ring, near corner left open', () => {
-    const pieces = plazaFencePieces();
-    // 3 tiles per front edge (PATH_LO..PATH_HI-1), two edges → 6 pieces.
-    expect(pieces).toHaveLength(6);
-    for (const p of pieces) {
-      expect(p.key).toBe('fence-wood');
-      const onFrontEdge = p.y === PATH_HI || p.x === PATH_HI;
-      expect(onFrontEdge).toBe(true);
-      // The shared near corner is intentionally skipped (plaza entrance).
-      expect(p.x === PATH_HI && p.y === PATH_HI).toBe(false);
+describe('void background layers', () => {
+  it('are deterministic per seed and parked well outside the map bounds', () => {
+    // The map's iso footprint is roughly sx ∈ [−1088,1088], sy ∈ [0,1088];
+    // require every islet clear of a padded box around it.
+    const seed = 1_700_000_000_000;
+    const isletsA = backgroundIslets(seed);
+    const isletsB = backgroundIslets(seed);
+    expect(isletsA).toEqual(isletsB);
+    expect(isletsA).toHaveLength(4);
+    for (const isl of isletsA) {
+      expect(isl.ground).toBe('grass-block');
+      expect(isl.decor).toMatch(/^(tree-|rocks-)/);
+      expect(isl.scale).toBeGreaterThanOrEqual(0.5);
+      expect(isl.scale).toBeLessThanOrEqual(0.65);
+      expect(isl.alpha).toBeCloseTo(0.85);
+      // Outside the padded island box (|sx| or offset-sy beyond the footprint).
+      const outside = Math.abs(isl.sx) > 1200 || Math.abs(isl.sy - 544) > 700;
+      expect(outside).toBe(true);
     }
-    // The x=PATH_HI edge is flipped to run along y (matches pathPiece routing).
-    const yEdge = pieces.filter((p) => p.x === PATH_HI);
-    expect(yEdge.every((p) => p.flipX)).toBe(true);
-    const xEdge = pieces.filter((p) => p.y === PATH_HI && p.x !== PATH_HI);
-    expect(xEdge.every((p) => !p.flipX)).toBe(true);
+
+    const starsA = backgroundStars(seed);
+    expect(starsA).toEqual(backgroundStars(seed));
+    expect(starsA).toHaveLength(24);
+    const twinkles = starsA.filter((s) => s.twinkle).length;
+    expect(twinkles).toBe(8); // exactly a third
+    for (const s of starsA) {
+      expect(s.alpha).toBeGreaterThanOrEqual(0.25);
+      expect(s.alpha).toBeLessThanOrEqual(0.5);
+    }
+
+    // A different village seed yields a different layout.
+    expect(backgroundIslets(222)).not.toEqual(backgroundIslets(111));
   });
 });

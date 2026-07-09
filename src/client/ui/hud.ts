@@ -12,6 +12,7 @@ import { HV_TILE_SELECTED } from '../events';
 import { api } from '../net';
 import { store } from '../state';
 import {
+  activeQuest,
   CATEGORY_META,
   clearPending,
   el,
@@ -90,6 +91,23 @@ let lastCoins = 0;
 let prevLevel: number | null = null;
 let prevStage: number | null = null;
 
+// Collapsible objectives (top-left column): after 6s without interaction — or
+// immediately when the player touches the map — the Journal banner + Hall pill
+// give way to two compact chips; tapping a chip re-expands for 8s. Pure
+// presentation, nothing persisted.
+const OBJ_IDLE_MS = 6000;
+const OBJ_PEEK_MS = 8000;
+const OBJ_RING_R = 16;
+const OBJ_RING_C = 2 * Math.PI * OBJ_RING_R;
+let topLeft: HTMLElement;
+let jrChip: HTMLButtonElement;
+let jrChipRing: SVGCircleElement;
+let hallChip: HTMLButtonElement;
+let hallChipLvl: HTMLElement;
+let objTimer: number | undefined;
+/** `${index}:${lap}:${done}` for the last-seen quest ('' = none) — expansion edge. */
+let prevQuestSig: string | null = null;
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 export const initHud = (game: Game): void => {
@@ -104,11 +122,15 @@ export const initHud = (game: Game): void => {
   hud.appendChild(buildWalletDrawer());
   hud.appendChild(buildFabs());
 
-  // Top-left column: the Journal banner, then the Keep pill, stacked.
-  const topLeft = el('div', { cls: 'hv-topleft' });
+  // Top-left column: the Journal banner, then the Keep pill, stacked — plus
+  // their compact collapsed chips (visible only while the column is collapsed).
+  topLeft = el('div', { cls: 'hv-topleft' });
   hud.appendChild(topLeft);
   mountJournal(topLeft);
   topLeft.appendChild(buildKeepPill());
+  topLeft.appendChild(buildJournalChip());
+  topLeft.appendChild(buildHallChip());
+  initObjectivesCollapse();
 
   mountSheetRoot(hud);
   mountToasts(hud);
@@ -372,6 +394,123 @@ const renderKeepPill = (data: StateResponse): void => {
   keepFill.style.width = `${pct}%`;
 };
 
+// ── Collapsible objectives (banner + pill ⇄ compact chips) ───────────────────
+
+const setObjCollapsed = (collapsed: boolean): void => {
+  topLeft.classList.toggle('is-collapsed', collapsed);
+};
+
+/** (Re)arm the auto-collapse timer. */
+const armObjTimer = (ms: number): void => {
+  if (objTimer !== undefined) window.clearTimeout(objTimer);
+  objTimer = window.setTimeout(() => {
+    objTimer = undefined;
+    setObjCollapsed(true);
+  }, ms);
+};
+
+/** Expand the column now and collapse again after `ms` of no interaction. */
+const expandObjectives = (ms: number): void => {
+  setObjCollapsed(false);
+  armObjTimer(ms);
+};
+
+const initObjectivesCollapse = (): void => {
+  armObjTimer(OBJ_IDLE_MS);
+  // The HUD root is pointer-events:none, so a map drag's pointerdown targets the
+  // canvas — any press whose target is outside the column collapses it at once,
+  // while presses inside it just restart the idle window.
+  window.addEventListener('pointerdown', (e: PointerEvent) => {
+    const t = e.target;
+    if (t instanceof Node && topLeft.contains(t)) {
+      armObjTimer(OBJ_IDLE_MS);
+      return;
+    }
+    if (objTimer !== undefined) {
+      window.clearTimeout(objTimer);
+      objTimer = undefined;
+    }
+    setObjCollapsed(true);
+  });
+};
+
+/** The journal chip: a circle with the scroll icon wrapped by a thin progress
+ * ring; turns gold (CSS .is-claimable) with a gentle pulse when claimable. */
+const buildJournalChip = (): HTMLButtonElement => {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 40 40');
+
+  const track = document.createElementNS(SVG_NS, 'circle');
+  track.setAttribute('cx', '20');
+  track.setAttribute('cy', '20');
+  track.setAttribute('r', String(OBJ_RING_R));
+  track.setAttribute('fill', 'none');
+  track.setAttribute('stroke', 'var(--wall-shade)');
+  track.setAttribute('stroke-width', '3');
+
+  jrChipRing = document.createElementNS(SVG_NS, 'circle');
+  jrChipRing.setAttribute('cx', '20');
+  jrChipRing.setAttribute('cy', '20');
+  jrChipRing.setAttribute('r', String(OBJ_RING_R));
+  jrChipRing.setAttribute('fill', 'none');
+  jrChipRing.setAttribute('stroke', 'var(--leaf)');
+  jrChipRing.setAttribute('stroke-width', '3');
+  jrChipRing.setAttribute('stroke-linecap', 'round');
+  jrChipRing.setAttribute('stroke-dasharray', String(OBJ_RING_C));
+  jrChipRing.setAttribute('stroke-dashoffset', String(OBJ_RING_C));
+  jrChipRing.setAttribute('transform', 'rotate(-90 20 20)');
+
+  svg.appendChild(track);
+  svg.appendChild(jrChipRing);
+
+  jrChip = el('button', {
+    cls: 'hv-obj-chip hv-obj-jr',
+    attrs: { type: 'button', 'aria-label': 'Current goal — tap to expand' },
+    children: [iconEl('icon-scroll', 16)],
+    on: { click: () => expandObjectives(OBJ_PEEK_MS) },
+  });
+  jrChip.appendChild(svg);
+  jrChip.style.display = 'none';
+  return jrChip;
+};
+
+/** The hall chip: a tiny dark circle with the trophy icon + hall level number. */
+const buildHallChip = (): HTMLButtonElement => {
+  hallChipLvl = el('span', { cls: 'hv-obj-lvl', text: '0' });
+  hallChip = el('button', {
+    cls: 'hv-obj-chip hv-obj-hall',
+    attrs: { type: 'button', 'aria-label': 'Village Hall — tap to expand' },
+    children: [iconEl('icon-trophy', 13), hallChipLvl],
+    on: { click: () => expandObjectives(OBJ_PEEK_MS) },
+  });
+  return hallChip;
+};
+
+/** Mirror quest/hall state onto the chips; auto-expand on a quest edge (done
+ * flips true, or a brand-new quest arrives). */
+const renderObjChips = (data: StateResponse): void => {
+  const quest = data.me ? activeQuest(data) : null;
+  jrChip.style.display = quest ? '' : 'none';
+  if (quest) {
+    const frac =
+      quest.target > 0 ? Math.max(0, Math.min(1, quest.have / quest.target)) : 1;
+    jrChipRing.setAttribute('stroke-dashoffset', String(OBJ_RING_C * (1 - frac)));
+    jrChipRing.setAttribute('stroke', quest.done ? 'var(--wood-dark)' : 'var(--leaf)');
+    jrChip.classList.toggle('is-claimable', quest.done);
+  }
+  hallChipLvl.textContent = String(data.city.hallLevel);
+
+  const sig = quest ? `${quest.index}:${quest.lap}:${quest.done ? 1 : 0}` : '';
+  if (quest && prevQuestSig !== null && sig !== prevQuestSig) {
+    const [pi = '', pl = '', pd = ''] = prevQuestSig.split(':');
+    const isNewQuest =
+      prevQuestSig === '' || pi !== String(quest.index) || pl !== String(quest.lap);
+    const nowClaimable = quest.done && pd !== '1' && !isNewQuest;
+    if (isNewQuest || nowClaimable) expandObjectives(OBJ_PEEK_MS);
+  }
+  prevQuestSig = sig;
+};
+
 const doCollectAll = (): void => {
   if (isPending('collectAll')) return;
   markPending('collectAll');
@@ -552,6 +691,7 @@ const renderHud = (): void => {
   renderWeather(data);
   renderFestival(data);
   renderKeepPill(data);
+  renderObjChips(data);
   if (me) renderPlayer(me);
   else renderLoggedOut();
   renderFabs(data, me);

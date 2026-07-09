@@ -774,9 +774,12 @@ const CSS = `
 }
 
 /* ── Modal (centred card over a blurred backdrop) ────────── */
+/* Explicit z-order: the backdrop/modal (20) sits ABOVE the top-left objectives
+ * column (2) and the wallet drawer (3), so an open modal always covers them. */
 .hv-backdrop {
   position: absolute;
   inset: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1089,12 +1092,71 @@ const CSS = `
   position: absolute;
   top: calc(var(--sat) + 62px);
   left: calc(var(--sal) + 10px);
-  z-index: 4;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: min(260px, calc(100vw - 20px));
   pointer-events: none;
+  transition: width 180ms ease-out;
+}
+/* Collapsed: the banner + pill give way to two compact chips. */
+.hv-topleft.is-collapsed { width: 44px; }
+.hv-topleft.is-collapsed .hv-jr,
+.hv-topleft.is-collapsed .hv-keep-pill { display: none; }
+.hv-topleft:not(.is-collapsed) .hv-jr,
+.hv-topleft:not(.is-collapsed) .hv-keep-pill {
+  animation: hv-obj-in 180ms ease-out;
+}
+@keyframes hv-obj-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Compact objective chips (shown only while collapsed). */
+.hv-obj-chip {
+  pointer-events: auto;
+  position: relative;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px; height: 40px;
+  padding: 0;
+  background: var(--cream);
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.28);
+  color: var(--ink);
+  font-family: inherit;
+  cursor: pointer;
+}
+.hv-topleft.is-collapsed .hv-obj-chip {
+  display: inline-flex;
+  animation: hv-obj-in 180ms ease-out;
+}
+.hv-obj-chip:active { transform: translateY(1px); }
+.hv-obj-chip svg { position: absolute; inset: -2px; width: 40px; height: 40px; }
+.hv-obj-chip .hv-icon-mask { color: var(--wood-dark); }
+/* Claimable quest: the journal chip turns gold with a gentle pulse. */
+.hv-obj-chip.is-claimable { background: var(--glow); }
+.hv-topleft.is-collapsed .hv-obj-chip.is-claimable {
+  animation: hv-obj-in 180ms ease-out, hv-obj-pulse 1.8s ease-in-out infinite;
+}
+@keyframes hv-obj-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+.hv-obj-hall {
+  gap: 3px;
+  background: rgba(59,51,71,0.92);
+  border-color: rgba(255,243,217,0.18);
+  color: var(--cream);
+}
+.hv-obj-hall .hv-icon-mask { color: var(--straw); }
+.hv-obj-lvl {
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Journal banner — the always-visible active quest. */
@@ -1409,7 +1471,7 @@ const CSS = `
   left: calc(var(--sal) + 8px);
   right: calc(var(--sar) + 8px);
   top: calc(var(--sat) + 64px);
-  z-index: 5;
+  z-index: 3;
   pointer-events: none;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1608,5 +1670,10 @@ const CSS = `
   .hv-jr-bar > i, .hv-keep-bar > i { transition: none; }
   .hv-jr.is-pulse { animation: none; }
   .hv-jr-confetti > i { animation: none; display: none; }
+  .hv-topleft { transition: none; }
+  .hv-topleft.is-collapsed .hv-obj-chip,
+  .hv-topleft.is-collapsed .hv-obj-chip.is-claimable { animation: none; }
+  .hv-topleft:not(.is-collapsed) .hv-jr,
+  .hv-topleft:not(.is-collapsed) .hv-keep-pill { animation: none; }
 }
 `;

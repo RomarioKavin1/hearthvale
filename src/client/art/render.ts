@@ -358,40 +358,91 @@ export const terrainFor = (seed: number, x: number, y: number): Terrain => {
 export const bandBlockFor = (height: number): SpriteKey =>
   height >= 2 ? 'cliff-top' : height >= 1 ? 'grass-block' : 'grass-center';
 
-// ── Plaza dressing: village-square fence + well ──────────────────────────────
+// ── Plaza dressing: village-square well ──────────────────────────────────────
 
 /** The single fixed plaza-adjacent tile the decorative well stands on (a corner
- * of the path ring). Non-claimable already (it's inside the plaza block). */
+ * of the path ring). Non-claimable already (it's inside the plaza block).
+ *
+ * Fences removed (playtest, twice): Kenney ships `fence-wood` in a single `_N`
+ * orientation only, so at map scale even a proven-correct two-edge railing still
+ * read as randomly scattered posts. The well alone dresses the plaza now. */
 export const WELL_TILE: { x: number; y: number } = { x: PATH_LO, y: PATH_LO };
 
-export type FencePiece = { x: number; y: number; key: SpriteKey; flipX: boolean };
+// ── Floating-world void background (islets + starfield) ───────────────────────
+//
+// The space around the island is flat dark purple; these deterministic layers
+// (seeded from the same city.foundedAt as terrainFor) fill it. All PURE — the
+// scene turns them into cheap sprites parked well outside the map bounds, behind
+// every gameplay depth. The map's iso footprint spans roughly sx ∈ [-1088,1088],
+// sy ∈ [0,1088] around the centre (0, 544); every islet is pushed clear of it.
 
-/**
- * A low wooden railing along the TWO camera-facing front edges of the plaza path
- * ring (the y=PATH_HI and x=PATH_HI edges, which meet at the near corner).
- *
- * Fence decision (playtest: "fences are randomly arranged"): Kenney ships
- * `fence-wood` in a single `_N` orientation only — it cannot face all four sides
- * of an iso diamond, and the old ring placed the same unflipped sprite on every
- * border tile (plus a single-orientation corner on all four corners), so three
- * of every four pieces pointed the wrong way. We keep option (b) but restrict it
- * to a proven-correct subset: only the two front edges, reusing the EXACT flipX
- * routing convention that already makes the path tiles read right (native along
- * the y=const "x-run" edge, flipX along the x=const "y-run" edge). The
- * single-orientation corner/end sprites are dropped entirely, and the shared
- * near corner is left open as a natural plaza entrance. The back two edges are
- * skipped — they sit behind the keep and would only clutter. Result: a tidy,
- * deliberately-oriented railing framing the front of the village square.
- */
-export const plazaFencePieces = (): FencePiece[] => {
-  const pieces: FencePiece[] = [];
-  for (let i = PATH_LO; i < PATH_HI; i++) {
-    // Front-right edge (y = PATH_HI): native orientation runs along x.
-    pieces.push({ x: i, y: PATH_HI, key: 'fence-wood', flipX: false });
-    // Front-left edge (x = PATH_HI): flipX to run along y (matches pathPiece).
-    pieces.push({ x: PATH_HI, y: i, key: 'fence-wood', flipX: true });
+/** The screen-space centre of the diorama (matches the scene's KEEP centre). */
+const VOID_CX = 0;
+const VOID_CY = ((GRID_SIZE - 1) * TILE_H) / 2; // 544
+
+export type BgIslet = {
+  /** Screen position of the islet's ground block (well outside the map). */
+  sx: number;
+  sy: number;
+  /** Uniform scale (~0.5–0.65) and a gentle alpha fade. */
+  scale: number;
+  alpha: number;
+  /** A grass block plus one tree/rock sprite resting on it. */
+  ground: SpriteKey;
+  decor: SpriteKey;
+  /** Slow vertical bob: amplitude (px), period (ms) and a per-islet phase (ms). */
+  bobDy: number;
+  bobDur: number;
+  phase: number;
+};
+
+/** 4 tiny floating background islets ringing the void at varied distances, each
+ * a grass block + a tree/rock, with an offset slow bob. Deterministic per seed. */
+export const backgroundIslets = (seed: number): BgIslet[] => {
+  const rnd = mulberry32((seed ^ 0x1e1a5c0d) >>> 0);
+  const count = 4;
+  const out: BgIslet[] = [];
+  for (let i = 0; i < count; i++) {
+    const ang = (i / count) * Math.PI * 2 + (rnd() - 0.5) * 0.8;
+    const rx = 1500 + rnd() * 760; // horizontal reach (iso is wide)
+    const ry = 1040 + rnd() * 500; // vertical reach
+    const sx = VOID_CX + Math.cos(ang) * rx;
+    const sy = VOID_CY + Math.sin(ang) * ry;
+    const scale = 0.5 + rnd() * 0.15;
+    const decor =
+      rnd() < 0.35
+        ? (ROCK_PICKS[Math.floor(rnd() * ROCK_PICKS.length)] ?? 'rocks-grass')
+        : (TREE_PICKS[Math.floor(rnd() * TREE_PICKS.length)] ?? 'tree-single');
+    const bobDy = 8 + rnd() * 4; // 8–12px
+    const bobDur = 6000 + rnd() * 3000; // 6–9s
+    const phase = rnd() * bobDur;
+    out.push({ sx, sy, scale, alpha: 0.85, ground: 'grass-block', decor, bobDy, bobDur, phase });
   }
-  return pieces;
+  return out;
+};
+
+export type BgStar = {
+  sx: number;
+  sy: number;
+  /** Base opacity (0.25–0.5). */
+  alpha: number;
+  /** A third of the field slowly twinkles. */
+  twinkle: boolean;
+};
+
+/** ~24 tiny soft dots scattered across the void, a third of them twinkling.
+ * Deterministic per seed. */
+export const backgroundStars = (seed: number): BgStar[] => {
+  const rnd = mulberry32((seed ^ 0x57a12b93) >>> 0);
+  const count = 24;
+  const out: BgStar[] = [];
+  for (let i = 0; i < count; i++) {
+    const sx = (rnd() - 0.5) * 3600; // −1800..1800
+    const sy = VOID_CY + (rnd() - 0.5) * 2600; // spread around the centre
+    const alpha = 0.25 + rnd() * 0.25; // 0.25–0.5
+    out.push({ sx, sy, alpha, twinkle: i % 3 === 0 });
+  }
+  return out;
 };
 
 // ── Castle (Grand Keep) composition ─────────────────────────────────────────

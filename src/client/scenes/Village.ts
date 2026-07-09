@@ -30,9 +30,12 @@ import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
   addSurface,
+  backgroundIslets,
+  backgroundStars,
   bandBlockFor,
   BASE_DY,
   BG,
+  BLOCK_ORIGIN_Y,
   castleParts,
   CASTLE_TOP_DY,
   isKeepPad,
@@ -43,7 +46,6 @@ import {
   PATH_HI,
   PATH_LO,
   pathPiece,
-  plazaFencePieces,
   riverPiece,
   ROOF_DY,
   terrainFor,
@@ -66,6 +68,12 @@ import {
 
 /** '#rrggbb' → 0xrrggbb for Phaser's numeric colour parameters. */
 const hexNum = (hex: string): number => parseInt(hex.replace('#', ''), 16);
+
+/** '#rrggbb' + alpha → a CSS `rgba(...)` string (for the vignette gradient). */
+const rgbaOf = (hex: string, a: number): string => {
+  const n = hexNum(hex);
+  return `rgba(${(n >> 16) & 0xff},${(n >> 8) & 0xff},${n & 0xff},${a})`;
+};
 
 const C_GLOW = hexNum(PAL.glow);
 const C_CREAM = hexNum(PAL.cream);
@@ -170,6 +178,23 @@ const EFFECT_DEPTH = 100000;
 const PIP_DEPTH = 50000;
 /** Drifting cloud shadows sit above the diorama but below pips/effects. */
 const CLOUD_DEPTH = 40000;
+/**
+ * Ground base depth (Task F1 walker-depth fix): every ground + locked-band block
+ * renders at GROUND_DEPTH + sy — an explicitly LOW band (≈ −100000…−98900) far
+ * beneath every dynamic object, while the +sy term keeps ground-vs-ground
+ * occlusion correct even when single tiles are repainted out of insertion order
+ * (ring unlock / theme change). Buildings, decor, walkers, smoke, butterflies
+ * and pips all keep their non-negative sy-based depths (sy ≥ 0 everywhere on the
+ * grid), so no ground tile can ever draw over a walker anywhere on the map. The
+ * void background layers sit lower still.
+ */
+const GROUND_DEPTH = -100000;
+/** Floating background islets: behind the island (ground), above the starfield. */
+const ISLET_DEPTH = -300000;
+/** Sparse starfield behind the islets. */
+const STAR_DEPTH = -400000;
+/** The radial vignette sits at the very back of everything. */
+const VIGNETTE_DEPTH = -410000;
 
 // ── Ambient life (Task C2) ───────────────────────────────────────────────────
 
@@ -255,6 +280,10 @@ export class Village extends Scene {
   private landmarkParts: Phaser.GameObjects.Image[] = [];
   private dressingParts: Phaser.GameObjects.Image[] = [];
   private clouds: Phaser.GameObjects.Ellipse[] = [];
+  /** Void background (F1): vignette + floating islets + starfield. Their bob /
+   * twinkle tweens target these objects, so killing tweens of each on cleanup
+   * leaves nothing orphaned. */
+  private bgParts: Phaser.GameObjects.GameObject[] = [];
   /** Ambient life (C2): every walker / butterfly / smoke puff / bird lives in this
    * group so it can be counted (cap) and destroyed wholesale on cleanup. */
   private ambient: Phaser.GameObjects.Group | undefined;
@@ -356,6 +385,7 @@ export class Village extends Scene {
     if (!data) return;
     this.me = data.me?.id ?? null;
 
+    this.buildBackground();
     this.buildGround();
     this.buildLandmark();
     this.buildDressing();
@@ -532,7 +562,10 @@ export class Village extends Scene {
       }
     }
 
-    img.setDepth(sy);
+    // All ground (open tiles AND raised locked-band blocks) sits in the low
+    // ground band: far beneath every dynamic object, still self-ordered by sy so
+    // out-of-order repaints (ring unlock) can't break block-wall occlusion.
+    img.setDepth(GROUND_DEPTH + sy);
     this.groundImgs.set(key, img);
     return img;
   }
@@ -567,22 +600,106 @@ export class Village extends Scene {
     this.renderCastle();
   }
 
-  // ── World dressing (fence ring, well, drifting cloud shadows) ────────────────
+  // ── World dressing (well, drifting cloud shadows) ────────────────────────────
 
-  /** Static plaza dressing: a wooden fence hugging the path ring + a corner well.
-   * Plaza tiles are always unlocked and never take a building, so these are built
-   * once and never reconciled. */
+  /** Static plaza dressing: a single corner well (fences removed — see render.ts).
+   * The plaza tile it stands on is always unlocked and never takes a building, so
+   * this is built once and never reconciled. */
   private buildDressing(): void {
-    for (const p of plazaFencePieces()) {
-      const { sx, sy } = isoToScreen(p.x, p.y, TILE_W, TILE_H);
-      this.dressingParts.push(
-        addSurface(this, p.key, sx, sy).setFlipX(p.flipX).setDepth(sy + 0.4)
-      );
-    }
     const w = isoToScreen(WELL_TILE.x, WELL_TILE.y, TILE_W, TILE_H);
     this.dressingParts.push(
       addSurface(this, 'well', w.sx, w.sy).setDepth(w.sy + 0.4)
     );
+  }
+
+  // ── Void background (floating islets + starfield + vignette) ─────────────────
+
+  /** Fill the flat dark-purple void around the island with a "floating world":
+   * a soft radial vignette that spot-lights the island, a sparse twinkling
+   * starfield, and a handful of slowly-bobbing background islets. All seeded from
+   * the same city.foundedAt as the terrain, parked well outside the map bounds,
+   * and pinned behind every gameplay depth. Static under reduced motion. */
+  private buildBackground(): void {
+    const seed = this.seed();
+    this.buildVignette();
+
+    for (const isl of backgroundIslets(seed)) {
+      const ground = this.add
+        .image(0, 0, isl.ground)
+        .setOrigin(0.5, BLOCK_ORIGIN_Y);
+      const decor = this.add
+        .image(0, BASE_DY, isl.decor)
+        .setOrigin(0.5, BLOCK_ORIGIN_Y);
+      const cont = this.add
+        .container(isl.sx, isl.sy, [ground, decor])
+        .setScale(isl.scale)
+        .setAlpha(isl.alpha)
+        .setDepth(ISLET_DEPTH);
+      this.bgParts.push(cont);
+      if (this.reducedMotion) continue;
+      this.tweens.add({
+        targets: cont,
+        y: isl.sy - isl.bobDy,
+        duration: isl.bobDur,
+        delay: isl.phase,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.inOut',
+      });
+    }
+
+    for (const st of backgroundStars(seed)) {
+      const tint = st.twinkle ? C_GLOW : C_CREAM;
+      const dot = this.add
+        .circle(st.sx, st.sy, 1, tint)
+        .setAlpha(st.alpha)
+        .setDepth(STAR_DEPTH);
+      this.bgParts.push(dot);
+      if (st.twinkle && !this.reducedMotion) {
+        this.tweens.add({
+          targets: dot,
+          alpha: st.alpha * 0.35,
+          duration: Phaser.Math.Between(1600, 2800),
+          delay: Phaser.Math.Between(0, 1800),
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.inOut',
+        });
+      }
+    }
+  }
+
+  /** A large soft-edged radial gradient (generated once into a canvas texture):
+   * transparent at the centre, fading to dark at the rim, so the island reads
+   * spot-lit against the surrounding void. */
+  private buildVignette(): void {
+    const key = 'hv-vignette';
+    if (!this.textures.exists(key)) {
+      const size = 512;
+      const tex = this.textures.createCanvas(key, size, size);
+      if (tex) {
+        const ctx = tex.getContext();
+        const grd = ctx.createRadialGradient(
+          size / 2,
+          size / 2,
+          size * 0.14,
+          size / 2,
+          size / 2,
+          size * 0.5
+        );
+        grd.addColorStop(0, rgbaOf(PAL.night, 0));
+        grd.addColorStop(0.65, rgbaOf(PAL.night, 0));
+        grd.addColorStop(1, rgbaOf(PAL.night, 0.62));
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, 0, size, size);
+        tex.refresh();
+      }
+    }
+    const v = this.add
+      .image(KEEP_CX, KEEP_CY, key)
+      .setDepth(VIGNETTE_DEPTH);
+    v.setDisplaySize(3800, 2700);
+    this.bgParts.push(v);
   }
 
   /** 3 soft dark ellipses sweeping across the map on slow loops — subtle life.
@@ -1927,6 +2044,13 @@ export class Village extends Scene {
 
   private cleanup(): void {
     this.cleanupAmbient();
+    // Void background: kill each object's bob/twinkle tween, then destroy it, so
+    // no orphaned tween keeps ticking after the scene shuts down.
+    for (const p of this.bgParts) {
+      this.tweens.killTweensOf(p);
+      p.destroy();
+    }
+    this.bgParts = [];
     this.stopPolling();
     if (this.conn) {
       disconnectRealtime('village');
