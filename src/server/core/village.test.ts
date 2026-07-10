@@ -682,24 +682,24 @@ describe('stage payout (pro-rata)', () => {
 
 describe('expansion claim gating', () => {
   it('allows a tile inside the current ring', () => {
-    // Hall level 0 → ring [5,11].
-    expect(expansionGate(5, 5, 0)).toBeNull();
-    expect(expansionGate(11, 11, 0)).toBeNull();
+    // Hall level 0 → ring [4,13].
+    expect(expansionGate(4, 4, 0)).toBeNull();
+    expect(expansionGate(13, 13, 0)).toBeNull();
   });
 
   it('rejects a locked outer tile with the Village Hall nudge', () => {
-    // (4,4) is outside [5,11]; the next ring opens when the Hall levels up.
-    expect(expansionGate(4, 4, 0)).toBe(
+    // (3,3) is outside [4,13]; the next ring opens when the Hall levels up.
+    expect(expansionGate(3, 3, 0)).toBe(
       'Upgrade the Village Hall to unlock this land.'
     );
   });
 
   it('opens the next ring as the Hall levels up', () => {
-    // Hall level 1 → ring [4,13]; (4,4) is now unlocked, (3,3) still locked.
-    expect(expansionGate(4, 4, 1)).toBeNull();
-    expect(expansionGate(3, 3, 1)).not.toBeNull();
-    // Hall level 2 → ring [3,14]; (3,3) unlocks.
-    expect(expansionGate(3, 3, 2)).toBeNull();
+    // Hall level 1 → ring [3,14]; (3,3) is now unlocked, (2,2) still locked.
+    expect(expansionGate(3, 3, 1)).toBeNull();
+    expect(expansionGate(2, 2, 1)).not.toBeNull();
+    // Hall level 2 → ring [2,15]; (2,2) unlocks.
+    expect(expansionGate(2, 2, 2)).toBeNull();
   });
 });
 

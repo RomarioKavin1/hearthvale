@@ -25,8 +25,9 @@ export const isUnlocked = (
  * A hand-picked L-shaped river of 16 tiles along the map's north-west: a spring
  * cascade at (6,1) at the foot of the northern rim, a westward run along y=1,
  * one east+south elbow at (1,1), then a southward run down x=1 ending in a pool
- * at (1,11). All tiles sit outside the `[3,14]` band (x < 3 or y < 3), so they
- * only become visible once the Hall-level-3 ring `[1,16]` opens — giving
+ * at (1,11). Every tile has x < 2 or y < 2, so it stays locked through the
+ * Hall-level-2 ring `[2,15]` and only becomes visible once the Hall-level-3 ring
+ * `[1,16]` opens — giving
  * outer-ring land real location value (raw producers built beside a river get
  * +0.5). None touch the plaza or paths.
  *

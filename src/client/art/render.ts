@@ -148,13 +148,6 @@ export const addSurface = (
   sy: number
 ): GameObjects.Image => addBlock(scene, key, sx, sy, BASE_DY);
 
-/** Image row the well sprite's clean stone/water basin begins at. Everything above
- * it in well.png is a tall wooden canopy perched on near-invisible posts, which at
- * map scale reads as a DETACHED brown roof fragment hovering over the tile
- * (playtest-confirmed). Cropping to the basin band leaves a single grounded plaza
- * feature that reads clean. Applied wherever a `well` sprite is placed (addWell). */
-export const WELL_CROP_TOP = 138;
-
 // ── Ground routing ──────────────────────────────────────────────────────────
 
 /** True for the one-tile path ring bordering the plaza block. */
@@ -578,16 +571,13 @@ export const decorAt = (
   return h % 100 < 4 ? (TREE_PICKS[(h >>> 4) % TREE_PICKS.length] ?? null) : null;
 };
 
-// ── Elevated rim (composed plateau) + island silhouette ──────────────────────
-
-/** One full terrain step (px): a raised rim tile sits a whole block higher. */
-export const RIM_STEP = 45;
+// ── Locked-land band (connected frontier) + island silhouette ────────────────
 
 /**
  * Whether an outermost (dist-2) diagonal corner tile of the locked band renders:
  * a seeded ~38% of them are dropped so the island silhouette breaks from a
  * perfect diamond (varied per village). Inner-lip and straight-edge tiles always
- * render, keeping the plateau connected.
+ * render, keeping the band connected to the playfield.
  */
 export const rimTileVisible = (
   seed: number,
@@ -603,27 +593,33 @@ export const rimTileVisible = (
 export type RimTile = {
   key: SpriteKey;
   flipX: boolean;
-  /** Vertical lift (px, negative = raised) for the ground block. */
+  /** Vertical lift (px). Always 0 — the band is FLAT and flush with the playfield
+   * so it can never read as detached floating blocks. */
   dy: number;
-  /** Optional tree/rock accent resting on the raised grass top. */
+  /** Per-tile alpha: the darkening ramp that makes the outer band recede toward
+   * the void (dimmer than the inner frontier), giving the edge a contact-shadow
+   * falloff without any elevation gap. */
+  alpha: number;
+  /** Optional tree/rock accent resting on the band's grass top. */
   accent: SpriteKey | null;
-  /** Lift for the accent sprite (already includes the block's own lift). */
+  /** Lift for the accent sprite (one block step, matching a surface decor object). */
   accentDy: number;
 };
 
 /**
- * The composed elevated-rim treatment for one locked-band tile: connected
- * plateau masses stepping up away from the playfield instead of per-tile noise.
+ * The locked-band treatment for one tile just beyond the unlocked ring. Rewritten
+ * (map v4) to fix the "detached floating blobs" the raised/sloped rim produced at
+ * Reddit's small viewport: the band is now the SAME `grass-center` block as the
+ * playfield, laid dead flat (dy 0) and flush against the unlocked edge, so it
+ * reads as one contiguous island whose darkened frontier simply falls away to the
+ * void. The block's own terracotta sides form the island's edge cliff at the
+ * outermost ring; a per-distance alpha ramp (outer band dimmer) gives the falloff
+ * a contact-shadow read. A seeded share of the outermost corners is dropped
+ * (rimTileVisible) so the silhouette breaks from a perfect diamond, and sparse
+ * seeded tree/rock accents keep the frontier looking wild.
  *
- * - North/west of the ring (behind the playfield on screen): a grass plateau —
- *   slope wedges (straight/convex) ramp up from the playfield edge at dist 1,
- *   and a full raised grass-block top (with seeded tree/rock accents) at dist 2.
- * - South/east (facing the camera): stepped rocky cliff masses — the sample's
- *   dramatic south face — rising one half then one full block step.
- * - A seeded share of the outermost corners is dropped (rimTileVisible), so the
- *   island silhouette breaks from a perfect diamond.
- *
- * Returns null for tiles outside the band or dropped from the silhouette. PURE.
+ * Returns null for tiles outside the LOCKED_BAND or dropped from the silhouette.
+ * PURE (never consulted by hit-testing — the band is non-interactive).
  */
 export const rimPiece = (
   seed: number,
@@ -643,69 +639,52 @@ export const rimPiece = (
   if (!rimTileVisible(seed, x, y, dist, sides >= 2)) return null;
   const h = hash3(seed ^ 0x7e5f3b21, x, y);
 
-  if (south || east) {
-    // Camera-facing rocky wall: the island's dramatic south face.
-    const dy = dist >= 2 ? -RIM_STEP : -Math.round(RIM_STEP * 0.45);
-    const accent =
-      dist >= 2 && h % 100 < 25
-        ? h % 2 === 0
-          ? 'rocks-dirt'
-          : 'tree-pine'
-        : null;
-    return { key: 'cliff-top', flipX: h % 3 === 1, dy, accent, accentDy: BASE_DY + dy };
-  }
+  // Darkening ramp: the inner band (dist 1) is land just past the frontier; the
+  // outer band (dist 2) recedes into shadow toward the void.
+  const alpha = dist >= 2 ? LOCKED_ALPHA * 0.8 : LOCKED_ALPHA;
 
-  if (dist === 1) {
-    // Inner lip: slope transitions facing the playfield (convex at the corner).
-    if (west && north) {
-      return { key: 'grass-slope-convex', flipX: false, dy: 0, accent: null, accentDy: 0 };
-    }
-    return { key: 'grass-slope', flipX: west, dy: 0, accent: null, accentDy: 0 };
-  }
-
-  // Plateau top: a raised grass mass with seeded tree/rock accents.
+  // Sparse seeded accents — denser on the inner lip, thinning toward the edge so
+  // the outermost ring stays a clean silhouette against the void.
+  const accentChance = dist === 1 ? 28 : 16;
   const accent =
-    h % 100 < 35
+    h % 100 < accentChance
       ? h % 5 === 0
         ? 'rocks-grass'
         : (TREE_PICKS[(h >>> 4) % TREE_PICKS.length] ?? 'tree-pine')
       : null;
-  return {
-    key: 'grass-block',
-    flipX: false,
-    dy: -RIM_STEP,
-    accent,
-    accentDy: BASE_DY - RIM_STEP,
-  };
+
+  return { key: 'grass-center', flipX: false, dy: 0, alpha, accent, accentDy: BASE_DY };
 };
 
-// ── Village-square well (crop + centred placement) ───────────────────────────
+// ── Village-square well ───────────────────────────────────────────────────────
 
-/** Origin.y that centres the well's cropped basin band on its tile top-face. */
-export const WELL_ORIGIN_Y = (WELL_CROP_TOP + IMG_H) / 2 / IMG_H;
-
-/** Place the plaza well: its tall canopy cropped away and the stone/water basin
- * centred on the tile top-face (fixes the basin rendering clipped at the block
- * edge — the old BASE_DY lift dropped the basin below the tile's front vertex). */
+/** Place the plaza well: the FULL sprite (canopy + basin) grounded on the tile
+ * top-face exactly like a tree or rock (block-anchored, lifted one block step).
+ * The earlier crop-to-basin "fix" left only a 38px sliver of the sprite, which at
+ * Reddit's small viewport read as a cut/broken object; the complete well — a
+ * standard sits-on-surface piece whose footprint rests at REST_ROW — reads as a
+ * whole grounded feature the way Kenney's own Sample composes it. */
 export const addWell = (
   scene: Scene,
   sx: number,
   sy: number
-): GameObjects.Image =>
-  scene.add
-    .image(sx, sy, 'well')
-    .setOrigin(0.5, WELL_ORIGIN_Y)
-    .setCrop(0, WELL_CROP_TOP, IMG_W, IMG_H - WELL_CROP_TOP);
+): GameObjects.Image => addSurface(scene, 'well', sx, sy);
 
 // ── Plaza dressing: village-square well ──────────────────────────────────────
 
-/** The single fixed plaza-adjacent tile the decorative well stands on (a corner
- * of the path ring). Non-claimable already (it's inside the plaza block).
+/** The single fixed plaza tile the decorative well stands on: the FRONT-LEFT
+ * corner of the path ring. Non-claimable already (it's inside the plaza block).
+ *
+ * Placed at the front corner (y = PATH_HI), not the back one, now that the well
+ * renders full-height: at the old back corner (PATH_LO, PATH_LO) its tall canopy
+ * poked up behind the Village Hall and read as a stray red fragment on the hall.
+ * The front-left corner draws in front of the keep and clear of the gate, so the
+ * well stands unambiguously as its own village-square feature.
  *
  * Fences removed (playtest, twice): Kenney ships `fence-wood` in a single `_N`
  * orientation only, so at map scale even a proven-correct two-edge railing still
  * read as randomly scattered posts. The well alone dresses the plaza now. */
-export const WELL_TILE: { x: number; y: number } = { x: PATH_LO, y: PATH_LO };
+export const WELL_TILE: { x: number; y: number } = { x: PATH_LO, y: PATH_HI };
 
 // ── Floating-world void background (islets + starfield) ───────────────────────
 //
@@ -817,8 +796,8 @@ const KEEP_FRONT = { x: 9, y: 9 };
  * Cumulative Grand Keep silhouette per Hall level (0…5), redesigned so the town
  * centre is VISIBLE and reads as a clear step-up in mass at every level (Clash-of-
  * Clans style growth), culminating in the sample castle's purple-capped keep:
- *   0 gatehouse (a single castle gate — "town centre under construction")
- *   1 + rear wall (gate flanked front-to-back)
+ *   0 a small stone gatehouse: a castle gate fronting one wall block ("town centre")
+ *   1 + a side wall (an L of wall behind the gate)
  *   2 full wall ring with the front gate
  *   3 + two flanking towers (left/right) with caps
  *   4 + rear tower and a capped gatehouse (four tower masses)
@@ -826,22 +805,23 @@ const KEEP_FRONT = { x: 9, y: 9 };
  */
 export const castleParts = (stage: number): CastlePart[] => {
   if (stage <= 0) {
-    // A modest but PRESENT town centre: the gatehouse fronting the future
-    // keep's foundation arches — reads as "town centre being built".
+    // A modest but PRESENT town centre: a clean stone gatehouse — the castle gate
+    // fronting one wall block. Reads unambiguously as "town centre" and, unlike the
+    // old structure-arch, has no thin canopy that floats as a detached red fragment.
     return [
-      { ...KEEP_BACK, key: 'structure-arch', roof: false, lift: 0 },
+      { ...KEEP_BACK, key: 'castle-wall', roof: false, lift: 0 },
       { ...KEEP_FRONT, key: 'castle-gate', roof: false, lift: 0 },
     ];
   }
   const s = Math.min(stage, 5);
 
-  // Base wall/gate/tower on each pad tile (cumulative by level). At level 1 the
-  // construction arches still stand beside the first rising wall.
+  // Base wall/gate/tower on each pad tile (cumulative by level). At level 1 a
+  // second wall block rises beside the gate (an L of wall).
   const base: Record<string, SpriteKey> = {
     '9,9': 'castle-gate',
     '8,8': 'castle-wall',
   };
-  if (s === 1) base['8,9'] = 'structure-arch';
+  if (s === 1) base['8,9'] = 'castle-wall';
   if (s >= 2) {
     base['8,9'] = 'castle-wall';
     base['9,8'] = 'castle-wall';

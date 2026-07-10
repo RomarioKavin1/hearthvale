@@ -213,22 +213,25 @@ describe('rimPiece', () => {
     expect(rimPiece(seed, lo - 3, 8, lo, hi)).toBeNull(); // beyond band
   });
 
-  it('slopes on the north/west lip, raised plateau behind, cliffs south/east', () => {
-    // North lip straight edge → slope wedge at ground level.
-    const north = rimPiece(seed, 8, lo - 1, lo, hi);
-    expect(north?.key).toBe('grass-slope');
-    expect(north?.dy).toBe(0);
-    // North-west corner lip → convex wedge.
-    expect(rimPiece(seed, lo - 1, lo - 1, lo, hi)?.key).toBe(
-      'grass-slope-convex'
-    );
-    // Behind the lip: a raised grass plateau top.
-    const top = rimPiece(seed, 8, lo - 2, lo, hi);
-    expect(top?.key).toBe('grass-block');
-    expect(top?.dy).toBe(-45);
-    // South face: stepped rocky cliffs.
-    expect(rimPiece(seed, 8, hi + 1, lo, hi)?.key).toBe('cliff-top');
-    expect(rimPiece(seed, 8, hi + 2, lo, hi)?.dy).toBe(-45);
+  it('lays a flat contiguous grass band on every side (no lifts, no gaps)', () => {
+    // Every band tile is the same flat grass-center block as the playfield, so it
+    // can never read as detached floating blocks.
+    for (const [cx, cy] of [
+      [8, lo - 1], // north inner lip
+      [lo - 1, lo - 1], // north-west corner lip
+      [8, lo - 2], // north outer band
+      [8, hi + 1], // south inner lip
+      [8, hi + 2], // south outer band
+      [hi + 1, 8], // east inner lip
+    ] as const) {
+      const p = rimPiece(seed, cx, cy, lo, hi);
+      expect(p?.key).toBe('grass-center');
+      expect(p?.dy).toBe(0);
+    }
+    // Darkening ramp: the outer band recedes (dimmer) relative to the inner lip.
+    const inner = rimPiece(seed, 8, lo - 1, lo, hi);
+    const outer = rimPiece(seed, 8, lo - 2, lo, hi);
+    expect(outer?.alpha).toBeLessThan(inner?.alpha ?? 1);
   });
 
   it('drops a seeded share of the outermost corners (island silhouette)', () => {
@@ -301,10 +304,12 @@ describe('castleParts', () => {
     }
   });
 
-  it('level 0 reads as a town centre under construction', () => {
+  it('level 0 is a clean stone gatehouse (no floating structure-arch)', () => {
     const keys = castleParts(0).map((p) => p.key);
     expect(keys).toContain('castle-gate');
-    expect(keys).toContain('structure-arch');
+    expect(keys).toContain('castle-wall');
+    // The old red structure-arch read as a detached floating fragment on the hall.
+    expect(keys).not.toContain('structure-arch');
   });
 
   it('the full keep crowns an elevated centre with the purple spire', () => {

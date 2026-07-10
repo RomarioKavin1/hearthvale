@@ -436,9 +436,9 @@ export const STAGE_NAME_WORDS: {
  * level 5 clamps to index 4). Replaces the old population-keyed thresholds — land
  * now expands with the Hall level, not the raw villager count. */
 export const RING_BY_LEVEL: Array<{ lo: number; hi: number }> = [
-  { lo: 5, hi: 11 },
   { lo: 4, hi: 13 },
   { lo: 3, hi: 14 },
+  { lo: 2, hi: 15 },
   { lo: 1, hi: 16 },
   { lo: 0, hi: 17 },
 ];

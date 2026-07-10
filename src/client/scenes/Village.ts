@@ -38,13 +38,14 @@ import {
   BASE_DY,
   BG,
   BLOCK_ORIGIN_Y,
+  BLOCK_TOP_CENTER_Y,
+  IMG_H,
   castleParts,
   CASTLE_TOP_DY,
   decorAt,
   isKeepPad,
   isPathRing,
   isTreeDecor,
-  LOCKED_ALPHA,
   LOCKED_BAND,
   networkPathPiece,
   PATH_HI,
@@ -540,21 +541,22 @@ export class Village extends Scene {
     const { network, clusters } = this.landscape();
 
     if (!this.isUnlockedTile(x, y)) {
-      // Locked land: a desaturated ELEVATED RIM just beyond the ring — connected
-      // plateau masses with slope transitions behind the playfield and stepped
-      // cliff faces toward the camera, with seeded silhouette breaks (safe —
-      // these tiles are never interactive, so the lift can't skew hit-testing).
-      // Deeper locked tiles / dropped corners render as background void.
+      // Locked land: a desaturated frontier band, the SAME grass block as the
+      // playfield laid dead flat and flush against the unlocked edge, so it reads
+      // as one contiguous island whose darkened rim falls away to the void (never
+      // as detached floating blocks). A per-distance alpha ramp gives the falloff.
+      // Deeper locked tiles / dropped corners render as background void; the band
+      // is non-interactive, so this cosmetic treatment can't skew hit-testing.
       const { lo, hi } = this.ringLoHi();
       const rim = rimPiece(this.seed(), x, y, lo, hi);
       if (!rim) return undefined;
       img = addBlock(this, rim.key, sx, sy, rim.dy)
         .setFlipX(rim.flipX)
-        .setAlpha(LOCKED_ALPHA)
+        .setAlpha(rim.alpha)
         .setTint(style.lockedTint);
       if (rim.accent) {
         const acc = addBlock(this, rim.accent, sx, sy, rim.accentDy)
-          .setAlpha(LOCKED_ALPHA)
+          .setAlpha(rim.alpha)
           .setTint(style.lockedTint)
           .setDepth(GROUND_DEPTH + sy + 0.5);
         this.decorImgs.set(key, acc);
@@ -955,9 +957,7 @@ export class Village extends Scene {
     }
     let d = sy + 1;
     for (const k of keys) {
-      // The well uses its centred-basin placement (addWell) — the plain surface
-      // lift rendered the cropped basin clipped at the block's front edge.
-      const img = k === 'well' ? addWell(this, sx, sy) : addSurface(this, k, sx, sy);
+      const img = addSurface(this, k, sx, sy);
       img.setDepth(d);
       d += 0.1;
       view.parts.push(img);
@@ -1168,22 +1168,47 @@ export class Village extends Scene {
       spanX + half * 2,
       (GRID_SIZE - 1) * TILE_H + 460
     );
-    cam.setZoom(1);
+    this.fitCameraToIsland();
+  }
 
-    let cx = KEEP_CX;
-    let cy = KEEP_CY;
-    const data = store.data;
-    if (data && this.me) {
-      for (const [key, tile] of Object.entries(data.grid)) {
-        if (tile.owner === this.me) {
-          const { x, y } = parseKey(key);
-          const p = isoToScreen(x, y, TILE_W, TILE_H);
-          cx = p.sx;
-          cy = p.sy;
-          break;
-        }
-      }
-    }
+  /**
+   * On boot, frame the whole unlocked island (plus one locked-band tile) so a
+   * fresh village never opens cramped — critical on Reddit's small ~720px modal.
+   * The zoom is fit to the iso bounding box of the ring + 1 band tile, clamped to
+   * [0.5, 1.2], and the camera is centred on the hall (the grid centre, which is
+   * also where a fresh player's own house sits, so the fallback is a no-op).
+   */
+  private fitCameraToIsland(): void {
+    const cam = this.cameras.main;
+    const { lo, hi } = this.ringLoHi();
+    const x0 = lo - 1;
+    const x1 = hi + 1;
+
+    // Iso bounding box of the framed tiles' full blocks. Width spans the two
+    // extreme diamonds; height spans the topmost block's crown to the bottom
+    // block's foot (a block's top vertex sits TILE_H above its anchor row, its
+    // foot IMG_H − BLOCK_TOP_CENTER_Y below it).
+    const crownAbove = BLOCK_TOP_CENTER_Y - TILE_H;
+    const footBelow = IMG_H - BLOCK_TOP_CENTER_Y;
+    const contentW = (x1 - x0 + 1) * TILE_W;
+    const contentH = (x1 - x0) * TILE_H + crownAbove + footBelow;
+
+    const vw = this.scale.width;
+    const vh = this.scale.height;
+    // Leave room for the top bar + floating action buttons overlaying the canvas.
+    const marginX = 48;
+    const marginY = 130;
+    const zoom = Phaser.Math.Clamp(
+      Math.min((vw - marginX) / contentW, (vh - marginY) / contentH),
+      0.5,
+      1.2
+    );
+    cam.setZoom(zoom);
+
+    // Centre on the hall: the ring is symmetric so the horizontal centre is 0; the
+    // vertical centre is the mid-row plus a small nudge for the taller foot.
+    const cx = KEEP_CX;
+    const cy = ((x0 + x1) * TILE_H) / 2 + (footBelow - crownAbove) / 2;
     cam.centerOn(cx, cy);
   }
 

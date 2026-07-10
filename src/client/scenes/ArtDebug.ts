@@ -6,7 +6,6 @@ import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
   addSurface,
-  addWell,
   bandBlockFor,
   BASE_DY,
   BG,
@@ -78,8 +77,7 @@ export class ArtDebug extends Scene {
     } else {
       let d = cy + 1;
       for (const k of art.byTier[tier]) {
-        // The well takes its centred-basin placement (matches the Village scene).
-        const img = k === 'well' ? addWell(this, cx, cy) : addSurface(this, k, cx, cy);
+        const img = addSurface(this, k, cx, cy);
         img.setDepth(d);
         d += 0.1;
       }
