@@ -123,9 +123,7 @@ export type PlayerState = {
   // --- Villager's Journal quest counters (all monotonic; legacy players = 0) ---
   /** Lifetime successful collects (collect + collect-all tiles that produced). */
   collects: number;
-  /** Lifetime units auto-sold on collect — the "harvest" quest counter. The
-   * field name predates S1 (it counted manual market sales); it is kept to
-   * avoid a store migration and only its meaning was renamed. */
+  /** Lifetime units sold at the Market (manual sales) — the "sell" quest counter. */
   soldUnits: number;
   /** Lifetime processed-output units produced by processors (incl. bakery runs). */
   processedUnits: number;
@@ -232,13 +230,11 @@ export type Summary = {
 };
 
 /** The result of a collect: coins + xp + any goods produced into the wallet.
- * `sold` records the wheat/logs/stone/flour units auto-sold into the village
- * stockpile on this collect (and the coins each fetched), for the client's
- * "12 wheat sold at 5" breakdown line. Planks/bricks are never auto-sold and
- * appear in `goods` (the wallet) instead. */
+ * Every produced good (raw harvests, flour, planks, bricks) lands in `goods`
+ * (the owner's wallet) — nothing is auto-sold; coins come only from the bakery/
+ * house/manor. */
 export type Gained = {
   coins: number;
   xp: number;
   goods: Partial<Record<Good, number>>;
-  sold?: Partial<Record<Good, { units: number; coins: number }>>;
 };

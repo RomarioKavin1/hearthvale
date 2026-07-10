@@ -445,6 +445,9 @@ export const RING_BY_LEVEL: Array<{ lo: number; hi: number }> = [
 
 export const GRID_SIZE: number = 18;
 export const MAX_LEVEL: number = 15;
-export const PLOT_LEVELS: number[] = [1, 2, 4, 7, 10];
+// Two plots from the start: both level-1 entries grant a plot at level 1 (the
+// house is excluded from the plot count), so a freshly-settled player can claim
+// TWO plots immediately — a field and a grove — before needing to level up.
+export const PLOT_LEVELS: number[] = [1, 1, 4, 7, 10];
 // The daily neighbour-boost limit lives in `hallPerks(level).boostLimit`
 // (5 at Hall level 0, 7 from level 4) — there is no separate flat constant.

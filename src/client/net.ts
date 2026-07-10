@@ -3,10 +3,13 @@ import type {
   CityState,
   ClaimQuestResponse,
   Gained,
+  Good,
   LeaderRow,
   PlayerState,
+  Prices,
   RoofColor,
   StateResponse,
+  Stockpile,
   Summary,
   TileState,
 } from '../shared/types';
@@ -39,6 +42,7 @@ export type CheckInResult = {
   gained: { coins: number; xp: number };
 };
 export type ContributeResult = { city: CityState; me: PlayerState };
+export type SellResult = { me: PlayerState; stockpile: Stockpile; prices: Prices };
 export type LeaderboardsResult = {
   value: LeaderRow[];
   earned: LeaderRow[];
@@ -139,6 +143,9 @@ export const api = {
     good: 'planks' | 'bricks',
     qty: number
   ): Promise<ContributeResult> => post('/api/contribute', { good, qty }),
+
+  sell: (good: Good, qty: number): Promise<SellResult> =>
+    post('/api/sell', { good, qty }),
 
   nameStage: (first: number, second: number): Promise<NameStageResult> =>
     post('/api/name-stage', { first, second }),

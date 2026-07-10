@@ -14,15 +14,18 @@ import {
   doDemolish,
   doNameStage,
   doPaint,
+  doSell,
   doShare,
   doUpgrade,
   isBuildingId,
+  isGood,
   isProcessedGood,
   isRoofColor,
   isShareKind,
   loadLeaderboards,
   loadState,
   loadSummary,
+  MAX_SELL_QTY,
 } from '../core/village';
 
 type ErrorResponse = {
@@ -255,14 +258,33 @@ api.post('/contribute', async (c) => {
   }
 });
 
-// S1: manual market orders are retired — harvests auto-sell on collect. Kept as
-// permanent 410s so stale clients get a legible message instead of a 404.
-api.post('/sell', (c) =>
-  c.json(...fail('The market stall has closed — your harvests sell themselves now.', 410))
-);
+// Manual selling (P1): sell wallet goods into the shared stockpile at marginal
+// prices. Selling is the only way the stockpile — which processors draw from —
+// refills.
+api.post('/sell', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
+    if (!isGood(body.good)) {
+      return c.json(...fail('Unknown good to sell.', 400));
+    }
+    const qty = asQty(body.qty, MAX_SELL_QTY);
+    if (qty === null) {
+      return c.json(...fail(`Quantity must be a whole number between 1 and ${MAX_SELL_QTY}.`, 400));
+    }
+    const result = await doSell(userId, body.good, qty);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/sell failed:', error);
+    return c.json(...fail('Failed to sell.', 500));
+  }
+});
 
+// Buying stays retired — coins flow one way (sell your produce; the stockpile is
+// a shared resource, not a shop).
 api.post('/buy', (c) =>
-  c.json(...fail('The market stall has closed — your harvests sell themselves now.', 410))
+  c.json(...fail('The market only buys from villagers — you cannot buy back from the stockpile.', 410))
 );
 
 // S1: the wandering trader is retired.

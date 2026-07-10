@@ -42,6 +42,7 @@ import type {
   Good,
   LeaderRow,
   PlayerState,
+  Prices,
   RoofColor,
   StateResponse,
   Stockpile,
@@ -80,7 +81,6 @@ import {
   canClaim,
   emptyStockpile,
   goodsTotal,
-  isAutoSold,
   isGoldenWindowLenient,
   levelForXp,
   mergeGoods,
@@ -281,7 +281,7 @@ const processedUnits = (
   if (!buildingId) return 0;
   const spec = CATALOG[buildingId];
   if (spec.role !== 'processor' || !spec.input || !spec.output) return 0;
-  if (spec.output === 'coins' || isAutoSold(spec.output)) {
+  if (spec.output === 'coins') {
     const per = spec.input.per;
     return per > 0 ? Math.floor((consumed[spec.input.good] ?? 0) / per) : 0;
   }
@@ -315,8 +315,7 @@ const applyCollect = (
   const isHouse = spec?.special === 'house';
 
   const outputGood = spec?.output;
-  const netsFromRevenue =
-    outputGood === 'coins' || (outputGood !== undefined && isAutoSold(outputGood));
+  const netsFromRevenue = outputGood === 'coins';
 
   let inputCost = 0;
   if (spec && spec.role === 'processor' && spec.input && spec.output) {
@@ -355,30 +354,9 @@ const applyCollect = (
     };
   }
 
-  let saleCoins = 0;
-  let soldUnitsTotal = 0;
-  const sold: Partial<Record<Good, { units: number; coins: number }>> = {};
+  // Manual selling (P1): every produced good goes to the owner's wallet;
+  // nothing is auto-sold, so a collect adds nothing to the stockpile.
   const stocked: Partial<Record<Good, number>> = {};
-  const keptGoods: Partial<Record<Good, number>> = {};
-  for (const g of GOODS) {
-    const units = gained.goods[g];
-    if (!units) continue;
-    if (isAutoSold(g)) {
-      const coins = sellValue(units, stockpile[g], g);
-      sold[g] = { units, coins };
-      stocked[g] = units;
-      saleCoins += coins;
-      soldUnitsTotal += units;
-    } else {
-      keptGoods[g] = units;
-    }
-  }
-  gained = {
-    ...gained,
-    coins: gained.coins + saleCoins,
-    goods: keptGoods,
-    ...(soldUnitsTotal > 0 ? { sold } : {}),
-  };
 
   let netCoins = gained.coins;
   let paidFromBalance = 0;
@@ -395,8 +373,7 @@ const applyCollect = (
   const produced =
     netCoins + goodsOut > 0 ||
     paidFromBalance > 0 ||
-    goodsTotal(consumed) > 0 ||
-    soldUnitsTotal > 0;
+    goodsTotal(consumed) > 0;
 
   let nextTile: TileState = { ...tile };
   let nextPlayer = player;
@@ -413,7 +390,6 @@ const applyCollect = (
         coins: player.coins + netCoins - paidFromBalance,
         wallet,
         lifetimeEarned: player.lifetimeEarned + netCoins,
-        soldUnits: player.soldUnits + soldUnitsTotal,
       },
       gained.xp
     );
@@ -911,16 +887,6 @@ const doCollectAll = (
     total.coins += result.gained.coins;
     total.goods = mergeGoods(total.goods, result.gained.goods);
     total.xp += result.gained.xp;
-    if (result.gained.sold) {
-      const soldTotal = { ...(total.sold ?? {}) };
-      for (const g of GOODS) {
-        const s = result.gained.sold[g];
-        if (!s) continue;
-        const prev = soldTotal[g] ?? { units: 0, coins: 0 };
-        soldTotal[g] = { units: prev.units + s.units, coins: prev.coins + s.coins };
-      }
-      total.sold = soldTotal;
-    }
     const consumedUnits = goodsTotal(result.consumed);
     const stockedUnits = goodsTotal(result.stocked);
     if (consumedUnits > 0 || stockedUnits > 0) {
@@ -1043,6 +1009,39 @@ const doContribute = (
   return { city: nextCity, me };
 };
 
+const MAX_SELL_QTY = 500;
+
+const doSell = (
+  userId: string,
+  good: Good,
+  qty: number
+): { me: PlayerState; stockpile: Stockpile; prices: Prices } => {
+  if (qty > MAX_SELL_QTY) {
+    throw new MockError(400, `You can sell at most ${MAX_SELL_QTY} ${good} in one order.`);
+  }
+  const player = ensurePlayer(userId);
+  const held = player.wallet[good];
+  if (held <= 0) throw new MockError(400, `You have no ${good} to sell.`);
+
+  const amount = Math.min(qty, held);
+  const before = world.stockpile[good];
+  const coins = sellValue(amount, before, good);
+
+  const me: PlayerState = {
+    ...player,
+    coins: player.coins + coins,
+    wallet: { ...player.wallet, [good]: held - amount },
+    lifetimeEarned: player.lifetimeEarned + coins,
+    soldUnits: player.soldUnits + amount,
+  };
+  const beforeStock = { ...world.stockpile };
+  world.stockpile = { ...world.stockpile, [good]: before + amount };
+  world.players[userId] = me;
+  if (anyPriceChanged(beforeStock, world.stockpile)) bMarket(world.stockpile);
+  save();
+  return { me, stockpile: world.stockpile, prices: pricesFor(world.stockpile) };
+};
+
 const doClaimQuest = (userId: string): ClaimQuestResponse => {
   const player = ensurePlayer(userId);
   const quest = questAt(player.questIndex, player.questLap);
@@ -1156,6 +1155,7 @@ const isBuildingId = (v: unknown): v is BuildingId => typeof v === 'string' && v
 const isRoofColor = (v: unknown): v is RoofColor =>
   v === 'brown' || v === 'green' || v === 'purple' || v === 'beige';
 const isProcessedGood = (v: unknown): v is 'planks' | 'bricks' => v === 'planks' || v === 'bricks';
+const isGood = (v: unknown): v is Good => typeof v === 'string' && (GOODS as string[]).includes(v);
 
 const getField = (body: unknown, key: string): unknown =>
   body && typeof body === 'object' && key in body ? (body as Record<string, unknown>)[key] : undefined;
@@ -1236,8 +1236,16 @@ const route = (method: string, path: string, body: unknown): Response => {
         if (value === null) return fail('Invalid milestone value.', 400);
         return json(doShare(kind, value));
       }
-      // Retired endpoints — permanent 410s, matching the real server.
-      case '/api/sell':
+      case '/api/sell': {
+        const good = getField(body, 'good');
+        const qty = getField(body, 'qty');
+        if (!isGood(good)) return fail('Unknown good to sell.', 400);
+        if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) {
+          return fail('Quantity must be a whole number of at least 1.', 400);
+        }
+        return json(doSell(uid, good, qty));
+      }
+      // Buying stays retired — coins flow one way.
       case '/api/buy':
         return fail(RETIRED_MARKET, 410);
       case '/api/trade':

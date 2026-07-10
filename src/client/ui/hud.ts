@@ -4,8 +4,8 @@ import {
   MAX_LEVEL,
   PLOT_LEVELS,
 } from '../../shared/catalog';
-import type { PlayerState, StateResponse } from '../../shared/types';
-import { goodsTotal, xpFor } from '../../shared/logic/economy';
+import type { Good, PlayerState, StateResponse } from '../../shared/types';
+import { GOODS, xpFor } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
 import { HV_TILE_SELECTED } from '../events';
 import { api } from '../net';
@@ -15,6 +15,8 @@ import {
   clearPending,
   el,
   fmtInt,
+  gainedLine,
+  GOOD_LABEL,
   goodIcon,
   iconEl,
   injectStyles,
@@ -25,7 +27,6 @@ import {
   promptLogin,
   readyCount,
   setGame,
-  soldSummary,
   toast,
   toastAction,
   todayLabel,
@@ -65,11 +66,9 @@ let todayChip: HTMLElement;
 let todayIcon: HTMLElement;
 let todayText: HTMLElement;
 let signinPill: HTMLElement;
-// Planks/bricks (the only held goods — Hall material), shown only when nonzero.
-let planksChip: HTMLButtonElement;
-let planksNum: HTMLElement;
-let bricksChip: HTMLButtonElement;
-let bricksNum: HTMLElement;
+// A wallet chip per good, shown only when the player actually holds some. Raw
+// goods + flour are sold at the Market; planks/bricks are spent at the Hall.
+const goodChips: Partial<Record<Good, { chip: HTMLButtonElement; num: HTMLElement }>> = {};
 
 // Keep pill (top-left column, beneath the Journal banner).
 let keepPill: HTMLButtonElement;
@@ -93,11 +92,9 @@ let prevStage: number | null = null;
 // presentation, nothing persisted.
 const OBJ_IDLE_MS = 6000;
 const OBJ_PEEK_MS = 8000;
-const OBJ_RING_R = 16;
-const OBJ_RING_C = 2 * Math.PI * OBJ_RING_R;
 let topLeft: HTMLElement;
 let jrChip: HTMLButtonElement;
-let jrChipRing: SVGCircleElement;
+let jrChipFill: HTMLElement;
 let hallChip: HTMLButtonElement;
 let hallChipLvl: HTMLElement;
 let objTimer: number | undefined;
@@ -189,18 +186,20 @@ const buildRing = (): void => {
   ring.appendChild(ringLevel);
 };
 
-/** A small top-bar chip for a Hall-material good (planks/bricks); tapping it
- * opens the Hall sheet where the goods are spent. Hidden while the count is 0. */
+/** A small top-bar chip for a wallet good. Tapping planks/bricks opens the Hall
+ * (where they are spent); tapping a sellable good opens the Market. Hidden while
+ * the count is 0. */
 const buildGoodChip = (
-  good: 'planks' | 'bricks',
-  tip: string
+  good: Good,
+  tip: string,
+  onOpen: () => void
 ): { chip: HTMLButtonElement; num: HTMLElement } => {
   const num = el('span', { cls: 'hv-chip-num', text: '0' });
   const chip = el('button', {
     cls: 'hv-chip hv-chip-good',
     attrs: { type: 'button' },
     children: [goodIcon(good, 16), num],
-    on: { click: () => openKeepSheet() },
+    on: { click: onOpen },
   });
   withTip(chip, tip);
   chip.style.display = 'none';
@@ -208,23 +207,23 @@ const buildGoodChip = (
 };
 
 const buildTopBar = (): HTMLElement => {
-  // Left: coins, plus planks/bricks chips that appear only when held.
+  // Left: coins, plus one chip per held good (all appear only when nonzero).
   coinsNum = el('span', { cls: 'hv-chip-num', text: '0' });
   coinsChip = el('div', {
     cls: 'hv-chip',
     children: [iconEl('icon-coin', 16), coinsNum],
   });
   withTip(coinsChip, 'Your coins');
-  const planks = buildGoodChip('planks', 'Planks — contribute at the Village Hall');
-  planksChip = planks.chip;
-  planksNum = planks.num;
-  const bricks = buildGoodChip('bricks', 'Bricks — contribute at the Village Hall');
-  bricksChip = bricks.chip;
-  bricksNum = bricks.num;
-  const left = el('div', {
-    cls: 'hv-tb-left',
-    children: [coinsChip, planksChip, bricksChip],
-  });
+  const left = el('div', { cls: 'hv-tb-left', children: [coinsChip] });
+  for (const g of GOODS) {
+    const isHall = g === 'planks' || g === 'bricks';
+    const tip = isHall
+      ? `${GOOD_LABEL[g]} — contribute at the Village Hall`
+      : `${GOOD_LABEL[g]} — sell at the Village Market`;
+    const built = buildGoodChip(g, tip, isHall ? openKeepSheet : () => openMarketSheet());
+    goodChips[g] = built;
+    left.appendChild(built.chip);
+  }
 
   // Right: level ring (logged in) or the sign-in pill (logged out).
   buildRing();
@@ -412,43 +411,20 @@ const initObjectivesCollapse = (): void => {
   });
 };
 
-/** The journal chip: a circle with the scroll icon wrapped by a thin progress
- * ring; turns gold (CSS .is-claimable) with a gentle pulse when claimable. */
+/** The journal chip: a small rounded-square parchment card with the scroll icon
+ * and a thin progress underline; turns gold (CSS .is-claimable) with a gentle
+ * pulse when the goal is claimable. */
 const buildJournalChip = (): HTMLButtonElement => {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 40 40');
-
-  const track = document.createElementNS(SVG_NS, 'circle');
-  track.setAttribute('cx', '20');
-  track.setAttribute('cy', '20');
-  track.setAttribute('r', String(OBJ_RING_R));
-  track.setAttribute('fill', 'none');
-  track.setAttribute('stroke', 'var(--wall-shade)');
-  track.setAttribute('stroke-width', '3');
-
-  jrChipRing = document.createElementNS(SVG_NS, 'circle');
-  jrChipRing.setAttribute('cx', '20');
-  jrChipRing.setAttribute('cy', '20');
-  jrChipRing.setAttribute('r', String(OBJ_RING_R));
-  jrChipRing.setAttribute('fill', 'none');
-  jrChipRing.setAttribute('stroke', 'var(--leaf)');
-  jrChipRing.setAttribute('stroke-width', '3');
-  jrChipRing.setAttribute('stroke-linecap', 'round');
-  jrChipRing.setAttribute('stroke-dasharray', String(OBJ_RING_C));
-  jrChipRing.setAttribute('stroke-dashoffset', String(OBJ_RING_C));
-  jrChipRing.setAttribute('transform', 'rotate(-90 20 20)');
-
-  svg.appendChild(track);
-  svg.appendChild(jrChipRing);
+  jrChipFill = el('i');
+  const underline = el('div', { cls: 'hv-obj-underline', children: [jrChipFill] });
 
   jrChip = el('button', {
     cls: 'hv-obj-chip hv-obj-jr',
     attrs: { type: 'button', 'aria-label': 'Current goal — tap to expand' },
-    children: [iconEl('icon-scroll', 16)],
-    on: { click: () => expandObjectives(OBJ_PEEK_MS) },
+    children: [iconEl('icon-scroll', 16), underline],
   });
-  jrChip.appendChild(svg);
   jrChip.style.display = 'none';
+  jrChip.addEventListener('click', () => expandObjectives(OBJ_PEEK_MS));
   return jrChip;
 };
 
@@ -472,8 +448,7 @@ const renderObjChips = (data: StateResponse): void => {
   if (quest) {
     const frac =
       quest.target > 0 ? Math.max(0, Math.min(1, quest.have / quest.target)) : 1;
-    jrChipRing.setAttribute('stroke-dashoffset', String(OBJ_RING_C * (1 - frac)));
-    jrChipRing.setAttribute('stroke', quest.done ? 'var(--wood-dark)' : 'var(--leaf)');
+    jrChipFill.style.width = `${Math.round(frac * 100)}%`;
     jrChip.classList.toggle('is-claimable', quest.done);
   }
   hallChipLvl.textContent = String(data.city.hallLevel);
@@ -498,13 +473,8 @@ const doCollectAll = (): void => {
     .then((res) => {
       const tiles = Object.entries(res.tiles).map(([key, tile]) => ({ key, tile }));
       store.applyMutation({ tiles, me: res.me });
-      const got = res.gained.coins + goodsTotal(res.gained.goods);
-      if (got > 0) {
-        const coins = res.gained.coins;
-        toast(coins > 0 ? `+${fmtInt(coins)} coins` : `Collected +${fmtInt(got)}`, 'gain');
-        const detail = soldSummary(res.gained);
-        if (detail) toast(detail, 'info');
-      }
+      const line = gainedLine(res.gained);
+      if (line) toast(line, 'gain');
     })
     .catch((err: unknown) =>
       notifyError(err instanceof Error ? err.message : 'Could not collect.')
@@ -580,13 +550,15 @@ const renderToday = (data: StateResponse): void => {
   todayChip.setAttribute('aria-label', todayTip(data.weather, data.city.festival));
 };
 
-/** The planks/bricks chips appear in the top bar only while the player actually
- * holds some (the Hall building material is the only wallet content left). */
+/** Each wallet-good chip appears in the top bar only while the player holds some
+ * of that good. */
 const renderGoodChips = (me: PlayerState): void => {
-  planksNum.textContent = fmtInt(me.wallet.planks);
-  planksChip.style.display = me.wallet.planks > 0 ? '' : 'none';
-  bricksNum.textContent = fmtInt(me.wallet.bricks);
-  bricksChip.style.display = me.wallet.bricks > 0 ? '' : 'none';
+  for (const g of GOODS) {
+    const c = goodChips[g];
+    if (!c) continue;
+    c.num.textContent = fmtInt(me.wallet[g]);
+    c.chip.style.display = me.wallet[g] > 0 ? '' : 'none';
+  }
 };
 
 const renderPlayer = (me: PlayerState): void => {
@@ -620,8 +592,10 @@ const renderPlayer = (me: PlayerState): void => {
 
 const renderLoggedOut = (): void => {
   coinsChip.style.display = 'none';
-  planksChip.style.display = 'none';
-  bricksChip.style.display = 'none';
+  for (const g of GOODS) {
+    const c = goodChips[g];
+    if (c) c.chip.style.display = 'none';
+  }
   ring.style.display = 'none';
   signinPill.style.display = '';
 };

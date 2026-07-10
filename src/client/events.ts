@@ -52,3 +52,30 @@ export const setTileToScreen = (fn: TileToScreen | null): void => {
 /** Resolve a tile's screen point, or null when no scene is registered. */
 export const tileToScreen = (x: number, y: number): ScreenPoint | null =>
   tileToScreenProvider ? tileToScreenProvider(x, y) : null;
+
+/**
+ * Scene→DOM bridge for the walkthrough's candidate-tile highlights. The Village
+ * scene registers a provider that draws pulsing top-face diamonds over the given
+ * tile keys (`"x,y"`), or clears them when passed null. Kept here so the DOM
+ * walkthrough can point at "any of these open tiles — your choice" without
+ * importing Phaser.
+ */
+type HighlightTiles = (keys: string[] | null) => void;
+
+let highlightTilesProvider: HighlightTiles | null = null;
+/** The most recent request, kept so a scene that registers AFTER the walkthrough
+ * asked for highlights (the scene builds its world well after the HUD mounts)
+ * still draws them — the registration replays the pending keys. */
+let pendingHighlightKeys: string[] | null = null;
+
+/** The scene calls this once its world is built (and null on shutdown). */
+export const setHighlightTiles = (fn: HighlightTiles | null): void => {
+  highlightTilesProvider = fn;
+  if (fn && pendingHighlightKeys !== null) fn(pendingHighlightKeys);
+};
+
+/** Ask the scene to highlight (or clear, with null) a set of candidate tiles. */
+export const highlightTiles = (keys: string[] | null): void => {
+  pendingHighlightKeys = keys;
+  highlightTilesProvider?.(keys);
+};

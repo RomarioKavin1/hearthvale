@@ -24,13 +24,12 @@ import {
   canClaim,
   CHAIN_PAIRS,
   goodsTotal,
-  isAutoSold,
   ownedPlots,
   plotsAllowed,
   roleToFestival,
 } from '../../shared/logic/economy';
 import { isRiver } from '../../shared/logic/expansion';
-import { priceFor, sellValue } from '../../shared/logic/market';
+import { priceFor } from '../../shared/logic/market';
 import type { HvTileSelected } from '../events';
 import { api } from '../net';
 import { store } from '../state';
@@ -41,13 +40,13 @@ import {
   fmtBuildTime,
   fmtDur,
   fmtInt,
+  gainedLine,
   GOOD_LABEL,
   goodIcon,
   iconEl,
   isPending,
   pctStr,
   promptLogin,
-  soldSummary,
   withTip,
 } from './dom';
 import type { SpriteKey } from '../art/manifest';
@@ -501,18 +500,17 @@ const renderProducerStats = (
   );
   stack.appendChild(el('div', { cls: 'hv-fill-cap', text: `Storage ${fmtInt(accrued)} / ${fmtInt(statsT.cap)}` }));
 
-  // Auto-sell preview: raw harvests (and the windmill's flour) sell into the
-  // stockpile on collect — show the estimated coins so the tap has a number.
-  // Server authority on the exact figure (buffs land there), hence '≈'.
+  // Collect preview: goods now go to the OWNER'S wallet (manual selling later),
+  // so raw/processed producers show the units they will bank; the bakery shows
+  // its net coins. Server has authority on the exact buffed figure, hence '≈'.
   let estCoins = gained.coins;
-  if (spec.role === 'raw' && spec.good && isAutoSold(spec.good)) {
+  if (spec.role === 'raw' && spec.good) {
     const units = gained.goods[spec.good] ?? 0;
-    estCoins = sellValue(units, data.stockpile[spec.good], spec.good);
     if (units > 0) {
       stack.appendChild(
         el('div', {
           cls: 'hv-note hv-muted',
-          text: `Sells automatically — ${fmtInt(units)} ${GOOD_LABEL[spec.good]} at today's prices`,
+          text: `Goes to your wallet — sell ${GOOD_LABEL[spec.good]} at the Market for coins`,
         })
       );
     }
@@ -521,7 +519,7 @@ const renderProducerStats = (
     const units = consumed[inputGood] ?? 0;
     const cost = units > 0 ? priceFor(data.stockpile[inputGood], inputGood) * units : 0;
     if (spec.output === 'coins') {
-      // Bakery: net-coins preview after buying its flour.
+      // Bakery: net-coins preview after buying its flour from the stockpile.
       estCoins = Math.max(0, gained.coins - cost);
       if (units > 0) {
         stack.appendChild(
@@ -531,34 +529,22 @@ const renderProducerStats = (
           })
         );
       }
-    } else if (isAutoSold(spec.output)) {
-      // Windmill: its flour is auto-sold; the wheat cost nets out of the sale.
-      const outUnits = gained.goods[spec.output] ?? 0;
-      const sale = sellValue(outUnits, data.stockpile[spec.output], spec.output);
-      estCoins = Math.max(0, sale - cost);
-      stack.appendChild(
-        el('div', {
-          cls: 'hv-note hv-muted',
-          text: "Grinds the village's wheat into flour — sold automatically.",
-        })
-      );
     } else if (units > 0) {
-      // Sawmill/kiln: planks/bricks go to your wallet; inputs cost coins.
+      // Windmill/sawmill/kiln: output goes to your wallet; inputs cost coins.
       stack.appendChild(
         el('div', {
           cls: 'hv-note hv-muted',
-          text: `Inputs: ~${fmtInt(units)} ${GOOD_LABEL[inputGood]} (≈${fmtInt(cost)} coins from your balance)`,
+          text: `Inputs: ~${fmtInt(units)} ${GOOD_LABEL[inputGood]} (≈${fmtInt(cost)} coins from your balance) → ${GOOD_LABEL[spec.output]} to your wallet`,
         })
       );
     }
   }
 
-  // The collect button leads with coins for anything that pays coins on tap.
+  // The collect button leads with coins only for buildings that mint coins on
+  // tap (house/manor, and the bakery); everything else banks goods.
   const paysCoins =
     spec.role === 'coins' ||
-    (spec.role === 'raw' && spec.good !== undefined && isAutoSold(spec.good)) ||
-    (spec.role === 'processor' &&
-      (spec.output === 'coins' || (spec.output !== undefined && isAutoSold(spec.output))));
+    (spec.role === 'processor' && spec.output === 'coins');
   const collectLabel = paysCoins
     ? `Collect ≈${fmtInt(estCoins)}`
     : `Collect ${fmtInt(accrued)}`;
@@ -575,10 +561,8 @@ const renderProducerStats = (
     void action('collect', async () => {
       const res = await api.collect(x, y);
       store.applyMutation({ key, tile: res.tile, me: res.me });
-      const got = res.gained.coins + goodsTotal(res.gained.goods);
-      toast(res.gained.coins > 0 ? `+${fmtInt(res.gained.coins)} coins` : `+${fmtInt(got)}`, 'gain');
-      const detail = soldSummary(res.gained);
-      if (detail) toast(detail, 'info');
+      const line = gainedLine(res.gained);
+      toast(line ?? `+${fmtInt(goodsTotal(res.gained.goods))}`, 'gain');
     });
   });
   stack.appendChild(collect);

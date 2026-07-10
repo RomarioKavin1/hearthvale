@@ -37,10 +37,10 @@ export type Quest = {
 };
 
 /**
- * The fixed 17-step ladder (S1: the vote + trader quests are gone; two "sell"
- * quests became "earn/harvest" quests fed by the auto-sell loop. S2: a Perfect
- * Harvest rung follows the first-harvest quest). Each blurb is one warm line of
- * flavour.
+ * The fixed 17-step ladder (S1 retired the vote + trader quests; S2 added a
+ * Perfect Harvest rung after the first-harvest quest; P1 restored manual selling
+ * so the `soldUnits` rungs measure goods sold at the Market again). Each blurb is
+ * one warm line of flavour.
  */
 export const QUEST_CHAIN: Quest[] = [
   {
@@ -77,10 +77,10 @@ export const QUEST_CHAIN: Quest[] = [
   },
   {
     id: 'q05',
-    title: 'Earn 60 coins from your harvests',
-    blurb: 'Your fields sell themselves — collect until sixty coins are in hand.',
-    metric: 'lifetimeEarned',
-    target: 60,
+    title: 'Sell 10 goods at the Market',
+    blurb: 'Carry your harvest to the Market stall and sell ten goods to the village.',
+    metric: 'soldUnits',
+    target: 10,
     reward: { coins: 30 },
   },
   {
@@ -117,8 +117,8 @@ export const QUEST_CHAIN: Quest[] = [
   },
   {
     id: 'q10',
-    title: 'Harvest 150 goods',
-    blurb: 'Keep the fields busy until a hundred and fifty goods have been gathered.',
+    title: 'Sell 150 goods',
+    blurb: 'Keep the market busy until a hundred and fifty goods have been sold.',
     metric: 'soldUnits',
     target: 150,
     reward: { coins: 60 },
@@ -194,8 +194,8 @@ export const REPEATABLE: Quest[] = [
   },
   {
     id: 'r-sell',
-    title: 'Harvest another 400 goods',
-    blurb: 'Keep the fields roaring — gather another four hundred goods.',
+    title: 'Sell another 400 goods',
+    blurb: 'Keep the market roaring — sell another four hundred goods to the village.',
     metric: 'soldUnits',
     target: 400,
     reward: { coins: 150 },

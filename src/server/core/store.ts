@@ -13,8 +13,10 @@ import { isVillageTheme } from '../../shared/catalog';
 
 const GRID_KEY = 'city:grid';
 const CITY_KEY = 'city:state';
-const STOCKPILE_KEY = 'city:stockpile';
-const playerKey = (userId: string): string => `player:${userId}`;
+/** The village stockpile hash key — exported so the market sell transaction can
+ * `redis.watch` it alongside the seller's player hash. */
+export const STOCKPILE_KEY = 'city:stockpile';
+export const playerKey = (userId: string): string => `player:${userId}`;
 
 const num = (value: string | undefined, fallback: number): number => {
   if (value === undefined || value === '') return fallback;
@@ -144,8 +146,8 @@ export const getStockpile = async (): Promise<Stockpile> => {
   return stock;
 };
 
-/** Hash serialization of a stockpile. */
-const stockpileFields = (stock: Stockpile): Record<string, string> => {
+/** Hash serialization of a stockpile. Exported for the market sell transaction. */
+export const stockpileFields = (stock: Stockpile): Record<string, string> => {
   const fields: Record<string, string> = {};
   for (const g of GOODS) fields[g] = String(stock[g]);
   return fields;
@@ -188,8 +190,8 @@ const parsePlayer = (
   questBaseline: num(h.questBaseline, 0),
 });
 
-/** Hash serialization of a player. */
-const playerFields = (p: PlayerState): Record<string, string> => ({
+/** Hash serialization of a player. Exported for the market sell transaction. */
+export const playerFields = (p: PlayerState): Record<string, string> => ({
   id: p.id,
   name: p.name,
   coins: String(p.coins),

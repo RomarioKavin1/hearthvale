@@ -46,7 +46,6 @@ import {
   adjacencyBonus,
   canClaim,
   goodsTotal,
-  isAutoSold,
   isGoldenWindowLenient,
   mergeGoods,
   levelForXp,
@@ -77,6 +76,8 @@ import {
   incrStageContrib,
   initPlayer,
   ownedCount,
+  playerFields,
+  playerKey,
   putCity,
   putPlayer,
   putStockpile,
@@ -84,6 +85,8 @@ import {
   stageContribScore,
   stageContribTotal,
   stageTopContributor,
+  STOCKPILE_KEY,
+  stockpileFields,
 } from './store';
 
 /** Number of Village Hall levels (resource stages). */
@@ -432,11 +435,10 @@ export const applyHallBuff = (
 
 /**
  * Processed-output units a collect yielded, for the `processedUnits` quest
- * counter: for a wallet-bound processor (sawmill/kiln) the output-good units
- * produced; for processors whose output leaves as coins at collect time (the
- * bakery mints them, the windmill's flour is auto-sold — `gained.goods` is
- * empty for both) the recipe runs derived from the inputs consumed. 0 for any
- * non-processor. Pure — unit-tested.
+ * counter: for a goods-output processor (windmill/sawmill/kiln) the output-good
+ * units produced (all now land in the owner's wallet); for the bakery, whose
+ * output leaves as coins (`gained.goods` is empty), the recipe runs derived from
+ * the inputs consumed. 0 for any non-processor. Pure — unit-tested.
  */
 export const processedUnits = (
   buildingId: BuildingId | undefined,
@@ -446,7 +448,7 @@ export const processedUnits = (
   if (!buildingId) return 0;
   const spec = CATALOG[buildingId];
   if (spec.role !== 'processor' || !spec.input || !spec.output) return 0;
-  if (spec.output === 'coins' || isAutoSold(spec.output)) {
+  if (spec.output === 'coins') {
     const per = spec.input.per;
     return per > 0 ? Math.floor((consumed[spec.input.good] ?? 0) / per) : 0;
   }
@@ -492,8 +494,10 @@ export type CollectResult = {
   gained: Gained;
   /** Inputs pulled from the village stockpile (the caller writes these back). */
   consumed: Partial<Record<Good, number>>;
-  /** Auto-sold units ADDED to the village stockpile (the caller writes these
-   * back). Mirrors `gained.sold` unit-for-unit. */
+  /** Units ADDED to the village stockpile on collect. Manual selling is the only
+   * way goods enter the stockpile now, so a collect never stocks anything — this
+   * stays empty and is retained purely for the caller's consume/stock write-back
+   * symmetry with `consumed`. */
   stocked: Partial<Record<Good, number>>;
   /** True when a Perfect Harvest actually applied: the caller passed `golden`
    * AND the collect produced something (S2). Drives the `{golden:true}` response
@@ -508,26 +512,25 @@ export type CollectResult = {
  *
  * - House/manor mint coins; the bakery mints coins by buying flour from the
  *   stockpile (netting the flour cost out of its minted coins, floored at 0).
- * - AUTO-SELL (S1): raw harvests (wheat/logs/stone) and the windmill's flour
- *   are sold into the village stockpile the instant they are collected — the
- *   units go into `stocked`, the owner is credited `sellValue(units, stock,
- *   good)` coins, and `gained.sold` carries the per-good breakdown. The
- *   windmill nets its wheat cost out of the flour revenue, like the bakery.
- * - Sawmill/kiln output planks/bricks into the OWNER'S wallet (the Hall
- *   building material — the only held goods) and pay their input cost from the
- *   owner's coin balance; unaffordable runs are trimmed (`affordableRuns`).
+ * - MANUAL SELLING (P1): every produced good — the raw harvests (wheat/logs/
+ *   stone), the windmill's flour and the sawmill/kiln's planks/bricks — goes
+ *   straight into the OWNER'S wallet on collect. Nothing is auto-sold and the
+ *   collect never moves a market price; the player later sells goods at the
+ *   Market (`doSell`), which is the ONLY way the shared stockpile refills.
+ * - Goods-output processors (windmill/sawmill/kiln) pay their input cost from
+ *   the owner's coin balance; unaffordable runs are trimmed (`affordableRuns`).
+ *   Only the bakery (output === 'coins') nets its input cost out of the coins it
+ *   mints.
  * - The Village Hall production buff (+3%/level) and the owner's house aura
- *   (+2%/house tier, excluding the house itself) scale the OUTPUT after accrual
- *   and BEFORE the auto-sale (buffed units are what get sold).
+ *   (+2%/house tier, excluding the house itself) scale the OUTPUT after accrual.
  * - PERFECT HARVEST (S2): when `golden` is true the buffed production is doubled
- *   AT THE SOURCE — right after the Hall/house buffs and BEFORE the auto-sale —
- *   so the doubled goods flow through the auto-sell marginal pricing exactly as a
- *   natural double harvest would, and minted coins + xp double with them. The
- *   consumed inputs are deliberately NOT doubled (the bonus is free of extra
- *   stockpile draw), so the golden reward never corrupts the shared market.
- * - All net coins — including auto-sell income — feed `lifetimeEarned`
- *   (→ lb:earned): production income now includes the harvest's sale. Auto-sold
- *   units bump the `soldUnits` harvest counter.
+ *   AT THE SOURCE — coins, xp and every produced good — so a golden collect
+ *   deposits twice the goods into the wallet. The consumed inputs are
+ *   deliberately NOT doubled (the bonus is free of extra stockpile draw).
+ * - Only minted coins feed `lifetimeEarned` (→ lb:earned): the bakery/house/
+ *   manor coin output counts; raw + processed goods produce no coins on collect
+ *   (their income is realised later, at the Market). `soldUnits` is NOT bumped
+ *   here — it counts manual Market sales only.
  */
 export const applyCollect = (
   tile: TileState,
@@ -546,12 +549,11 @@ export const applyCollect = (
   const spec = tile.buildingId ? CATALOG[tile.buildingId] : undefined;
   const isHouse = spec?.special === 'house';
 
-  // Processors whose revenue arrives as coins at collect time (the bakery mints
-  // them; the windmill's flour is auto-sold) net their input cost out of that
-  // revenue. Wallet-bound processors (sawmill/kiln) pay it from the balance.
+  // Only the bakery's revenue arrives as coins at collect time, so only it nets
+  // its input cost out of that revenue. Goods-output processors (windmill/
+  // sawmill/kiln) pay their input cost from the owner's coin balance.
   const outputGood = spec?.output;
-  const netsFromRevenue =
-    outputGood === 'coins' || (outputGood !== undefined && isAutoSold(outputGood));
+  const netsFromRevenue = outputGood === 'coins';
 
   let inputCost = 0;
   if (spec && spec.role === 'processor' && spec.input && spec.output) {
@@ -595,32 +597,9 @@ export const applyCollect = (
     };
   }
 
-  // AUTO-SELL: wheat/logs/stone/flour output never reaches the wallet — the
-  // units are sold into the stockpile at marginal prices on the spot.
-  let saleCoins = 0;
-  let soldUnitsTotal = 0;
-  const sold: Partial<Record<Good, { units: number; coins: number }>> = {};
+  // Every produced good now goes straight to the owner's wallet — nothing is
+  // auto-sold, so the collect adds nothing to the stockpile.
   const stocked: Partial<Record<Good, number>> = {};
-  const keptGoods: Partial<Record<Good, number>> = {};
-  for (const g of GOODS) {
-    const units = gained.goods[g];
-    if (!units) continue;
-    if (isAutoSold(g)) {
-      const coins = sellValue(units, stockpile[g], g);
-      sold[g] = { units, coins };
-      stocked[g] = units;
-      saleCoins += coins;
-      soldUnitsTotal += units;
-    } else {
-      keptGoods[g] = units;
-    }
-  }
-  gained = {
-    ...gained,
-    coins: gained.coins + saleCoins,
-    goods: keptGoods,
-    ...(soldUnitsTotal > 0 ? { sold } : {}),
-  };
 
   let netCoins = gained.coins;
   let paidFromBalance = 0;
@@ -639,8 +618,7 @@ export const applyCollect = (
   const produced =
     netCoins + goodsOut > 0 ||
     paidFromBalance > 0 ||
-    goodsTotal(consumed) > 0 ||
-    soldUnitsTotal > 0;
+    goodsTotal(consumed) > 0;
 
   let nextTile: TileState = { ...tile };
   let nextPlayer = player;
@@ -656,11 +634,11 @@ export const applyCollect = (
         ...player,
         coins: player.coins + netCoins - paidFromBalance,
         wallet,
-        // Absolute lifetime counters drive the replay-safe lb:earned score and
-        // the harvest quest metric: re-applying the same collect result yields
-        // the same totals. Auto-sell income IS production income (S1).
+        // Absolute lifetime counter drives the replay-safe lb:earned score:
+        // re-applying the same collect yields the same total. Only minted coins
+        // (bakery/house/manor) count — goods are realised as income at the
+        // Market. `soldUnits` is bumped by manual sells (doSell), not here.
         lifetimeEarned: player.lifetimeEarned + netCoins,
-        soldUnits: player.soldUnits + soldUnitsTotal,
       },
       gained.xp
     );
@@ -1357,16 +1335,6 @@ export const doCollectAll = async (
     total.coins += result.gained.coins;
     total.goods = mergeGoods(total.goods, result.gained.goods);
     total.xp += result.gained.xp;
-    if (result.gained.sold) {
-      const soldTotal = { ...(total.sold ?? {}) };
-      for (const g of GOODS) {
-        const s = result.gained.sold[g];
-        if (!s) continue;
-        const prev = soldTotal[g] ?? { units: 0, coins: 0 };
-        soldTotal[g] = { units: prev.units + s.units, coins: prev.coins + s.coins };
-      }
-      total.sold = soldTotal;
-    }
     const consumedUnits = goodsTotal(result.consumed);
     const stockedUnits = goodsTotal(result.stocked);
     if (consumedUnits > 0 || stockedUnits > 0) {
@@ -1711,6 +1679,109 @@ export const doContribute = async (
   return { city: nextCity, me };
 };
 
+// --- Market: manual selling -------------------------------------------------
+
+/** Hard upper bound for a single sell order (the marginal `sellValue` loop is
+ * O(qty), so orders are capped). */
+export const MAX_SELL_QTY = 500;
+
+/**
+ * Run a market sell as an optimistic transaction (the same pattern doClaim
+ * uses): watch the stockpile + seller's player hashes, re-read both inside the
+ * watch window, let `mutate` validate and produce the post-sale states, then
+ * write both hashes atomically. A concurrent write to either key voids the exec
+ * and surfaces a retryable 409.
+ */
+const marketTx = async (
+  userId: string,
+  mutate: (
+    player: PlayerState,
+    stockpile: Stockpile
+  ) => { me: PlayerState; nextStock: Stockpile }
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
+  // Ensure the player hash exists before entering the watch window.
+  await ensurePlayer(userId);
+
+  const tx = await redis.watch(STOCKPILE_KEY, playerKey(userId));
+  // Re-read both inside the watch window; any concurrent mutation of either
+  // hash after this point aborts the exec below.
+  const [player, stockpile] = await Promise.all([
+    getPlayer(userId),
+    getStockpile(),
+  ]);
+  if (!player) {
+    await tx.unwatch();
+    throw new OpError(500, 'Player state unavailable.');
+  }
+
+  let me: PlayerState;
+  let nextStock: Stockpile;
+  try {
+    ({ me, nextStock } = mutate(player, stockpile));
+  } catch (error) {
+    await tx.unwatch();
+    throw error;
+  }
+
+  await tx.multi();
+  await tx.hSet(playerKey(userId), playerFields(me));
+  await tx.hSet(STOCKPILE_KEY, stockpileFields(nextStock));
+  let result: unknown[];
+  try {
+    result = await tx.exec();
+  } catch {
+    throw new OpError(409, 'The market just moved — try again.');
+  }
+  if (!result || result.length === 0) {
+    throw new OpError(409, 'The market just moved — try again.');
+  }
+
+  // Selling income counts toward lb:earned (production income = selling your
+  // produce). The absolute lifetimeEarned write is replay-safe under a racing
+  // duplicate sell.
+  await redis.zAdd(LB_EARNED, { member: userId, score: me.lifetimeEarned });
+  // Broadcast only when a price actually changed (throttles stock-only ticks).
+  if (anyPriceChanged(pricesFor(stockpile), pricesFor(nextStock))) {
+    await broadcastMarket(nextStock);
+  }
+  return { me, stockpile: nextStock, prices: pricesFor(nextStock) };
+};
+
+/**
+ * Sell up to `qty` of a good from the seller's wallet into the shared village
+ * stockpile at marginal prices (`sellValue`). Selling is the ONLY way the
+ * stockpile refills, so processors that draw from it depend on players selling.
+ * Sell income feeds `lifetimeEarned` (lb:earned) and each unit bumps the
+ * `soldUnits` quest counter. The order is capped at `MAX_SELL_QTY`.
+ */
+export const doSell = async (
+  userId: string,
+  good: Good,
+  qty: number
+): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
+  if (qty > MAX_SELL_QTY) {
+    throw new OpError(400, `You can sell at most ${MAX_SELL_QTY} ${good} in one order.`);
+  }
+  return marketTx(userId, (player, stockpile) => {
+    const held = player.wallet[good];
+    if (held <= 0) throw new OpError(400, `You have no ${good} to sell.`);
+
+    const amount = Math.min(qty, held);
+    const before = stockpile[good];
+    const coins = sellValue(amount, before, good);
+
+    const me: PlayerState = {
+      ...player,
+      coins: player.coins + coins,
+      wallet: { ...player.wallet, [good]: held - amount },
+      lifetimeEarned: player.lifetimeEarned + coins,
+      soldUnits: player.soldUnits + amount,
+    };
+    const nextStock: Stockpile = { ...stockpile, [good]: before + amount };
+    return { me, nextStock };
+  });
+};
+
 // --- Grand Keep stage naming ------------------------------------------------
 
 /** Join two word-list picks into a stage name; null if either index is bad. */
@@ -1952,6 +2023,9 @@ export const isShareKind = (value: unknown): value is ShareKind =>
 
 export const isProcessedGood = (value: unknown): value is 'planks' | 'bricks' =>
   value === 'planks' || value === 'bricks';
+
+export const isGood = (value: unknown): value is Good =>
+  typeof value === 'string' && (GOODS as string[]).includes(value);
 
 export const isRoofColor = (value: unknown): value is RoofColor =>
   value === 'brown' ||

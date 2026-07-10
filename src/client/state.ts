@@ -28,6 +28,9 @@ export type Mutation = {
   tiles?: Array<{ key: string; tile: TileState }>;
   me?: PlayerState;
   city?: CityState;
+  /** A market sell updates the shared stockpile + derived prices. */
+  stockpile?: Stockpile;
+  prices?: Prices;
 };
 
 const listeners = new Set<ChangeListener>();
@@ -95,6 +98,8 @@ export const store = {
     }
     if (m.me) data.me = m.me;
     if (m.city) data.city = m.city;
+    if (m.stockpile) data.stockpile = m.stockpile;
+    if (m.prices) data.prices = m.prices;
     emit();
   },
 

@@ -11,6 +11,7 @@ import {
   STAGE_POT,
 } from '../../shared/catalog';
 import { GOODS, xpFor } from '../../shared/logic/economy';
+import { sellValue } from '../../shared/logic/market';
 import {
   advanceQuest,
   QUEST_CHAIN,
@@ -42,8 +43,22 @@ import { noteHallOpened, noteMarketOpened } from './walkthrough';
  * sheet manager's frequent re-renders don't discard it.
  */
 
-// ── Village Market (read-only info panel) ────────────────────────────────────
-// S1: harvests auto-sell on collect, so the market is a dashboard, not a shop.
+// ── Village Market ───────────────────────────────────────────────────────────
+// Read-only price/stockpile dashboard PLUS per-good manual selling (P1): tap a
+// good you hold to expand a sell stepper. Selling is the only way the shared
+// stockpile — which processors draw from — refills.
+
+/** Hard cap on a single sell order (matches the server's MAX_SELL_QTY). */
+const SELL_CAP = 500;
+
+type SellPick = '10' | '50' | 'all';
+let marketFocus: Good | null = null;
+let sellPick: SellPick = '10';
+
+const sellQty = (pick: SellPick, held: number): number => {
+  const cap = Math.min(held, SELL_CAP);
+  return pick === 'all' ? cap : Math.min(Number(pick), cap);
+};
 
 /** The good the village most needs: highest price-to-base ratio above 1×. */
 const hottestGood = (): Good | null => {
@@ -61,11 +76,87 @@ const hottestGood = (): Good | null => {
   return best;
 };
 
+/** The expandable sell panel for one good: a 10/50/All stepper, a live
+ * sellValue preview and the Sell button. Shown when the row is focused. */
+const renderSellBody = (good: Good): HTMLElement => {
+  const data = store.data;
+  const me = data?.me ?? null;
+  const stock = data?.stockpile[good] ?? 0;
+  const held = me?.wallet[good] ?? 0;
+
+  const seg = el('div', { cls: 'hv-mkt-seg' });
+
+  if (me && held <= 0) {
+    seg.appendChild(
+      el('p', {
+        cls: 'hv-note hv-muted',
+        text: `You have no ${GOOD_LABEL[good]} to sell yet — collect some first.`,
+      })
+    );
+    return seg;
+  }
+
+  const qty = sellQty(sellPick, held);
+  const gain = sellValue(qty, stock, good);
+
+  const steps = el('div', { cls: 'hv-steps' });
+  for (const p of ['10', '50', 'all'] as SellPick[]) {
+    const disabled = me !== null && (p === 'all' ? held <= 0 : held < Number(p));
+    const b = el('button', {
+      cls: `hv-step${sellPick === p ? ' is-picked' : ''}`,
+      text: p === 'all' ? 'All' : p,
+      attrs: { type: 'button' },
+    });
+    if (disabled && sellPick !== p) b.disabled = true;
+    b.addEventListener('click', () => {
+      sellPick = p;
+      refreshSheet();
+    });
+    steps.appendChild(b);
+  }
+  seg.appendChild(steps);
+
+  seg.appendChild(
+    el('div', {
+      cls: 'hv-mkt-preview',
+      children: [
+        el('span', { text: `Sell ${fmtInt(qty)} ${GOOD_LABEL[good]}` }),
+        el('b', {
+          cls: 'hv-chain',
+          children: [el('span', { text: `+${fmtInt(gain)}` }), iconEl('icon-coin', 14)],
+        }),
+      ],
+    })
+  );
+
+  const btn = el('button', {
+    cls: 'hv-btn',
+    text: me ? `Sell ${fmtInt(qty)}` : 'Sign in to sell',
+    attrs: { type: 'button', 'data-sell-btn': good },
+  });
+  if (me && (qty <= 0 || isPending('sell'))) btn.disabled = true;
+  btn.addEventListener('click', () => {
+    if (!me) {
+      promptLogin();
+      return;
+    }
+    void action('sell', async () => {
+      const res = await api.sell(good, qty);
+      store.applyMutation({ me: res.me, stockpile: res.stockpile, prices: res.prices });
+      toast(`Sold ${fmtInt(qty)} ${GOOD_LABEL[good]} for +${fmtInt(gain)} coins`, 'gain');
+    });
+  });
+  seg.appendChild(btn);
+  return seg;
+};
+
 const renderMarketRow = (good: Good): HTMLElement => {
   const data = store.data;
   const price = data?.prices[good] ?? 0;
   const stock = data?.stockpile[good] ?? 0;
+  const held = data?.me?.wallet[good] ?? 0;
   const base = MARKET[good].base;
+  const expanded = marketFocus === good;
 
   const priceChildren: Node[] = [];
   if (price > base) priceChildren.push(iconEl('icon-arrow-up', 13));
@@ -89,23 +180,36 @@ const renderMarketRow = (good: Good): HTMLElement => {
     children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })],
   });
 
-  const head = el('div', {
+  const subText =
+    held > 0 ? `In stock: ${fmtInt(stock)} · You hold: ${fmtInt(held)}` : `In stock: ${fmtInt(stock)}`;
+  const head = el('button', {
     cls: 'hv-mkt-head',
+    attrs: { type: 'button', 'data-mkt-good': good },
     children: [
       goodIcon(good, 34),
       el('div', {
         cls: 'hv-mkt-main',
         children: [
           el('div', { cls: 'hv-mkt-name', text: GOOD_LABEL[good] }),
-          el('div', { cls: 'hv-mkt-sub', text: `In stock: ${fmtInt(stock)}` }),
+          el('div', { cls: 'hv-mkt-sub', text: subText }),
           bar,
         ],
       }),
-      el('div', { cls: 'hv-mkt-right', children: [priceEl] }),
+      el('div', {
+        cls: 'hv-mkt-right',
+        children: [priceEl, el('div', { cls: 'hv-mkt-hold', text: held > 0 ? 'Tap to sell' : '' })],
+      }),
     ],
   });
+  head.addEventListener('click', () => {
+    marketFocus = expanded ? null : good;
+    sellPick = '10';
+    refreshSheet();
+  });
 
-  return el('div', { cls: 'hv-mkt', children: [head] });
+  const wrap = el('div', { cls: 'hv-mkt', children: [head] });
+  if (expanded) wrap.appendChild(renderSellBody(good));
+  return wrap;
 };
 
 export const openMarketSheet = (): void => {
@@ -130,7 +234,7 @@ export const openMarketSheet = (): void => {
       stack.appendChild(
         el('p', {
           cls: 'hv-note',
-          text: 'Your harvests sell here automatically — prices rise when the village runs short.',
+          text: 'Sell at the Market — prices rise when the village runs short, and processors buy from the stockpile your sales fill.',
         })
       );
 
@@ -561,9 +665,10 @@ export const openLeaderboardsSheet = (): void => {
 // ── How to play ──────────────────────────────────────────────────────────────
 
 const HOW_STEPS: Array<{ icon: SpriteKey; title: string; text: string }> = [
-  { icon: 'icon-home', title: 'Settle', text: 'Tap open grass to claim a plot. Your first claim builds your House.' },
+  { icon: 'icon-home', title: 'Settle', text: 'Tap open grass to claim a plot — you can settle two plots right from the start. Your first claim builds your House.' },
   { icon: 'furrow-crop-wheat', title: 'Plant', text: 'Build a Wheat Field, Grove or Quarry and let it ripen.' },
-  { icon: 'icon-coin', title: 'Tap to collect', text: 'Tap a ready building — your harvest sells itself and coins pop instantly.' },
+  { icon: 'icon-coin', title: 'Tap to collect', text: 'Tap a ready building to gather its goods — they go straight into your wallet.' },
+  { icon: 'icon-cart', title: 'Sell at the Market', text: 'Sell your goods at the Market — prices rise when the village runs short, and processors buy from the stockpile your sales fill.' },
   { icon: 'icon-star', title: 'Perfect Harvest', text: 'Ripe buildings sparkle gold now and then — tap during the sparkle for a double harvest.' },
   { icon: 'icon-hammer', title: 'Grow', text: 'Spend coins on more buildings and upgrades. Sawmills and kilns make planks and bricks.' },
   { icon: 'icon-trophy', title: 'Raise the Village Hall', text: 'Contribute planks and bricks together — every Hall level boosts everyone and unlocks new land.' },

@@ -238,18 +238,17 @@ export const GOOD_LABEL: Record<Good, string> = {
 export const goodIcon = (good: Good, size = 18): HTMLElement =>
   iconEl(GOOD_SPRITE[good], size);
 
-/** One compact line describing a collect's auto-sale, e.g.
- * `12 wheat sold at 5 · 3 flour sold at 9` (price is the average per unit).
- * Null when nothing was auto-sold. */
-export const soldSummary = (gained: Gained): string | null => {
-  const sold = gained.sold;
-  if (!sold) return null;
+/** One compact line describing what a collect deposited into the wallet, e.g.
+ * `+12 wheat · +8 logs` (goods now go to the wallet, not an auto-sale). Leads
+ * with a coins entry when the collect also minted coins (bakery/house/manor).
+ * Null when the collect produced nothing. */
+export const gainedLine = (gained: Gained): string | null => {
   const parts: string[] = [];
+  if (gained.coins > 0) parts.push(`+${fmtInt(gained.coins)} coins`);
   for (const g of GOODS) {
-    const s = sold[g];
-    if (!s || s.units <= 0) continue;
-    const avg = Math.round(s.coins / s.units);
-    parts.push(`${fmtInt(s.units)} ${GOOD_LABEL[g].toLowerCase()} sold at ${fmtInt(avg)}`);
+    const units = gained.goods[g];
+    if (!units || units <= 0) continue;
+    parts.push(`+${fmtInt(units)} ${GOOD_LABEL[g].toLowerCase()}`);
   }
   return parts.length > 0 ? parts.join(' · ') : null;
 };
@@ -1471,21 +1470,44 @@ const CSS = `
   overflow: hidden;
 }
 .hv-mkt-head {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-height: 52px;
   padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
 }
+.hv-mkt-head:active { transform: translateY(1px); }
 .hv-mkt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .hv-mkt-name { font-size: 14.5px; font-weight: 800; letter-spacing: 0.3px; }
 .hv-mkt-sub { font-size: 11px; opacity: 0.75; line-height: 1.3; }
 .hv-mkt-right { margin-left: auto; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .hv-mkt-price { display: inline-flex; align-items: center; gap: 3px; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.hv-mkt-hold { font-size: 10px; font-weight: 800; opacity: 0.7; letter-spacing: 0.2px; }
 .hv-trend-up { color: var(--leaf); }
 .hv-trend-down { opacity: 0.6; }
-.hv-mkt-seg { display: flex; flex-direction: column; gap: 6px; }
+.hv-mkt-seg { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
 .hv-mkt-seg-label { font-size: 12px; font-weight: 800; letter-spacing: 0.3px; opacity: 0.85; }
+.hv-mkt-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 800;
+  padding: 6px 10px;
+  background: var(--cream);
+  border: 2px solid var(--wood-dark);
+  border-radius: 9px;
+}
+.hv-mkt-preview .hv-icon-mask { color: var(--wood-dark); }
 
 /* ── Keep sheet ──────────────────────────────────────────── */
 .hv-keep-bars { display: flex; flex-direction: column; gap: 8px; }
@@ -1608,10 +1630,13 @@ const CSS = `
 
 :root {
   --ui-brown: url('/ui/button_brown.png');
-  --ui-grey: url('/ui/button_grey.png');
   --ui-red: url('/ui/button_red.png');
   --shadow-drop: 0 3px 0 rgba(46,40,55,0.32);
   --shadow-drop-lo: 0 1px 0 rgba(46,40,55,0.32);
+  /* Warm parchment row/card: light cream face, thin warm-brown edge, brown ink.
+   * Replaces the retired grey-blue button plates so every sheet reads warm. */
+  --parch-face: #f3e4c4;
+  --parch-edge: var(--wood-dark);
 }
 
 /* ── Wooden button plates (primary/secondary/danger/accent) ── */
@@ -1625,41 +1650,61 @@ const CSS = `
 }
 .hv-btn:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
 .hv-btn[disabled] { box-shadow: var(--shadow-drop); transform: none; }
-.hv-btn.hv-btn-ghost { border-image-source: var(--ui-grey); box-shadow: var(--shadow-drop); }
-.hv-btn.hv-btn-ghost:active { box-shadow: var(--shadow-drop-lo); }
+/* Ghost/secondary: warm parchment face rather than a wood plate. */
+.hv-btn.hv-btn-ghost {
+  border: 3px solid var(--parch-edge);
+  border-image: none;
+  border-radius: 11px;
+  background: var(--parch-face);
+  box-shadow: var(--shadow-drop);
+  color: var(--wood-dark);
+}
+.hv-btn.hv-btn-ghost:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
 .hv-btn.hv-btn-accent { border-image-source: var(--ui-brown); color: var(--ink); }
 .hv-btn.hv-btn-danger { color: var(--red); }
-.hv-btn.hv-btn-danger.is-armed { border-image-source: var(--ui-red); color: var(--cream); }
+.hv-btn.hv-btn-danger.is-armed {
+  border: 3px solid var(--ink);
+  border-image: var(--ui-red) 8 fill stretch;
+  color: var(--cream);
+}
 
-/* ── Steppers / tabs / menu / picker: same wood plates ── */
+/* ── Steppers / tabs / picker: warm parchment chips, gold when active ── */
 .hv-step, .hv-tab, .hv-picker-opt {
-  background: transparent;
-  border: 8px solid transparent;
-  border-image: var(--ui-grey) 8 fill stretch;
-  border-radius: 0;
+  background: var(--parch-face);
+  border: 2px solid var(--parch-edge);
+  border-image: none;
+  border-radius: 9px;
+  color: var(--wood-dark);
 }
 .hv-step.is-picked, .hv-tab.is-active, .hv-picker-opt.is-picked {
-  border-image-source: var(--ui-brown);
+  background: var(--glow);
+  border-color: var(--wood-dark);
+  color: var(--ink);
 }
+/* ── Menu rows: warm parchment cards, brown text + icon ── */
 .hv-menu-btn {
-  background: transparent;
-  border: 10px solid transparent;
-  border-image: var(--ui-grey) 8 fill stretch;
-  border-radius: 0;
+  background: var(--parch-face);
+  border: 2px solid var(--parch-edge);
+  border-image: none;
+  border-radius: 12px;
   box-shadow: var(--shadow-drop);
+  color: var(--wood-dark);
 }
+.hv-menu-btn .hv-icon-mask { color: var(--wood-dark); }
 .hv-menu-btn:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
 
-/* ── Build cards + list rows: framed parchment slots ── */
+/* ── Build cards + list rows: warm parchment slots ── */
 .hv-card, .hv-lb-row, .hv-mkt, .hv-held-chip, .hv-jrs-row, .hv-jrs-unlock,
 .hv-plaque-row, .hv-picker-col {
-  background: transparent;
-  border: 8px solid transparent;
-  border-image: var(--ui-grey) 8 fill stretch;
-  border-radius: 0;
+  background: var(--parch-face);
+  border: 2px solid var(--parch-edge);
+  border-image: none;
+  border-radius: 10px;
 }
-.hv-lb-row.is-me { border-image-source: var(--ui-brown); box-shadow: none; }
-.hv-jrs-row.is-next { border-image-source: var(--ui-grey); opacity: 0.7; }
+.hv-card .hv-icon-mask, .hv-mkt .hv-icon-mask, .hv-menu-emoji .hv-icon-mask,
+.hv-jrs-unlock .hv-icon-mask { color: var(--wood-dark); }
+.hv-lb-row.is-me { border-color: var(--wood-dark); background: var(--cream); box-shadow: 0 0 0 3px var(--glow); }
+.hv-jrs-row.is-next { background: var(--parch-face); border-style: dashed; opacity: 0.7; }
 .hv-jrs-active {
   background: transparent;
   border: 12px solid transparent;
@@ -1695,26 +1740,50 @@ const CSS = `
   color: var(--ink);
 }
 
-/* ── FABs + circular objective chips: round wooden medallions ── */
+/* ── FABs: rounded-square parchment cards (9-slice wood plate like the chips),
+ *   icon centred with a tiny label below, badge top-right, pressed sinks. ── */
 .hv-fab {
-  background: url('/ui/round_brown.png') center / 100% 100% no-repeat;
-  border: 0;
-  border-radius: 50%;
+  background: transparent;
+  border: 9px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
   box-shadow: var(--shadow-drop);
 }
 .hv-fab:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
 .hv-fab[disabled] { box-shadow: var(--shadow-drop); transform: none; }
+/* Primary (Collect): a warm gold glow ring around the wood plate. */
 .hv-fab.hv-primary { box-shadow: var(--shadow-drop), 0 0 0 3px var(--glow); }
-.hv-fab.is-checked { background: url('/ui/round_brown.png') center / 100% 100% no-repeat; filter: grayscale(0.4) brightness(0.92); }
+.hv-fab.is-checked { filter: grayscale(0.4) brightness(0.94); }
+
+/* ── Collapsed objective chips: small rounded-square parchment cards, a thin
+ *   progress underline, gold glow when the goal is claimable. ── */
 .hv-obj-chip {
-  background: url('/ui/round_brown.png') center / 100% 100% no-repeat;
-  border: 0;
+  width: 44px; height: 44px;
+  background: var(--parch-face);
+  border: 2px solid var(--parch-edge);
+  border-radius: 12px;
   box-shadow: var(--shadow-drop);
 }
-.hv-obj-chip.is-claimable { background: url('/ui/round_brown.png') center / 100% 100% no-repeat; box-shadow: var(--shadow-drop), 0 0 0 3px var(--glow); }
-.hv-obj-hall { background: url('/ui/round_brown.png') center / 100% 100% no-repeat; color: var(--wood-dark); }
+.hv-obj-chip .hv-icon-mask { color: var(--wood-dark); }
+.hv-obj-chip.is-claimable { background: var(--glow); box-shadow: var(--shadow-drop), 0 0 0 3px var(--glow); }
+.hv-obj-hall { background: var(--parch-face); color: var(--wood-dark); }
 .hv-obj-hall .hv-icon-mask { color: var(--wood-dark); }
 .hv-obj-hall .hv-obj-lvl { color: var(--wood-dark); }
+/* Thin progress underline along the bottom of the journal chip. */
+.hv-obj-underline {
+  position: absolute;
+  left: 6px; right: 6px; bottom: 4px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(46,40,55,0.22);
+  overflow: hidden;
+}
+.hv-obj-underline > i {
+  display: block; height: 100%; width: 0%;
+  background: var(--leaf);
+  transition: width 220ms ease-out;
+}
+.hv-obj-chip.is-claimable .hv-obj-underline > i { background: var(--wood-dark); }
 .hv-ring { background: transparent; }
 
 /* ── Journal banner + Hall pill: parchment / wood plates ── */
@@ -1728,15 +1797,15 @@ const CSS = `
 .hv-jr:active { transform: translateY(2px); box-shadow: var(--shadow-drop-lo); }
 .hv-jr.is-done { border-image-source: var(--ui-brown); box-shadow: var(--shadow-drop), 0 0 0 3px var(--glow); }
 .hv-keep-pill {
-  background: transparent;
-  border: 9px solid transparent;
-  border-image: var(--ui-grey) 8 fill stretch;
-  border-radius: 0;
+  background: var(--parch-face);
+  border: 2px solid var(--parch-edge);
+  border-image: none;
+  border-radius: 10px;
   box-shadow: var(--shadow-drop);
-  color: var(--ink);
+  color: var(--wood-dark);
 }
 .hv-keep-pill .hv-icon-mask { color: var(--wood-dark); }
-.hv-keep-label { color: var(--ink); }
+.hv-keep-label { color: var(--wood-dark); }
 .hv-keep-bar { background: rgba(46,40,55,0.22); }
 
 /* ── Modal: a parchment scroll with a red banner title ── */

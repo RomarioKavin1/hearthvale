@@ -69,6 +69,7 @@ import {
   HV_CLEAR_SELECTION,
   HV_FOCUS_TILE,
   HV_TILE_SELECTED,
+  setHighlightTiles,
   setTileToScreen,
 } from '../events';
 
@@ -306,6 +307,10 @@ export class Village extends Scene {
     typeof matchMedia === 'function' &&
     matchMedia('(prefers-reduced-motion: reduce)').matches;
   private highlight: Phaser.GameObjects.Graphics | undefined;
+  /** Walkthrough candidate-tile highlights: pulsing top-face diamonds drawn over
+   * a set of open tiles ("tap any of these — your choice"). */
+  private tileHints: Phaser.GameObjects.Graphics | undefined;
+  private tileHintTween: Phaser.Tweens.Tween | undefined;
   private conn: ReturnType<typeof connectRealtime> | undefined;
   private me: string | null = null;
   /** The village theme the ground + background were last painted with, so a
@@ -410,6 +415,13 @@ export class Village extends Scene {
     this.highlight = this.add
       .graphics()
       .setDepth(PIP_DEPTH - 1)
+      .setVisible(false);
+
+    // Walkthrough candidate-tile highlights: a separate graphics layer that
+    // pulses (alpha yoyo) over the "your choice" open tiles.
+    this.tileHints = this.add
+      .graphics()
+      .setDepth(PIP_DEPTH - 2)
       .setVisible(false);
 
     this.reconcileAll();
@@ -1374,6 +1386,53 @@ export class Village extends Scene {
     );
   }
 
+  /** Draw pulsing top-face diamonds over the walkthrough's candidate tiles, or
+   * clear them when passed null/empty. Drawn in world space so the highlights
+   * track the camera as the map pans. */
+  private drawTileHints(keys: string[] | null): void {
+    const g = this.tileHints;
+    if (!g) return;
+    if (!keys || keys.length === 0) {
+      this.tileHintTween?.stop();
+      this.tileHintTween = undefined;
+      g.clear();
+      g.setVisible(false);
+      return;
+    }
+    g.clear();
+    const hw = TILE_W / 2;
+    const hh = TILE_H / 2;
+    for (const key of keys) {
+      const [xs, ys] = key.split(',');
+      const x = Number(xs);
+      const y = Number(ys);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
+      g.fillStyle(C_GLOW, 0.22);
+      g.beginPath();
+      g.moveTo(sx, sy - hh);
+      g.lineTo(sx + hw, sy);
+      g.lineTo(sx, sy + hh);
+      g.lineTo(sx - hw, sy);
+      g.closePath();
+      g.fillPath();
+      g.lineStyle(3, C_GLOW, 0.95);
+      g.strokePath();
+    }
+    g.setVisible(true);
+    g.setAlpha(1);
+    if (!this.reducedMotion && !this.tileHintTween) {
+      this.tileHintTween = this.tweens.add({
+        targets: g,
+        alpha: 0.4,
+        duration: 720,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.inOut',
+      });
+    }
+  }
+
   // ── DOM bridge ──────────────────────────────────────────────────────────────
 
   private setupDomBridge(): void {
@@ -1415,6 +1474,9 @@ export class Village extends Scene {
       }
       return { x: px, y: py };
     });
+
+    // Walkthrough candidate-tile highlights.
+    setHighlightTiles((keys) => this.drawTileHints(keys));
 
     this.onVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -2303,5 +2365,8 @@ export class Village extends Scene {
     window.removeEventListener(HV_CLEAR_SELECTION, this.onClearSelection);
     document.removeEventListener('visibilitychange', this.onVisibility);
     setTileToScreen(null);
+    setHighlightTiles(null);
+    this.tileHintTween?.stop();
+    this.tileHintTween = undefined;
   }
 }

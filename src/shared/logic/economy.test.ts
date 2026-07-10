@@ -12,7 +12,6 @@ import {
   emptyStockpile,
   goodsTotal,
   houseTile,
-  isAutoSold,
   isGoldenWindow,
   isGoldenWindowLenient,
   levelForXp,
@@ -94,8 +93,9 @@ describe('levelForXp', () => {
 
 describe('plotsForLevel', () => {
   it('counts PLOT_LEVELS entries at or below the given level', () => {
-    expect(plotsForLevel(1)).toBe(1);
-    // Second plot now arrives at level 2 (PLOT_LEVELS = [1,2,4,7,10]).
+    // Two plots from the start: PLOT_LEVELS = [1,1,4,7,10], so both entries at
+    // level 1 grant plots immediately.
+    expect(plotsForLevel(1)).toBe(2);
     expect(plotsForLevel(2)).toBe(2);
     expect(plotsForLevel(3)).toBe(2);
     expect(plotsForLevel(4)).toBe(3);
@@ -248,17 +248,6 @@ describe('goodsTotal', () => {
   });
 });
 
-describe('isAutoSold', () => {
-  it('auto-sells the raw harvests and flour, never the Hall material', () => {
-    expect(isAutoSold('wheat')).toBe(true);
-    expect(isAutoSold('logs')).toBe(true);
-    expect(isAutoSold('stone')).toBe(true);
-    expect(isAutoSold('flour')).toBe(true);
-    expect(isAutoSold('planks')).toBe(false);
-    expect(isAutoSold('bricks')).toBe(false);
-  });
-});
-
 describe('adjacencyBonus', () => {
   it('sums 0.1 x tier for adjacent completed decor', () => {
     const grid: Record<string, TileState> = {
@@ -320,8 +309,9 @@ describe('adjacencyBonus', () => {
 
 describe('plotsAllowed', () => {
   it('is the level plots plus the Hall level-3 bonus plot', () => {
-    expect(plotsAllowed(1, 0)).toBe(1);
-    expect(plotsAllowed(1, 3)).toBe(2);
+    // Two plots from the start (PLOT_LEVELS = [1,1,...]): level 1 grants 2 plots.
+    expect(plotsAllowed(1, 0)).toBe(2);
+    expect(plotsAllowed(1, 3)).toBe(3);
     expect(plotsAllowed(4, 2)).toBe(3);
     expect(plotsAllowed(4, 3)).toBe(4);
   });
@@ -381,7 +371,8 @@ describe('canClaim', () => {
     expect(canClaim({ '5,5': tile({ owner: 'other' }) }, 5, 5, player(), 0, 0)).not.toBeNull();
   });
   it('rejects when at the plot limit', () => {
-    expect(canClaim({}, 0, 0, player({ level: 1 }), 1, 0)).not.toBeNull();
+    // Level 1 allows 2 plots — owning 2 already hits the limit.
+    expect(canClaim({}, 0, 0, player({ level: 1 }), 2, 0)).not.toBeNull();
   });
   it('allows the first claim anywhere in the ring', () => {
     // owned 0: the homestead-radius rule does not apply to the first claim.
@@ -415,13 +406,25 @@ describe('canClaim', () => {
       'Build closer to your house (within 2 tiles).'
     );
   });
-  it('refuses the second plot for a level-1 player already holding one field', () => {
+  it('allows a second plot at level 1 but refuses a third', () => {
+    // Two plots from the start (PLOT_LEVELS = [1,1,...]): a level-1 player with a
+    // house and one field can settle a second plot beside the house, but the
+    // third is gated on levelling up.
     const grid: Record<string, TileState> = {
       '5,5': tile({ owner: 'p1', buildingId: 'house' }),
       '6,6': tile({ owner: 'p1', buildingId: 'wheatfield' }),
     };
     const p = player({ level: 1 });
-    expect(canClaim(grid, 6, 5, p, ownedPlots(grid, 'p1'), 0)).toBe(
+    // ownedPlots is 1 (house excluded), limit is 2 — a second plot is allowed.
+    expect(canClaim(grid, 6, 5, p, ownedPlots(grid, 'p1'), 0)).toBeNull();
+
+    const grid2: Record<string, TileState> = {
+      '5,5': tile({ owner: 'p1', buildingId: 'house' }),
+      '6,6': tile({ owner: 'p1', buildingId: 'wheatfield' }),
+      '6,5': tile({ owner: 'p1', buildingId: 'grove' }),
+    };
+    // ownedPlots is 2 — the limit is hit, so a third plot is refused.
+    expect(canClaim(grid2, 4, 5, p, ownedPlots(grid2, 'p1'), 0)).toBe(
       'You have reached your plot limit. Level up to claim more.'
     );
   });

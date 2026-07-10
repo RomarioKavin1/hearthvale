@@ -1,9 +1,9 @@
 import { CATALOG, GRID_SIZE } from '../../shared/catalog';
 import type { StateResponse } from '../../shared/types';
 import { questSnapshot } from '../../shared/quests';
-import { isClaimable, neighbors, tileKey } from '../../shared/logic/grid';
+import { isClaimable, isPlaza, neighbors, tileKey } from '../../shared/logic/grid';
 import { isRiver } from '../../shared/logic/expansion';
-import { tileToScreen } from '../events';
+import { highlightTiles, tileToScreen } from '../events';
 import { store } from '../state';
 import { el, todayUtc } from './dom';
 
@@ -30,17 +30,16 @@ import { el, todayUtc } from './dom';
 const DONE_KEY = 'hv-walkthrough-done';
 const WHEATFIELD_COST = CATALOG.wheatfield.cost;
 
-// Two flags for surfaces that have no player-state signal of their own: set when
-// the Market / Village Hall sheets first open (see sheets.ts). Session-scoped.
-let marketSeen = false;
+// One flag for the Hall step, which has no player-state signal of its own: set
+// when the Village Hall sheet first opens (see sheets.ts). Session-scoped.
 let hallSeen = false;
 
-/** Called by sheets.ts when the Market sheet opens (advances step 4→5). */
+/** Called by sheets.ts when the Market sheet opens: re-evaluate so the sell
+ * step's coach mark can move from the Market FAB onto the wheat row/Sell button. */
 export const noteMarketOpened = (): void => {
-  marketSeen = true;
   evaluate();
 };
-/** Called by sheets.ts when the Village Hall sheet opens (completes step 6). */
+/** Called by sheets.ts when the Village Hall sheet opens (completes the Hall step). */
 export const noteHallOpened = (): void => {
   hallSeen = true;
   evaluate();
@@ -59,6 +58,9 @@ type Step = {
   /** True once the player has performed this step's action. */
   done: (data: StateResponse, snap: ReturnType<typeof questSnapshot>) => boolean;
   target: (data: StateResponse) => Target | null;
+  /** Optional candidate tiles to pulse ("tap any of these — your choice"). When
+   * present and non-empty, the scene highlights these instead of a single arrow. */
+  highlights?: (data: StateResponse) => string[];
 };
 
 /** Owned tiles of the player, with coords. */
@@ -76,43 +78,44 @@ const ownedTiles = (
 };
 
 const isOpenTile = (data: StateResponse, x: number, y: number): boolean =>
-  isClaimable(x, y) && !isRiver(x, y) && data.grid[tileKey(x, y)] === undefined;
+  isClaimable(x, y) &&
+  !isPlaza(x, y) &&
+  !isRiver(x, y) &&
+  data.grid[tileKey(x, y)] === undefined;
 
-/** The claimable, unowned, non-river tile nearest the village centre. */
-const nearestClaimable = (
-  data: StateResponse
-): { x: number; y: number } | null => {
+/** Up to `n` claimable, open tiles nearest the village centre, as `"x,y"` keys —
+ * the candidate homestead spots the "found" step highlights. */
+const nearestClaimableKeys = (data: StateResponse, n: number): string[] => {
   const cx = (GRID_SIZE - 1) / 2;
   const cy = (GRID_SIZE - 1) / 2;
-  let best: { x: number; y: number } | null = null;
-  let bestD = Infinity;
+  const cands: Array<{ key: string; d: number }> = [];
   for (let x = 0; x < GRID_SIZE; x += 1) {
     for (let y = 0; y < GRID_SIZE; y += 1) {
       if (!isOpenTile(data, x, y)) continue;
       const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
-      if (d < bestD) {
-        bestD = d;
-        best = { x, y };
-      }
+      cands.push({ key: tileKey(x, y), d });
     }
   }
-  return best;
+  cands.sort((a, b) => a.d - b.d);
+  return cands.slice(0, n).map((c) => c.key);
 };
 
-/** Where to send the player to build their first field: an already-claimed empty
- * plot if they have one, else an open tile beside their House, else the nearest
- * open tile. */
-const buildSpot = (data: StateResponse, id: string): { x: number; y: number } | null => {
+/** The tiles the "build a field" step highlights: the player's already-claimed
+ * empty plots if any (build here), else the open tiles beside their house. */
+const fieldHighlightKeys = (data: StateResponse, id: string, n: number): string[] => {
   const owned = ownedTiles(data, id);
-  const empty = owned.find((t) => t.buildingId === undefined);
-  if (empty) return { x: empty.x, y: empty.y };
+  const empties = owned
+    .filter((t) => t.buildingId === undefined)
+    .map((t) => tileKey(t.x, t.y));
+  if (empties.length > 0) return empties.slice(0, n);
   const house = owned.find((t) => t.buildingId === 'house') ?? owned[0];
-  if (house) {
-    for (const n of neighbors(house.x, house.y)) {
-      if (isOpenTile(data, n.x, n.y)) return { x: n.x, y: n.y };
-    }
+  if (!house) return [];
+  const keys: string[] = [];
+  for (const nb of neighbors(house.x, house.y)) {
+    if (isOpenTile(data, nb.x, nb.y)) keys.push(tileKey(nb.x, nb.y));
+    if (keys.length >= n) break;
   }
-  return nearestClaimable(data);
+  return keys;
 };
 
 const firstBuildingTile = (
@@ -131,29 +134,34 @@ const STEPS: Step[] = [
   {
     id: 'found',
     title: 'Found your homestead',
-    body: 'Tap this patch of open grass to settle your first plot — your House rises here.',
+    body: 'Tap any open grass tile to found your homestead — your choice! Your House rises where you settle first.',
     done: (_d, snap) => snap.owned >= 1,
-    target: (data) => {
-      const t = nearestClaimable(data);
-      return t ? { kind: 'tile', at: () => nearestClaimable(store.data ?? data) } : null;
-    },
+    // No single arrow — the scene pulses a few candidate tiles instead.
+    target: () => null,
+    highlights: (data) => nearestClaimableKeys(data, 3),
   },
   {
     id: 'field',
     title: 'Build a Wheat Field',
-    body: `Tap a tile beside your House, settle it, then build a Wheat Field (${WHEATFIELD_COST} coins). Wheat feeds the whole village.`,
+    body: `Pick a spot beside your house, settle it, then build a Wheat Field (${WHEATFIELD_COST} coins). Wheat feeds the whole village.`,
     done: (_d, snap) => snap.wheatfieldBuilt,
     target: () => {
       // If the build sheet is open, point straight at the Wheat Field card.
       const card = document.querySelector('[data-build-id="wheatfield"]');
       if (card instanceof HTMLElement) return { kind: 'dom', selector: '[data-build-id="wheatfield"]' };
-      return { kind: 'tile', at: (d) => buildSpot(d, d.me?.id ?? '') };
+      return null;
+    },
+    highlights: (data) => {
+      // Once the build sheet is open, the arrow points at the card — drop the
+      // tile highlights so we don't split attention.
+      if (document.querySelector('[data-build-id="wheatfield"]')) return [];
+      return fieldHighlightKeys(data, data.me?.id ?? '', 3);
     },
   },
   {
     id: 'collect',
     title: 'Gather your harvest',
-    body: 'Your field grows in real time. When a coin pops above it, tap the field to collect — it sells itself at the Market.',
+    body: 'Your field grows in real time. When a coin pops above it, tap the field to collect — the goods go into your wallet.',
     done: (data) => (data.me?.collects ?? 0) >= 1,
     target: () => ({
       kind: 'tile',
@@ -161,11 +169,21 @@ const STEPS: Step[] = [
     }),
   },
   {
-    id: 'market',
-    title: 'Visit the Market',
-    body: "Your harvest sold itself at the Market. Open it to see today's prices and what the village needs.",
-    done: () => marketSeen,
-    target: () => ({ kind: 'dom', selector: '[data-fab="market"]' }),
+    id: 'sell',
+    title: 'Sell at the Market',
+    body: 'Open the Market and sell your wheat — coins arrive the moment you sell, and prices rise when the village runs short.',
+    done: (data) => (data.me?.soldUnits ?? 0) >= 1,
+    target: () => {
+      // Deepest-available target: the wheat Sell button (row expanded), else the
+      // wheat market row, else the Market FAB that opens the sheet.
+      if (document.querySelector('[data-sell-btn="wheat"]')) {
+        return { kind: 'dom', selector: '[data-sell-btn="wheat"]' };
+      }
+      if (document.querySelector('[data-mkt-good="wheat"]')) {
+        return { kind: 'dom', selector: '[data-mkt-good="wheat"]' };
+      }
+      return { kind: 'dom', selector: '[data-fab="market"]' };
+    },
   },
   {
     id: 'checkin',
@@ -203,6 +221,9 @@ let dotsEl: HTMLElement | undefined;
 let activeIndex = -1;
 let rafId = 0;
 let decided = false;
+/** The candidate-tile keys last handed to the scene, so we only redraw the
+ * pulsing highlights when the set actually changes (not every store tick). */
+let lastHighlightSig: string | null = null;
 
 const isDone = (): boolean => {
   try {
@@ -276,6 +297,10 @@ const hide = (): void => {
     cancelAnimationFrame(rafId);
     rafId = 0;
   }
+  if (lastHighlightSig !== null && lastHighlightSig !== '') {
+    highlightTiles(null);
+  }
+  lastHighlightSig = '';
 };
 
 const complete = (): void => {
@@ -339,10 +364,15 @@ const position = (): void => {
   const target = step.target(data);
   const rect = target ? targetRect(target, data) : null;
   if (!target || !rect) {
-    // Target not resolvable this frame — keep the card up but drop the spotlight
-    // and arrow so nothing points at empty space.
+    // No single target (e.g. the "found"/"field" steps pulse candidate tiles in
+    // the scene instead) — drop the spotlight + arrow and rest the tip card at a
+    // stable bottom-centre spot so it never floats at 0,0.
     spot.style.opacity = '0';
     arrow.style.opacity = '0';
+    const cw = card.offsetWidth || 280;
+    const ch = card.offsetHeight || 150;
+    card.style.left = `${Math.max(12, (window.innerWidth - cw) / 2)}px`;
+    card.style.top = `${window.innerHeight - ch - 24}px`;
     return;
   }
   // A scene tile whose sheet is now open is hidden behind the modal — drop the
@@ -388,12 +418,24 @@ const loop = (): void => {
   rafId = requestAnimationFrame(loop);
 };
 
+/** Push the active step's candidate-tile highlights to the scene (or clear them
+ * when the step has none). Recomputed on each `show` — i.e. on every store
+ * change — so highlights drop tiles as they get claimed. */
+const applyHighlights = (step: Step | null, data: StateResponse | null): void => {
+  const keys = step?.highlights && data ? step.highlights(data) : [];
+  const sig = keys.join('|');
+  if (sig === lastHighlightSig) return;
+  lastHighlightSig = sig;
+  highlightTiles(keys.length > 0 ? keys : null);
+};
+
 const show = (step: Step, index: number): void => {
   if (!root) return;
   const changed = index !== activeIndex;
   activeIndex = index;
   root.classList.remove('is-hidden');
   if (changed) setStepContent(step, index);
+  applyHighlights(step, store.data);
   position();
   if (!rafId) rafId = requestAnimationFrame(loop);
 };

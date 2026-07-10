@@ -312,10 +312,10 @@ describe('applyCollect — Perfect Harvest (golden window, S2)', () => {
     expect(plain.golden).toBe(false);
   });
 
-  it('golden doubles the produced (and auto-sold) units of a raw harvest', () => {
+  it('golden doubles the produced units of a raw harvest (all to the wallet)', () => {
     const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
-    // wheatfield tier-1 cap is 90 → golden doubles the harvest to 180 units,
-    // priced through the auto-sale (more units also means more coins).
+    // wheatfield tier-1 cap is 90 → golden doubles the harvest to 180 units, all
+    // of which land in the owner's wallet (nothing is sold on collect).
     const res = applyCollect(
       t,
       player({ coins: 0 }),
@@ -326,11 +326,11 @@ describe('applyCollect — Perfect Harvest (golden window, S2)', () => {
       0,
       true
     );
-    const coins = sellValue(180, 0, 'wheat');
-    expect(res.stocked).toEqual({ wheat: 180 });
-    expect(res.gained.sold).toEqual({ wheat: { units: 180, coins } });
-    expect(res.gained.coins).toBe(coins);
-    expect(res.player.soldUnits).toBe(180);
+    expect(res.gained.goods).toEqual({ wheat: 180 });
+    expect(res.player.wallet.wheat).toBe(180);
+    expect(res.gained.coins).toBe(0);
+    expect(res.stocked).toEqual({});
+    expect(res.player.soldUnits).toBe(0);
     expect(res.golden).toBe(true);
   });
 
@@ -351,8 +351,8 @@ describe('applyCollect — Perfect Harvest (golden window, S2)', () => {
   });
 });
 
-describe('applyCollect — raw producers (auto-sell)', () => {
-  it('auto-sells the harvest: units to the stockpile, coins to the owner', () => {
+describe('applyCollect — raw producers (to the wallet)', () => {
+  it('deposits the whole harvest into the wallet, no coins, no stockpile change', () => {
     const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(
       t,
@@ -363,30 +363,26 @@ describe('applyCollect — raw producers (auto-sell)', () => {
       emptyStockpile(),
       0
     );
-    // wheatfield tier-1 cap is 90 — all 90 wheat sell marginally from stock 0.
-    const coins = sellValue(90, 0, 'wheat');
-    expect(coins).toBeGreaterThan(0);
-    expect(res.gained.coins).toBe(coins);
-    expect(res.gained.sold).toEqual({ wheat: { units: 90, coins } });
-    expect(res.stocked).toEqual({ wheat: 90 });
-    // Nothing reaches the wallet — wheat is never held.
-    expect(res.gained.goods).toEqual({});
-    expect(res.player.wallet.wheat).toBe(0);
-    expect(res.player.coins).toBe(coins);
-    // Auto-sell income IS production income (lb:earned) now.
-    expect(res.player.lifetimeEarned).toBe(500 + coins);
-    // The harvest counter (soldUnits field, reused) advances by the units sold.
-    expect(res.player.soldUnits).toBe(90);
+    // wheatfield tier-1 cap is 90 — all 90 wheat go straight to the wallet.
+    expect(res.gained.coins).toBe(0);
+    expect(res.gained.goods).toEqual({ wheat: 90 });
+    expect(res.player.wallet.wheat).toBe(90);
+    expect(res.stocked).toEqual({});
+    expect(res.player.coins).toBe(0);
+    // No coins minted, so lifetimeEarned is unchanged (income is realised at sell).
+    expect(res.player.lifetimeEarned).toBe(500);
+    // soldUnits only advances on manual Market sells — never on collect.
+    expect(res.player.soldUnits).toBe(0);
   });
 
-  it('prices later units against the growing stockpile (marginal, replay-safe)', () => {
+  it('deposits the same harvest regardless of the village stockpile level', () => {
     const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
     const start = player({ coins: 0 });
     const a = applyCollect(t, start, city({ festival: 'coins' }), 1_000_000_000, 0, stock({ wheat: 200 }), 0);
-    const b = applyCollect(t, start, city({ festival: 'coins' }), 1_000_000_000, 0, stock({ wheat: 200 }), 0);
-    // A glutted market pays less than a fresh one, and the maths is deterministic.
-    expect(a.gained.coins).toBe(sellValue(90, 200, 'wheat'));
-    expect(a.gained.coins).toBeLessThan(sellValue(90, 0, 'wheat'));
+    const b = applyCollect(t, start, city({ festival: 'coins' }), 1_000_000_000, 0, emptyStockpile(), 0);
+    // Collecting never touches market pricing now — the wallet gain is identical.
+    expect(a.gained.goods).toEqual({ wheat: 90 });
+    expect(b.gained.goods).toEqual({ wheat: 90 });
     expect(a.player.coins).toBe(b.player.coins);
   });
 
@@ -410,30 +406,28 @@ describe('applyCollect — raw producers (auto-sell)', () => {
 });
 
 describe('applyCollect — processors', () => {
-  it('a windmill grinds stockpile wheat into flour that auto-sells, netting the wheat cost', () => {
+  it('a windmill grinds stockpile wheat into flour to the wallet, paying the wheat cost', () => {
     const t = tile({ buildingId: 'windmill', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(
       t,
-      player({ coins: 0 }),
+      player({ coins: 1000 }),
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
       stock({ wheat: 100 }),
       0
     );
-    // cap 45 flour; priceFor(100, wheat) === 3, per 2 → wheat cost 3×90 = 270.
-    // The 45 flour sell into an empty flour stockpile; the cost nets out.
-    const sale = sellValue(45, 0, 'flour');
-    const net = Math.max(0, sale - 270);
+    // cap 45 flour; priceFor(100, wheat) === 3, per 2 → wheat cost 3×90 = 270,
+    // paid from the owner's balance. Flour lands in the wallet like planks.
     expect(res.consumed).toEqual({ wheat: 90 });
-    expect(res.stocked).toEqual({ flour: 45 });
-    expect(res.gained.sold).toEqual({ flour: { units: 45, coins: sale } });
-    expect(res.gained.coins).toBe(net);
-    // Flour never reaches the wallet, and no upfront coins were needed.
-    expect(res.player.wallet.flour).toBe(0);
-    expect(res.player.coins).toBe(net);
-    expect(res.player.lifetimeEarned).toBe(net);
-    expect(res.player.soldUnits).toBe(45);
+    expect(res.stocked).toEqual({});
+    expect(res.gained.goods.flour).toBe(45);
+    expect(res.player.wallet.flour).toBe(45);
+    expect(res.gained.coins).toBe(0);
+    expect(res.player.coins).toBe(1000 - 270);
+    // No coins minted → lifetimeEarned unchanged; soldUnits only bumps on sells.
+    expect(res.player.lifetimeEarned).toBe(0);
+    expect(res.player.soldUnits).toBe(0);
   });
 
   it('a sawmill outputs planks to the wallet and pays inputs from the balance', () => {
@@ -452,7 +446,6 @@ describe('applyCollect — processors', () => {
     expect(res.player.wallet.planks).toBe(36);
     expect(res.consumed).toEqual({ logs: 72 });
     expect(res.stocked).toEqual({});
-    expect(res.gained.sold).toBeUndefined();
     expect(res.player.coins).toBe(1000 - 288);
     expect(res.player.lifetimeEarned).toBe(0);
     expect(res.player.soldUnits).toBe(0);
@@ -511,6 +504,61 @@ describe('applyCollect — processors', () => {
     expect(res.player.lifetimeEarned).toBe(280);
     // The bakery sells nothing into the stockpile — no harvest units counted.
     expect(res.player.soldUnits).toBe(0);
+  });
+});
+
+describe('manual selling loop (P1) — collect to wallet, sell to refill stockpile', () => {
+  it('collects wheat to the wallet, then a sell refills the stockpile a processor draws from', () => {
+    // 1) Harvest a wheat field into the wallet — no coins, no stockpile change.
+    const field = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
+    const emptyStock = emptyStockpile();
+    const collected = applyCollect(
+      field,
+      player({ coins: 100, soldUnits: 0, lifetimeEarned: 0 }),
+      city({ festival: 'coins' }),
+      1_000_000_000,
+      0,
+      emptyStock,
+      0
+    );
+    expect(collected.gained.goods.wheat).toBe(90);
+    expect(collected.gained.coins).toBe(0);
+    expect(collected.player.wallet.wheat).toBe(90);
+    expect(collected.player.soldUnits).toBe(0);
+    expect(emptyStock.wheat).toBe(0); // collect never touches the stockpile
+
+    // 2) Manually sell 50 wheat into the (empty) stockpile — the doSell maths.
+    const held = collected.player.wallet.wheat;
+    const sellAmt = 50;
+    const coins = sellValue(sellAmt, 0, 'wheat');
+    expect(coins).toBeGreaterThan(0);
+    const afterSell: PlayerState = {
+      ...collected.player,
+      coins: collected.player.coins + coins,
+      wallet: { ...collected.player.wallet, wheat: held - sellAmt },
+      lifetimeEarned: collected.player.lifetimeEarned + coins,
+      soldUnits: collected.player.soldUnits + sellAmt,
+    };
+    const stockAfter = { ...emptyStock, wheat: sellAmt };
+    expect(afterSell.wallet.wheat).toBe(40);
+    expect(afterSell.soldUnits).toBe(50); // sell bumps the quest counter
+    expect(afterSell.lifetimeEarned).toBe(coins); // sell income → lb:earned
+
+    // 3) A windmill can now grind the wheat the sale put into the stockpile.
+    const mill = tile({ buildingId: 'windmill', lastCollect: 0, readyAt: 0 });
+    const milled = applyCollect(
+      mill,
+      player({ coins: 1000 }),
+      city({ festival: 'coins' }),
+      1_000_000_000,
+      0,
+      stockAfter,
+      0
+    );
+    // 50 wheat / 2 per run = 25 flour runs (capped below the tier cap of 45).
+    expect(milled.consumed).toEqual({ wheat: 50 });
+    expect(milled.gained.goods.flour).toBe(25);
+    expect(milled.player.wallet.flour).toBe(25);
   });
 });
 
@@ -847,9 +895,9 @@ describe('processedUnits quest counter', () => {
     expect(processedUnits('sawmill', gained({ planks: 4 }), { logs: 8 })).toBe(4);
   });
 
-  it('derives windmill runs from the wheat consumed (its flour auto-sells)', () => {
-    // Windmill: input wheat/2 → flour that auto-sells (gained.goods is empty).
-    expect(processedUnits('windmill', gained({}, 30), { wheat: 8 })).toBe(4);
+  it('counts wallet-bound flour units for a windmill', () => {
+    // Windmill: input wheat/2 → 1 flour per run to the wallet; 4 flour === 4 runs.
+    expect(processedUnits('windmill', gained({ flour: 4 }), { wheat: 8 })).toBe(4);
   });
 
   it('counts flour runs consumed for the bakery (output is coins)', () => {
