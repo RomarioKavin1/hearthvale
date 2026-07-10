@@ -561,6 +561,7 @@ const HOW_STEPS: Array<{ icon: SpriteKey; title: string; text: string }> = [
   { icon: 'icon-home', title: 'Settle', text: 'Tap open grass to claim a plot. Your first claim builds your House.' },
   { icon: 'furrow-crop-wheat', title: 'Plant', text: 'Build a Wheat Field, Grove or Quarry and let it ripen.' },
   { icon: 'icon-coin', title: 'Tap to collect', text: 'Tap a ready building — your harvest sells itself and coins pop instantly.' },
+  { icon: 'icon-star', title: 'Perfect Harvest', text: 'Ripe buildings sparkle gold now and then — tap during the sparkle for a double harvest.' },
   { icon: 'icon-hammer', title: 'Grow', text: 'Spend coins on more buildings and upgrades. Sawmills and kilns make planks and bricks.' },
   { icon: 'icon-trophy', title: 'Raise the Village Hall', text: 'Contribute planks and bricks together — every Hall level boosts everyone and unlocks new land.' },
 ];

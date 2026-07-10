@@ -51,6 +51,7 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   collects: 0,
   soldUnits: 0,
   processedUnits: 0,
+  goldenHarvests: 0,
   boostsGiven: 0,
   votesCast: 0,
   tradesDone: 0,
@@ -295,6 +296,58 @@ describe('applyCollect — coins buildings', () => {
     const res = applyCollect(t, player({ coins: 0 }), city(), 600_000, 0, emptyStockpile(), 3);
     // 10 min × 1/min = 10 coins, unscaled (house excluded from its own aura).
     expect(res.gained.coins).toBe(10);
+  });
+});
+
+describe('applyCollect — Perfect Harvest (golden window, S2)', () => {
+  it('golden doubles coins + xp on a coins building and flags the result', () => {
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0 });
+    const plain = applyCollect(t, player({ coins: 0 }), city(), 1_000_000_000, 0, emptyStockpile(), 1);
+    const gold = applyCollect(t, player({ coins: 0 }), city(), 1_000_000_000, 0, emptyStockpile(), 1, true);
+    expect(plain.gained.coins).toBe(60);
+    expect(gold.gained.coins).toBe(120);
+    expect(gold.gained.xp).toBe(plain.gained.xp * 2);
+    expect(gold.player.coins).toBe(120);
+    expect(gold.golden).toBe(true);
+    expect(plain.golden).toBe(false);
+  });
+
+  it('golden doubles the produced (and auto-sold) units of a raw harvest', () => {
+    const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
+    // wheatfield tier-1 cap is 90 → golden doubles the harvest to 180 units,
+    // priced through the auto-sale (more units also means more coins).
+    const res = applyCollect(
+      t,
+      player({ coins: 0 }),
+      city({ festival: 'coins' }),
+      1_000_000_000,
+      0,
+      emptyStockpile(),
+      0,
+      true
+    );
+    const coins = sellValue(180, 0, 'wheat');
+    expect(res.stocked).toEqual({ wheat: 180 });
+    expect(res.gained.sold).toEqual({ wheat: { units: 180, coins } });
+    expect(res.gained.coins).toBe(coins);
+    expect(res.player.soldUnits).toBe(180);
+    expect(res.golden).toBe(true);
+  });
+
+  it('does NOT double when golden is false (the collect-all default path)', () => {
+    const t = tile({ buildingId: 'house', lastCollect: 0, readyAt: 0 });
+    // No golden argument → defaults to false, exactly as doCollectAll calls it.
+    const res = applyCollect(t, player({ coins: 0 }), city(), 1_000_000_000, 0, emptyStockpile(), 1);
+    expect(res.gained.coins).toBe(60);
+    expect(res.golden).toBe(false);
+  });
+
+  it('reports golden=false when a golden tap produced nothing', () => {
+    // Ready but zero elapsed since lastCollect → no production, so no golden.
+    const t = tile({ buildingId: 'house', lastCollect: 60_000, readyAt: 0 });
+    const res = applyCollect(t, player({ coins: 0 }), city(), 60_000, 0, emptyStockpile(), 1, true);
+    expect(res.gained.coins).toBe(0);
+    expect(res.golden).toBe(false);
   });
 });
 

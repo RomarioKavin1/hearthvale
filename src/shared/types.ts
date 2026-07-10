@@ -129,6 +129,9 @@ export type PlayerState = {
   soldUnits: number;
   /** Lifetime processed-output units produced by processors (incl. bakery runs). */
   processedUnits: number;
+  /** Lifetime Perfect Harvests: single-tile collects landed inside a tile's
+   * golden window (S2). Legacy players default to 0. */
+  goldenHarvests: number;
   /** Lifetime boosts handed to neighbours. */
   boostsGiven: number;
   /** Lifetime festival ballots cast (RETIRED with the ballot; kept to avoid a

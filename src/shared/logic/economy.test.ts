@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { PlayerState, Stockpile, TileState } from '../types';
 import { CATALOG, investedCost } from '../catalog';
 import {
+  GOLDEN_CYCLE_MS,
+  GOLDEN_GRACE_MS,
+  GOLDEN_MULTIPLIER,
+  GOLDEN_WINDOW_MS,
   accrue,
   adjacencyBonus,
   canClaim,
@@ -9,6 +13,8 @@ import {
   goodsTotal,
   houseTile,
   isAutoSold,
+  isGoldenWindow,
+  isGoldenWindowLenient,
   levelForXp,
   nearHouse,
   plotsAllowed,
@@ -36,6 +42,7 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   collects: 0,
   soldUnits: 0,
   processedUnits: 0,
+  goldenHarvests: 0,
   boostsGiven: 0,
   votesCast: 0,
   tradesDone: 0,
@@ -372,5 +379,69 @@ describe('canClaim', () => {
       'Build closer to your house (within 2 tiles).'
     );
     expect(canClaim(grid, 6, 6, p, 1, 0)).toBeNull();
+  });
+});
+
+describe('Perfect Harvest golden window (S2)', () => {
+  it('is deterministic — the same (key, now) always yields the same verdict', () => {
+    const now = 1_700_000_000_000;
+    expect(isGoldenWindow('3,4', now)).toBe(isGoldenWindow('3,4', now));
+    expect(isGoldenWindowLenient('3,4', now)).toBe(isGoldenWindowLenient('3,4', now));
+  });
+
+  it('gives different tiles different phase offsets (windows are spread out)', () => {
+    // Scan one cycle at fine resolution: the first golden instant differs by tile.
+    const firstGolden = (key: string): number => {
+      for (let t = 0; t < GOLDEN_CYCLE_MS; t += 20) {
+        if (isGoldenWindow(key, t)) return t;
+      }
+      return -1;
+    };
+    const starts = new Set(
+      ['0,0', '1,0', '2,0', '0,1', '5,7', '9,9', '3,4', '8,2'].map(firstGolden)
+    );
+    // At least several distinct start instants — not all tiles flash together.
+    expect(starts.size).toBeGreaterThan(3);
+  });
+
+  it('has a window duty cycle of roughly WINDOW/CYCLE over a full period', () => {
+    const key = '3,4';
+    let hits = 0;
+    const step = 1;
+    for (let t = 0; t < GOLDEN_CYCLE_MS; t += step) {
+      if (isGoldenWindow(key, t)) hits += 1;
+    }
+    const fraction = (hits * step) / GOLDEN_CYCLE_MS;
+    expect(fraction).toBeCloseTo(GOLDEN_WINDOW_MS / GOLDEN_CYCLE_MS, 2);
+  });
+
+  it('lenient is a strict superset of the strict window', () => {
+    const key = '7,1';
+    for (let t = 0; t < GOLDEN_CYCLE_MS; t += 1) {
+      if (isGoldenWindow(key, t)) expect(isGoldenWindowLenient(key, t)).toBe(true);
+    }
+  });
+
+  it('lenient accepts the grace margin just after the strict window closes', () => {
+    // Find the strict window start, then probe just past its end.
+    const key = '2,6';
+    let start = -1;
+    for (let t = 0; t < GOLDEN_CYCLE_MS; t += 1) {
+      if (isGoldenWindow(key, t)) {
+        start = t;
+        break;
+      }
+    }
+    expect(start).toBeGreaterThanOrEqual(0);
+    const justAfter = start + GOLDEN_WINDOW_MS + Math.floor(GOLDEN_GRACE_MS / 2);
+    expect(isGoldenWindow(key, justAfter)).toBe(false);
+    expect(isGoldenWindowLenient(key, justAfter)).toBe(true);
+    // Well beyond the grace margin: neither strict nor lenient.
+    const wayAfter = start + GOLDEN_WINDOW_MS + GOLDEN_GRACE_MS + 100;
+    expect(isGoldenWindowLenient(key, wayAfter)).toBe(false);
+  });
+
+  it('GOLDEN_MULTIPLIER doubles', () => {
+    expect(GOLDEN_MULTIPLIER).toBe(2);
   });
 });

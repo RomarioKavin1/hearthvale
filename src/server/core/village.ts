@@ -41,11 +41,13 @@ import {
 import type { BuildingSpec } from '../../shared/catalog';
 import {
   GOODS,
+  GOLDEN_MULTIPLIER,
   accrue,
   adjacencyBonus,
   canClaim,
   goodsTotal,
   isAutoSold,
+  isGoldenWindowLenient,
   mergeGoods,
   levelForXp,
   plotsForLevel,
@@ -492,6 +494,10 @@ export type CollectResult = {
   /** Auto-sold units ADDED to the village stockpile (the caller writes these
    * back). Mirrors `gained.sold` unit-for-unit. */
   stocked: Partial<Record<Good, number>>;
+  /** True when a Perfect Harvest actually applied: the caller passed `golden`
+   * AND the collect produced something (S2). Drives the `{golden:true}` response
+   * and the `goldenHarvests` quest counter. */
+  golden: boolean;
 };
 
 /**
@@ -512,6 +518,12 @@ export type CollectResult = {
  * - The Village Hall production buff (+3%/level) and the owner's house aura
  *   (+2%/house tier, excluding the house itself) scale the OUTPUT after accrual
  *   and BEFORE the auto-sale (buffed units are what get sold).
+ * - PERFECT HARVEST (S2): when `golden` is true the buffed production is doubled
+ *   AT THE SOURCE — right after the Hall/house buffs and BEFORE the auto-sale —
+ *   so the doubled goods flow through the auto-sell marginal pricing exactly as a
+ *   natural double harvest would, and minted coins + xp double with them. The
+ *   consumed inputs are deliberately NOT doubled (the bonus is free of extra
+ *   stockpile draw), so the golden reward never corrupts the shared market.
  * - All net coins — including auto-sell income — feed `lifetimeEarned`
  *   (→ lb:earned): production income now includes the harvest's sale. Auto-sold
  *   units bump the `soldUnits` harvest counter.
@@ -523,7 +535,8 @@ export const applyCollect = (
   now: number,
   adjBonus: number,
   stockpile: Stockpile,
-  houseTier: number
+  houseTier: number,
+  golden = false
 ): CollectResult => {
   const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile);
   let gained: Gained = raw.gained;
@@ -563,6 +576,23 @@ export const applyCollect = (
 
   // Hall + house buffs scale the output only (never the consumed inputs).
   gained = applyHallBuff(gained, city.hallLevel, houseTier, isHouse);
+
+  // PERFECT HARVEST (S2): double the buffed production units at the source, BEFORE
+  // the auto-sale — coins, xp and every produced good — leaving `consumed`
+  // untouched. Placed here so the doubled auto-sold goods price through the market
+  // just like a genuine double harvest.
+  if (golden) {
+    const goods: Partial<Record<Good, number>> = {};
+    for (const g of GOODS) {
+      const v = gained.goods[g];
+      if (v) goods[g] = v * GOLDEN_MULTIPLIER;
+    }
+    gained = {
+      coins: gained.coins * GOLDEN_MULTIPLIER,
+      xp: gained.xp * GOLDEN_MULTIPLIER,
+      goods,
+    };
+  }
 
   // AUTO-SELL: wheat/logs/stone/flour output never reaches the wallet — the
   // units are sold into the stockpile at marginal prices on the spot.
@@ -643,7 +673,14 @@ export const applyCollect = (
     }
   }
 
-  return { tile: nextTile, player: nextPlayer, gained, consumed, stocked };
+  return {
+    tile: nextTile,
+    player: nextPlayer,
+    gained,
+    consumed,
+    stocked,
+    golden: golden && produced,
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -1211,7 +1248,7 @@ export const doCollect = async (
   userId: string,
   x: number,
   y: number
-): Promise<{ tile: TileState; me: PlayerState; gained: Gained }> => {
+): Promise<{ tile: TileState; me: PlayerState; gained: Gained; golden: boolean }> => {
   const key = tileKey(x, y);
   const [tile, player, grid, cityRaw] = await Promise.all([
     getTile(key),
@@ -1232,19 +1269,26 @@ export const doCollect = async (
   const adj = adjacencyBonus(grid, x, y, city.festival, now);
   const houseTier = houseTierOf(grid, userId);
   const pricesBefore = pricesFor(stockpile);
-  const result = applyCollect(tile, player, city, now, adj, stockpile, houseTier);
+  // PERFECT HARVEST (S2): the golden window is a pure function of (key, now) —
+  // the server re-derives it against its OWN clock (lenient by ±grace to absorb
+  // latency), so a doubled harvest can never be spoofed. Only the single-tile
+  // collect path is golden; collect-all never is.
+  const golden = isGoldenWindowLenient(key, now);
+  const result = applyCollect(tile, player, city, now, adj, stockpile, houseTier, golden);
   const gained = result.gained;
   const banked = gained.coins + goodsTotal(gained.goods);
   const stockChanged =
     goodsTotal(result.consumed) > 0 || goodsTotal(result.stocked) > 0;
   const produced = banked > 0 || stockChanged;
 
-  // Quest counters: one collect (banked > 0) and any processed output produced.
+  // Quest counters: one collect (banked > 0), any processed output produced, and
+  // a Perfect Harvest when the golden window applied.
   const proc = processedUnits(tile.buildingId, gained, result.consumed);
   const me: PlayerState = {
     ...result.player,
     collects: result.player.collects + (banked > 0 ? 1 : 0),
     processedUnits: result.player.processedUnits + proc,
+    goldenHarvests: result.player.goldenHarvests + (result.golden ? 1 : 0),
   };
 
   await putTile(key, result.tile);
@@ -1271,7 +1315,7 @@ export const doCollect = async (
   if (stockChanged && anyPriceChanged(pricesBefore, pricesFor(stockpile))) {
     await broadcastMarket(stockpile);
   }
-  return { tile: result.tile, me, gained };
+  return { tile: result.tile, me, gained, golden: result.golden };
 };
 
 export const doCollectAll = async (

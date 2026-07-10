@@ -21,6 +21,7 @@ export type QuestMetric =
   | 'rawBuildings'
   | 'processorBuilt'
   | 'processedUnits'
+  | 'goldenHarvests'
   | 'boostsGiven'
   | 'tier2Owned'
   | 'lifetimeContributed'
@@ -36,9 +37,10 @@ export type Quest = {
 };
 
 /**
- * The fixed 16-step ladder (S1: the vote + trader quests are gone; two "sell"
- * quests became "earn/harvest" quests fed by the auto-sell loop). Each blurb is
- * one warm line of flavour.
+ * The fixed 17-step ladder (S1: the vote + trader quests are gone; two "sell"
+ * quests became "earn/harvest" quests fed by the auto-sell loop. S2: a Perfect
+ * Harvest rung follows the first-harvest quest). Each blurb is one warm line of
+ * flavour.
  */
 export const QUEST_CHAIN: Quest[] = [
   {
@@ -67,6 +69,14 @@ export const QUEST_CHAIN: Quest[] = [
   },
   {
     id: 'q04',
+    title: 'Catch a Perfect Harvest',
+    blurb: 'Ripe buildings sparkle gold now and then — tap during the sparkle for a double harvest.',
+    metric: 'goldenHarvests',
+    target: 1,
+    reward: { coins: 40 },
+  },
+  {
+    id: 'q05',
     title: 'Earn 60 coins from your harvests',
     blurb: 'Your fields sell themselves — collect until sixty coins are in hand.',
     metric: 'lifetimeEarned',
@@ -74,7 +84,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 30 },
   },
   {
-    id: 'q05',
+    id: 'q06',
     title: 'Check in at the Hearth',
     blurb: 'Warm yourself at the Hearth each day to keep your streak alive.',
     metric: 'streak',
@@ -82,7 +92,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { xp: 50 },
   },
   {
-    id: 'q06',
+    id: 'q07',
     title: 'Reach level 2',
     blurb: 'Earn a little experience to grow from settler to seasoned builder.',
     metric: 'level',
@@ -90,7 +100,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 40 },
   },
   {
-    id: 'q07',
+    id: 'q08',
     title: 'Claim a second plot',
     blurb: 'Your village is ready to spread — claim a second plot of land.',
     metric: 'owned',
@@ -98,7 +108,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 30 },
   },
   {
-    id: 'q08',
+    id: 'q09',
     title: 'Build a Grove or Quarry',
     blurb: 'Raw materials fuel everything; raise a grove or a quarry.',
     metric: 'rawBuildings',
@@ -106,7 +116,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 50 },
   },
   {
-    id: 'q09',
+    id: 'q10',
     title: 'Harvest 150 goods',
     blurb: 'Keep the fields busy until a hundred and fifty goods have been gathered.',
     metric: 'soldUnits',
@@ -114,7 +124,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 60 },
   },
   {
-    id: 'q10',
+    id: 'q11',
     title: 'Build a processor (Windmill/Sawmill/Kiln)',
     blurb: 'Refine your raw goods by building a windmill, sawmill, or kiln.',
     metric: 'processorBuilt',
@@ -122,7 +132,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 80 },
   },
   {
-    id: 'q11',
+    id: 'q12',
     title: 'Process 15 goods',
     blurb: 'Run your processor until fifteen refined goods have been made.',
     metric: 'processedUnits',
@@ -130,7 +140,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 50, xp: 50 },
   },
   {
-    id: 'q12',
+    id: 'q13',
     title: "Boost a neighbor's building",
     blurb: 'Lend a neighbour a hand by boosting one of their buildings.',
     metric: 'boostsGiven',
@@ -138,7 +148,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 25 },
   },
   {
-    id: 'q13',
+    id: 'q14',
     title: 'Upgrade any building to tier 2',
     blurb: 'Invest in your village by upgrading a building to tier two.',
     metric: 'tier2Owned',
@@ -146,7 +156,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 75 },
   },
   {
-    id: 'q14',
+    id: 'q15',
     title: 'Contribute 20 planks or bricks to the Village Hall',
     blurb: 'Give twenty planks or bricks toward raising the Village Hall.',
     metric: 'lifetimeContributed',
@@ -154,7 +164,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 100 },
   },
   {
-    id: 'q15',
+    id: 'q16',
     title: 'Earn 1,000 lifetime coins',
     blurb: 'Grow prosperous by earning a thousand coins from your buildings.',
     metric: 'lifetimeEarned',
@@ -162,7 +172,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { xp: 100 },
   },
   {
-    id: 'q16',
+    id: 'q17',
     title: 'Reach level 4',
     blurb: 'Prove your mastery by reaching the fourth level of renown.',
     metric: 'level',
@@ -264,6 +274,8 @@ export const questMetricValue = (
       return player.soldUnits;
     case 'processedUnits':
       return player.processedUnits;
+    case 'goldenHarvests':
+      return player.goldenHarvests;
     case 'boostsGiven':
       return player.boostsGiven;
     case 'streak':

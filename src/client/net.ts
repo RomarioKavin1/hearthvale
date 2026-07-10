@@ -22,7 +22,13 @@ import type {
  */
 
 export type TileResult = { tile: TileState; me: PlayerState };
-export type CollectResult = { tile: TileState; me: PlayerState; gained: Gained };
+export type CollectResult = {
+  tile: TileState;
+  me: PlayerState;
+  gained: Gained;
+  /** True when the collect landed in the tile's golden window (Perfect Harvest). */
+  golden: boolean;
+};
 export type CollectAllResult = {
   tiles: Record<string, TileState>;
   me: PlayerState;

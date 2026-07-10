@@ -16,6 +16,7 @@ import {
   adjacencyBonus,
   emptyStockpile,
   goodsTotal,
+  isGoldenWindow,
 } from '../../shared/logic/economy';
 import { isRiver, ringBounds } from '../../shared/logic/expansion';
 import type {
@@ -162,6 +163,10 @@ type TileView = {
   goldPip: Phaser.GameObjects.Image | undefined;
   finder: Phaser.GameObjects.Rectangle | undefined;
   pip: Phaser.GameObjects.Image | undefined;
+  /** Perfect-Harvest golden sparkle (S2): pre-created alongside the ready pip and
+   * toggled visible during the tile's golden window by a light 300ms timer, so the
+   * window's sub-2s resolution costs zero per-frame object churn. */
+  sparkle: Phaser.GameObjects.Image | undefined;
   boostPip: Phaser.GameObjects.Image | undefined;
   growthKey: SpriteKey | undefined;
   /** Ambient (C2): chimney-smoke timer + "alive" work-pulse tween, both bound to
@@ -417,6 +422,13 @@ export class Village extends Scene {
       delay: 2000,
       loop: true,
       callback: () => this.updatePips(),
+    });
+    // Golden-window sparkles need finer resolution than the 2s pip timer to catch
+    // a 1.8s window — a cheap 300ms visibility sweep over ready tiles.
+    this.time.addEvent({
+      delay: 300,
+      loop: true,
+      callback: () => this.updateSparkles(),
     });
   }
 
@@ -762,6 +774,7 @@ export class Village extends Scene {
       goldPip: undefined,
       finder: undefined,
       pip: undefined,
+      sparkle: undefined,
       boostPip: undefined,
       growthKey: undefined,
       smokeTimer: undefined,
@@ -970,7 +983,7 @@ export class Village extends Scene {
     if (!view) return;
     this.clearStructural(view);
     this.killButterfliesAt(key);
-    for (const pip of [view.finder, view.pip, view.boostPip]) {
+    for (const pip of [view.finder, view.pip, view.sparkle, view.boostPip]) {
       if (pip) {
         this.tweens.killTweensOf(pip);
         pip.destroy();
@@ -1015,10 +1028,18 @@ export class Village extends Scene {
       }
       if (ready && !view.pip) {
         view.pip = this.spawnPip(sx, sy - TILE_H * 1.7, 'icon-coin', C_GLOW);
+        // Pair the ready pip with a hidden golden sparkle; the 300ms sparkle timer
+        // reveals it during the tile's golden window (Perfect Harvest).
+        view.sparkle = this.spawnSparkle(sx, sy - TILE_H * 1.75);
       } else if (!ready && view.pip) {
         this.tweens.killTweensOf(view.pip);
         view.pip.destroy();
         view.pip = undefined;
+        if (view.sparkle) {
+          this.tweens.killTweensOf(view.sparkle);
+          view.sparkle.destroy();
+          view.sparkle = undefined;
+        }
       }
 
       // Boost pip (any boosted tile shows an up-arrow).
@@ -1053,6 +1074,47 @@ export class Village extends Scene {
       ease: 'Sine.inOut',
     });
     return pip;
+  }
+
+  /** A larger golden star that overlays the coin pip during a tile's golden
+   * window (~2× the pip, gold tint, gentle scale-pulse). Created hidden; the
+   * sparkle timer toggles its visibility. */
+  private spawnSparkle(x: number, y: number): Phaser.GameObjects.Image {
+    const sparkle = this.add
+      .image(x, y, 'icon-star')
+      .setScale(0.36)
+      .setTint(GOLD)
+      .setDepth(PIP_DEPTH + 1)
+      .setVisible(false);
+    if (!this.reducedMotion) {
+      this.tweens.add({
+        targets: sparkle,
+        scale: 0.46,
+        duration: 400,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.inOut',
+      });
+    }
+    return sparkle;
+  }
+
+  /**
+   * Light 300ms sweep over ready tiles: reveal each tile's golden sparkle (and
+   * hide its coin pip) exactly while `isGoldenWindow(key, now)` is true. Pure
+   * visibility toggles on pre-created sprites — zero allocation per tick — giving
+   * the 1.8s window enough resolution that the ~2s pip timer alone can't.
+   */
+  private updateSparkles(): void {
+    const now = this.now();
+    for (const [key, view] of this.views) {
+      if (!view.pip || !view.sparkle) continue;
+      const golden = isGoldenWindow(key, now);
+      if (view.sparkle.visible !== golden) {
+        view.sparkle.setVisible(golden);
+        view.pip.setVisible(!golden);
+      }
+    }
   }
 
   // ── Camera ─────────────────────────────────────────────────────────────────
@@ -1197,7 +1259,11 @@ export class Village extends Scene {
       .collect(x, y)
       .then((res) => {
         store.applyMutation({ key, tile: res.tile, me: res.me });
-        this.coinBurst(x, y);
+        this.coinBurst(x, y, res.golden);
+        if (res.golden) {
+          this.perfectText(x, y);
+          this.zoomBump();
+        }
       })
       .catch(() => {
         // Collection failed (e.g. nothing ready yet after a race) — ignore;
@@ -1450,14 +1516,18 @@ export class Village extends Scene {
     }
   }
 
-  private coinBurst(x: number, y: number): void {
+  /** Coin-pop on collect. A Perfect Harvest (`golden`) throws twice the coins in
+   * a gold tint for a celebratory double burst. */
+  private coinBurst(x: number, y: number, golden = false): void {
     const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
     const oy = sy - TILE_H * 0.7;
-    for (let i = 0; i < 7; i++) {
+    const count = golden ? 14 : 7;
+    const tint = golden ? GOLD : C_GLOW;
+    for (let i = 0; i < count; i++) {
       const coin = this.add
         .image(sx, oy, 'icon-coin')
         .setScale(0.16)
-        .setTint(C_GLOW)
+        .setTint(tint)
         .setDepth(EFFECT_DEPTH);
       this.tweens.add({
         targets: coin,
@@ -1469,6 +1539,60 @@ export class Village extends Scene {
         onComplete: () => coin.destroy(),
       });
     }
+  }
+
+  /** Gold "PERFECT" text that pops in, floats up and fades (~900ms) over a golden
+   * collect. */
+  private perfectText(x: number, y: number): void {
+    const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
+    const label = this.add
+      .text(sx, sy - TILE_H * 1.4, 'PERFECT', {
+        fontFamily: 'Fredoka, ui-rounded, system-ui, sans-serif',
+        fontSize: '20px',
+        fontStyle: '700',
+        color: '#ffd700',
+        stroke: PAL.ink,
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(EFFECT_DEPTH + 1)
+      .setScale(0.5)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: label,
+      scale: 1,
+      alpha: 1,
+      duration: 180,
+      ease: 'Back.out',
+    });
+    this.tweens.add({
+      targets: label,
+      y: sy - TILE_H * 2.3,
+      duration: 900,
+      ease: 'Quad.out',
+    });
+    this.tweens.add({
+      targets: label,
+      alpha: 0,
+      delay: 520,
+      duration: 380,
+      onComplete: () => label.destroy(),
+    });
+  }
+
+  /** A tiny camera zoom bump (1.00→1.015→1.00, ~150ms) for extra Perfect-Harvest
+   * punch. Skipped under reduced motion. */
+  private zoomBump(): void {
+    if (this.reducedMotion) return;
+    const cam = this.cameras.main;
+    const base = cam.zoom;
+    this.tweens.add({
+      targets: cam,
+      zoom: base * 1.015,
+      duration: 75,
+      yoyo: true,
+      ease: 'Sine.inOut',
+    });
   }
 
   private confetti(): void {

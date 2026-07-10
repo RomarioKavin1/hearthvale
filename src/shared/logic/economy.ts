@@ -94,6 +94,70 @@ export const roleToFestival = (role: BuildingRole): FestivalCategory =>
   role === 'processor' ? 'processed' : role;
 
 // ---------------------------------------------------------------------------
+// Perfect Harvest (S2) — the golden-window micro-skill on collection.
+// ---------------------------------------------------------------------------
+
+/**
+ * A ready building periodically enters a brief GOLDEN SPARKLE window; collecting
+ * it during the window doubles that harvest. The window is a PURE function of
+ * (tileKey, time) so client and server agree WITHOUT any realtime push — the
+ * client evaluates it against the skew-corrected `serverNow()`, the server
+ * against `Date.now()`, and both derive the same phase from the tile key. This
+ * is the anti-cheat crux: there is nothing to spoof — a tap is golden iff the
+ * server's own clock says the deterministic window is open.
+ */
+export const GOLDEN_CYCLE_MS = 11_000;
+export const GOLDEN_WINDOW_MS = 1_800;
+/** Validation slack (each edge) the server allows to absorb network latency and
+ * clock-skew residue, so an honest well-timed tap is never rejected. */
+export const GOLDEN_GRACE_MS = 400;
+/** A golden-window collection multiplies its production by this factor. */
+export const GOLDEN_MULTIPLIER = 2;
+
+/**
+ * A deterministic per-tile phase offset in [0, GOLDEN_CYCLE_MS): an FNV-1a hash
+ * of the tile key folded into the cycle length, so each tile's golden window
+ * lands at a different moment (the windows are spread across the map, not
+ * synchronised into one village-wide flash). Pure.
+ */
+const goldenPhase = (key: string): number => {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % GOLDEN_CYCLE_MS;
+};
+
+/** Position within the tile's golden cycle at `now`, in [0, GOLDEN_CYCLE_MS). */
+const goldenPos = (key: string, now: number): number => {
+  const c = GOLDEN_CYCLE_MS;
+  return (((now + goldenPhase(key)) % c) + c) % c;
+};
+
+/**
+ * True when tile `key` is inside its golden window at `now` — the strict window
+ * the CLIENT renders the sparkle for. Duty cycle ≈ GOLDEN_WINDOW_MS/GOLDEN_CYCLE_MS.
+ * Pure + deterministic.
+ */
+export const isGoldenWindow = (key: string, now: number): boolean =>
+  goldenPos(key, now) < GOLDEN_WINDOW_MS;
+
+/**
+ * The SERVER's lenient acceptance test: the strict window widened by
+ * GOLDEN_GRACE_MS on each edge (the leading edge wraps to the tail of the
+ * previous cycle). A strict superset of `isGoldenWindow`, so any tap the client
+ * showed as golden is honoured even after a little latency. Pure.
+ */
+export const isGoldenWindowLenient = (key: string, now: number): boolean => {
+  const pos = goldenPos(key, now);
+  return (
+    pos < GOLDEN_WINDOW_MS + GOLDEN_GRACE_MS ||
+    pos >= GOLDEN_CYCLE_MS - GOLDEN_GRACE_MS
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Accrual.
 // ---------------------------------------------------------------------------
 
