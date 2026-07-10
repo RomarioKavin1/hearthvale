@@ -63,9 +63,9 @@ const tile = (overrides: Partial<TileState> = {}): TileState => ({
   ...overrides,
 });
 
-describe('QUEST_CHAIN content', () => {
-  it('has exactly 18 quests', () => {
-    expect(QUEST_CHAIN).toHaveLength(18);
+describe('QUEST_CHAIN content (v3 — the great simplification)', () => {
+  it('has exactly 16 quests (vote + trader rungs retired)', () => {
+    expect(QUEST_CHAIN).toHaveLength(16);
   });
 
   it('has unique ids across chain and repeatables', () => {
@@ -83,10 +83,24 @@ describe('QUEST_CHAIN content', () => {
 
   it('matches the design table for a few key rungs', () => {
     expect(QUEST_CHAIN[0]).toMatchObject({ metric: 'owned', target: 1, reward: { coins: 20 } });
-    expect(QUEST_CHAIN[3]).toMatchObject({ metric: 'soldUnits', target: 10 });
+    // q4: earn coins from auto-sold harvests (was "sell 10 goods").
+    expect(QUEST_CHAIN[3]).toMatchObject({ metric: 'lifetimeEarned', target: 60 });
+    // q9: harvest goods — soldUnits is the auto-sell harvest counter now.
+    expect(QUEST_CHAIN[8]).toMatchObject({ metric: 'soldUnits', target: 150 });
     expect(QUEST_CHAIN[10]).toMatchObject({ metric: 'processedUnits', target: 15, reward: { coins: 50, xp: 50 } });
-    expect(QUEST_CHAIN[16]).toMatchObject({ metric: 'lifetimeEarned', target: 1000, reward: { xp: 100 } });
-    expect(QUEST_CHAIN[17]).toMatchObject({ metric: 'level', target: 4, reward: { coins: 150 } });
+    expect(QUEST_CHAIN[14]).toMatchObject({ metric: 'lifetimeEarned', target: 1000, reward: { xp: 100 } });
+    expect(QUEST_CHAIN[15]).toMatchObject({ metric: 'level', target: 4, reward: { coins: 150 } });
+  });
+
+  it('has no vote or trader quests left', () => {
+    const metrics = [...QUEST_CHAIN, ...REPEATABLE].map((q) => q.metric);
+    expect(metrics).not.toContain('votesCast');
+    expect(metrics).not.toContain('tradesDone');
+  });
+
+  it('reshapes the harvest repeatable to 400 units', () => {
+    const rSell = REPEATABLE.find((q) => q.id === 'r-sell');
+    expect(rSell).toMatchObject({ metric: 'soldUnits', target: 400 });
   });
 });
 
@@ -122,13 +136,13 @@ describe('questAt', () => {
 
 describe('questMetricValue', () => {
   it('reads counter metrics off the player', () => {
-    const p = player({ soldUnits: 7, collects: 3, level: 5, streak: 2, votesCast: 1 });
+    const p = player({ soldUnits: 7, collects: 3, level: 5, streak: 2, boostsGiven: 1 });
     const s = emptySnap();
     expect(questMetricValue('soldUnits', p, s)).toBe(7);
     expect(questMetricValue('collects', p, s)).toBe(3);
     expect(questMetricValue('level', p, s)).toBe(5);
     expect(questMetricValue('streak', p, s)).toBe(2);
-    expect(questMetricValue('votesCast', p, s)).toBe(1);
+    expect(questMetricValue('boostsGiven', p, s)).toBe(1);
   });
 
   it('reads snapshot metrics (booleans as 1|0)', () => {
@@ -150,12 +164,12 @@ describe('questMetricValue', () => {
 
 describe('questProgress', () => {
   it('reads chain progress directly (baseline 0), clamped to target', () => {
-    const q = QUEST_CHAIN[3]; // soldUnits ≥ 10
+    const q = QUEST_CHAIN[3]; // lifetimeEarned ≥ 60 (fed by auto-sell income)
     if (!q) throw new Error('missing quest');
-    expect(questProgress(q, player({ soldUnits: 4 }), emptySnap(), 0)).toEqual({ have: 4, done: false });
-    expect(questProgress(q, player({ soldUnits: 10 }), emptySnap(), 0)).toEqual({ have: 10, done: true });
+    expect(questProgress(q, player({ lifetimeEarned: 24 }), emptySnap(), 0)).toEqual({ have: 24, done: false });
+    expect(questProgress(q, player({ lifetimeEarned: 60 }), emptySnap(), 0)).toEqual({ have: 60, done: true });
     // Over-target clamps have to the target.
-    expect(questProgress(q, player({ soldUnits: 99 }), emptySnap(), 0)).toEqual({ have: 10, done: true });
+    expect(questProgress(q, player({ lifetimeEarned: 999 }), emptySnap(), 0)).toEqual({ have: 60, done: true });
   });
 
   it('handles a boolean snapshot metric', () => {
@@ -224,15 +238,15 @@ describe('questBaselineFor', () => {
 
 describe('claimQuestError', () => {
   it('rejects an incomplete quest with a have/target message', () => {
-    const q = QUEST_CHAIN[3]; // soldUnits ≥ 10
+    const q = QUEST_CHAIN[3]; // lifetimeEarned ≥ 60
     if (!q) throw new Error('missing quest');
-    expect(claimQuestError(q, player({ soldUnits: 4 }), emptySnap(), 0)).toBe('Not there yet — 4/10');
+    expect(claimQuestError(q, player({ lifetimeEarned: 4 }), emptySnap(), 0)).toBe('Not there yet — 4/60');
   });
 
   it('returns null for a completed quest', () => {
     const q = QUEST_CHAIN[3];
     if (!q) throw new Error('missing quest');
-    expect(claimQuestError(q, player({ soldUnits: 10 }), emptySnap(), 0)).toBeNull();
+    expect(claimQuestError(q, player({ lifetimeEarned: 60 }), emptySnap(), 0)).toBeNull();
   });
 });
 

@@ -4,7 +4,6 @@ import type {
   FestivalCategory,
   Prices,
   Stockpile,
-  TraderOffer,
   Weather,
 } from '../../shared/types';
 import { createDailyPost, marketReportText } from '../core/post';
@@ -18,7 +17,7 @@ type CycleResponse = {
 };
 
 /**
- * The daily cycle: tally yesterday's ballot into today's festival, roll today's
+ * The daily cycle: auto-rotate the festival to the next category, roll today's
  * weather, spin up the daily post, then best-effort attach a market-report
  * comment. Each step is wrapped so a failure is logged and still returns HTTP
  * 200 with a status — the platform scheduler retries on non-200, and we never
@@ -35,7 +34,6 @@ scheduler.post('/daily-cycle', async (c) => {
     hallLevel: number;
     stockpile: Stockpile;
     prices: Prices;
-    offers: TraderOffer[];
   };
   try {
     rotation = await runFestivalRotation(now);

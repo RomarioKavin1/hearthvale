@@ -8,6 +8,7 @@ import {
   emptyStockpile,
   goodsTotal,
   houseTile,
+  isAutoSold,
   levelForXp,
   nearHouse,
   plotsAllowed,
@@ -236,6 +237,17 @@ describe('goodsTotal', () => {
   it('sums good quantities', () => {
     expect(goodsTotal({ wheat: 3, flour: 2 })).toBe(5);
     expect(goodsTotal({})).toBe(0);
+  });
+});
+
+describe('isAutoSold', () => {
+  it('auto-sells the raw harvests and flour, never the Hall material', () => {
+    expect(isAutoSold('wheat')).toBe(true);
+    expect(isAutoSold('logs')).toBe(true);
+    expect(isAutoSold('stone')).toBe(true);
+    expect(isAutoSold('flour')).toBe(true);
+    expect(isAutoSold('planks')).toBe(false);
+    expect(isAutoSold('bricks')).toBe(false);
   });
 });
 

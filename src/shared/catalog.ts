@@ -330,14 +330,12 @@ export const HALL_MAX_LEVEL: number = KEEP_STAGE_COSTS.length;
  * current level to the next. */
 export const HALL_POPULATION: number[] = [2, 4, 8, 14, 22];
 
-/** The perks a given Village Hall level grants, cumulative by level. */
+/** The perks a given Village Hall level grants, cumulative by level. (S1: the
+ * trader-offer and market-sell-cap perks retired along with the trader and the
+ * manual market — production, plots and boosts are what remain.) */
 export type HallPerks = {
   /** Village-wide production bonus in whole percent (+3% per level). */
   productionPct: number;
-  /** Daily wandering-trader offer count (3, then 4 from level 1). */
-  traderOffers: number;
-  /** Maximum units a player may sell in one market order (500, 750 from L2). */
-  sellCap: number;
   /** Extra plots granted to every player (0, then +1 from level 3). */
   bonusPlot: number;
   /** Neighbour boosts allowed per day (5, then 7 from level 4). */
@@ -349,8 +347,6 @@ export const hallPerks = (level: number): HallPerks => {
   const l = Math.max(0, Math.min(level, HALL_MAX_LEVEL));
   return {
     productionPct: 3 * l,
-    traderOffers: l >= 1 ? 4 : 3,
-    sellCap: l >= 2 ? 750 : 500,
     bonusPlot: l >= 3 ? 1 : 0,
     boostLimit: l >= 4 ? 7 : 5,
   };

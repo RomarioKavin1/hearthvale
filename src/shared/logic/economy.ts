@@ -52,6 +52,16 @@ export const prevDay = (day: string): string =>
 /** The six goods, in a stable order for iteration. */
 export const GOODS: Good[] = ['wheat', 'logs', 'stone', 'flour', 'planks', 'bricks'];
 
+/**
+ * The goods that are AUTO-SOLD into the village stockpile the instant they are
+ * collected (the raw harvest goods plus the windmill's flour): the player is
+ * paid `sellValue` coins on the spot and never holds them. Planks and bricks —
+ * the Village Hall building material — are the only goods that stay in a wallet.
+ * Pure knowledge shared by the collect path and the market info panel.
+ */
+export const isAutoSold = (good: Good): boolean =>
+  good === 'wheat' || good === 'logs' || good === 'stone' || good === 'flour';
+
 /** A fresh, all-zero stockpile/wallet. */
 export const emptyStockpile = (): Stockpile => ({
   wheat: 0,

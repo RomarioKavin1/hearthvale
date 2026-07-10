@@ -16,7 +16,6 @@ import type {
   Summary,
   Tier,
   TileState,
-  TraderOffer,
   VillageTheme,
 } from '../../shared/types';
 import type { BuildingId } from '../../shared/types';
@@ -46,6 +45,7 @@ import {
   adjacencyBonus,
   canClaim,
   goodsTotal,
+  isAutoSold,
   mergeGoods,
   levelForXp,
   plotsForLevel,
@@ -53,9 +53,9 @@ import {
   streakReward,
   utcDay,
 } from '../../shared/logic/economy';
-import { buyValue, priceFor, pricesFor, sellValue } from '../../shared/logic/market';
+import { priceFor, pricesFor, sellValue } from '../../shared/logic/market';
 import { isUnlocked, ringBounds } from '../../shared/logic/expansion';
-import { offersForDay, weatherForDay } from '../../shared/logic/trader';
+import { weatherForDay } from '../../shared/logic/trader';
 import {
   advanceQuest,
   claimQuestError,
@@ -66,30 +66,21 @@ import {
 } from '../../shared/quests';
 import { parseKey, tileKey } from '../../shared/logic/grid';
 import {
-  STOCKPILE_KEY,
-  claimDailyTrade,
-  getBallot,
   getCity,
   getGrid,
   getPlayer,
   getStockpile,
   getTile,
-  hasTradedToday,
-  hasVoted,
   incrStageContrib,
   initPlayer,
   ownedCount,
-  playerFields,
-  playerRedisKey,
   putCity,
   putPlayer,
   putStockpile,
   putTile,
-  recordVote,
   stageContribScore,
   stageContribTotal,
   stageTopContributor,
-  stockpileFields,
 } from './store';
 
 /** Number of Village Hall levels (resource stages). */
@@ -357,30 +348,15 @@ export const tryHallLevelUp = (
   return { hallLevel: level, stagePlanks: planks, stageBricks: bricks, leveled };
 };
 
-// --- Ballot -----------------------------------------------------------------
+// --- Festival rotation --------------------------------------------------------
 
 const CATEGORIES: FestivalCategory[] = ['coins', 'raw', 'processed', 'decor'];
 
-/** Cyclic rotation coins -> raw -> processed -> decor -> coins. */
+/** Cyclic rotation coins -> raw -> processed -> decor -> coins. The festival
+ * auto-rotates daily (S1: the ballot is retired — no tally, no vote). */
 export const nextFestival = (current: FestivalCategory): FestivalCategory => {
   const i = CATEGORIES.indexOf(current);
   return CATEGORIES[(i + 1) % CATEGORIES.length] ?? 'coins';
-};
-
-/**
- * Winning festival category: the strict majority. A tie (including no votes)
- * rotates to the next category after the current festival.
- */
-export const tallyBallot = (
-  counts: Record<FestivalCategory, number>,
-  current: FestivalCategory
-): FestivalCategory => {
-  const entries = CATEGORIES.map((c) => ({ c, n: counts[c] }));
-  const max = Math.max(...entries.map((e) => e.n));
-  const winners = entries.filter((e) => e.n === max);
-  const [winner] = winners;
-  if (max > 0 && winners.length === 1 && winner) return winner.c;
-  return nextFestival(current);
 };
 
 // --- Stage payout -----------------------------------------------------------
@@ -453,9 +429,11 @@ export const applyHallBuff = (
 
 /**
  * Processed-output units a collect yielded, for the `processedUnits` quest
- * counter: for a goods processor (windmill/sawmill/kiln) the output-good units
- * produced; for the bakery the flour runs consumed (its output is coins). 0 for
- * any non-processor. Pure — unit-tested.
+ * counter: for a wallet-bound processor (sawmill/kiln) the output-good units
+ * produced; for processors whose output leaves as coins at collect time (the
+ * bakery mints them, the windmill's flour is auto-sold — `gained.goods` is
+ * empty for both) the recipe runs derived from the inputs consumed. 0 for any
+ * non-processor. Pure — unit-tested.
  */
 export const processedUnits = (
   buildingId: BuildingId | undefined,
@@ -465,7 +443,10 @@ export const processedUnits = (
   if (!buildingId) return 0;
   const spec = CATALOG[buildingId];
   if (spec.role !== 'processor' || !spec.input || !spec.output) return 0;
-  if (spec.output === 'coins') return consumed[spec.input.good] ?? 0;
+  if (spec.output === 'coins' || isAutoSold(spec.output)) {
+    const per = spec.input.per;
+    return per > 0 ? Math.floor((consumed[spec.input.good] ?? 0) / per) : 0;
+  }
   return gained.goods[spec.output] ?? 0;
 };
 
@@ -508,23 +489,32 @@ export type CollectResult = {
   gained: Gained;
   /** Inputs pulled from the village stockpile (the caller writes these back). */
   consumed: Partial<Record<Good, number>>;
+  /** Auto-sold units ADDED to the village stockpile (the caller writes these
+   * back). Mirrors `gained.sold` unit-for-unit. */
+  stocked: Partial<Record<Good, number>>;
 };
 
 /**
  * Collect one tile against the real village `stockpile` (and `city.weather`).
- * Pure — the caller applies `consumed` to the stockpile and persists.
+ * Pure — the caller subtracts `consumed` from / adds `stocked` to the stockpile
+ * and persists.
  *
- * - Raw producers + goods processors output goods into the OWNER'S wallet;
- *   house/manor + the bakery output coins.
- * - Processors consume `2 × runs` inputs from the stockpile and the owner PAYS
- *   `price × units`: the bakery nets it out of its minted coins (floored at 0),
- *   while goods processors pay from their coin balance — and if they cannot
- *   afford every run, the run count (output + consumption + cost) is trimmed to
- *   what they can afford (`affordableRuns`).
+ * - House/manor mint coins; the bakery mints coins by buying flour from the
+ *   stockpile (netting the flour cost out of its minted coins, floored at 0).
+ * - AUTO-SELL (S1): raw harvests (wheat/logs/stone) and the windmill's flour
+ *   are sold into the village stockpile the instant they are collected — the
+ *   units go into `stocked`, the owner is credited `sellValue(units, stock,
+ *   good)` coins, and `gained.sold` carries the per-good breakdown. The
+ *   windmill nets its wheat cost out of the flour revenue, like the bakery.
+ * - Sawmill/kiln output planks/bricks into the OWNER'S wallet (the Hall
+ *   building material — the only held goods) and pay their input cost from the
+ *   owner's coin balance; unaffordable runs are trimmed (`affordableRuns`).
  * - The Village Hall production buff (+3%/level) and the owner's house aura
- *   (+2%/house tier, excluding the house itself) scale the OUTPUT after accrual.
- * - Only production coins feed `lifetimeEarned` (→ lb:earned); market income
- *   never does.
+ *   (+2%/house tier, excluding the house itself) scale the OUTPUT after accrual
+ *   and BEFORE the auto-sale (buffed units are what get sold).
+ * - All net coins — including auto-sell income — feed `lifetimeEarned`
+ *   (→ lb:earned): production income now includes the harvest's sale. Auto-sold
+ *   units bump the `soldUnits` harvest counter.
  */
 export const applyCollect = (
   tile: TileState,
@@ -536,11 +526,18 @@ export const applyCollect = (
   houseTier: number
 ): CollectResult => {
   const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile);
-  let gained = raw.gained;
+  let gained: Gained = raw.gained;
   let consumed = raw.consumed;
 
   const spec = tile.buildingId ? CATALOG[tile.buildingId] : undefined;
   const isHouse = spec?.special === 'house';
+
+  // Processors whose revenue arrives as coins at collect time (the bakery mints
+  // them; the windmill's flour is auto-sold) net their input cost out of that
+  // revenue. Wallet-bound processors (sawmill/kiln) pay it from the balance.
+  const outputGood = spec?.output;
+  const netsFromRevenue =
+    outputGood === 'coins' || (outputGood !== undefined && isAutoSold(outputGood));
 
   let inputCost = 0;
   if (spec && spec.role === 'processor' && spec.input && spec.output) {
@@ -549,9 +546,7 @@ export const applyCollect = (
     const consumedUnits = consumed[input.good] ?? 0;
     const runs = input.per > 0 ? Math.floor(consumedUnits / input.per) : 0;
 
-    if (spec.output === 'coins') {
-      inputCost = price * consumedUnits;
-    } else {
+    if (!netsFromRevenue && spec.output !== 'coins') {
       const affordable = affordableRuns(player.coins, price, input.per, runs);
       if (affordable < runs) {
         const outGood = spec.output;
@@ -562,17 +557,44 @@ export const applyCollect = (
           goods: affordable > 0 ? { [outGood]: affordable } : {},
         };
       }
-      inputCost = price * (consumed[input.good] ?? 0);
     }
+    inputCost = price * (consumed[input.good] ?? 0);
   }
 
   // Hall + house buffs scale the output only (never the consumed inputs).
   gained = applyHallBuff(gained, city.hallLevel, houseTier, isHouse);
 
+  // AUTO-SELL: wheat/logs/stone/flour output never reaches the wallet — the
+  // units are sold into the stockpile at marginal prices on the spot.
+  let saleCoins = 0;
+  let soldUnitsTotal = 0;
+  const sold: Partial<Record<Good, { units: number; coins: number }>> = {};
+  const stocked: Partial<Record<Good, number>> = {};
+  const keptGoods: Partial<Record<Good, number>> = {};
+  for (const g of GOODS) {
+    const units = gained.goods[g];
+    if (!units) continue;
+    if (isAutoSold(g)) {
+      const coins = sellValue(units, stockpile[g], g);
+      sold[g] = { units, coins };
+      stocked[g] = units;
+      saleCoins += coins;
+      soldUnitsTotal += units;
+    } else {
+      keptGoods[g] = units;
+    }
+  }
+  gained = {
+    ...gained,
+    coins: gained.coins + saleCoins,
+    goods: keptGoods,
+    ...(soldUnitsTotal > 0 ? { sold } : {}),
+  };
+
   let netCoins = gained.coins;
   let paidFromBalance = 0;
   if (spec && spec.role === 'processor') {
-    if (spec.output === 'coins') {
+    if (netsFromRevenue) {
       netCoins = Math.max(0, gained.coins - inputCost);
       gained = { ...gained, coins: netCoins };
     } else {
@@ -584,7 +606,10 @@ export const applyCollect = (
   // Consuming inputs counts as "did work" even if the net output floored to 0
   // (an underwater bakery) — so lastCollect advances and the draw is not repeated.
   const produced =
-    netCoins + goodsOut > 0 || paidFromBalance > 0 || goodsTotal(consumed) > 0;
+    netCoins + goodsOut > 0 ||
+    paidFromBalance > 0 ||
+    goodsTotal(consumed) > 0 ||
+    soldUnitsTotal > 0;
 
   let nextTile: TileState = { ...tile };
   let nextPlayer = player;
@@ -600,9 +625,11 @@ export const applyCollect = (
         ...player,
         coins: player.coins + netCoins - paidFromBalance,
         wallet,
-        // Absolute lifetime-earned counter drives the replay-safe lb:earned
-        // score: re-applying the same collect result yields the same total.
+        // Absolute lifetime counters drive the replay-safe lb:earned score and
+        // the harvest quest metric: re-applying the same collect result yields
+        // the same totals. Auto-sell income IS production income (S1).
         lifetimeEarned: player.lifetimeEarned + netCoins,
+        soldUnits: player.soldUnits + soldUnitsTotal,
       },
       gained.xp
     );
@@ -616,7 +643,7 @@ export const applyCollect = (
     }
   }
 
-  return { tile: nextTile, player: nextPlayer, gained, consumed };
+  return { tile: nextTile, player: nextPlayer, gained, consumed, stocked };
 };
 
 // ---------------------------------------------------------------------------
@@ -872,10 +899,7 @@ export const loadState = async (
     top.push({ name, score: row.score, me: row.member === userId });
   }
 
-  const today = utcDay(now);
-  const traderDone = userId ? await hasTradedToday(today, userId) : false;
   const { lo, hi } = ringBounds(city.hallLevel);
-  const offerCount = hallPerks(city.hallLevel).traderOffers;
 
   return {
     grid,
@@ -886,7 +910,6 @@ export const loadState = async (
     stockpile,
     prices: pricesFor(stockpile),
     weather: city.weather,
-    trader: { offers: offersForDay(today, offerCount), done: traderDone },
     ring: {
       lo,
       hi,
@@ -1108,10 +1131,13 @@ export const doUpgrade = async (
     Math.floor(stats.cost / 10)
   );
 
-  const stockChanged = goodsTotal(collected.consumed) > 0;
+  const stockChanged =
+    goodsTotal(collected.consumed) > 0 || goodsTotal(collected.stocked) > 0;
   const pricesBefore = pricesFor(stockpile);
   if (stockChanged) {
-    for (const g of GOODS) stockpile[g] -= collected.consumed[g] ?? 0;
+    for (const g of GOODS) {
+      stockpile[g] += (collected.stocked[g] ?? 0) - (collected.consumed[g] ?? 0);
+    }
     await putStockpile(stockpile);
   }
 
@@ -1209,7 +1235,8 @@ export const doCollect = async (
   const result = applyCollect(tile, player, city, now, adj, stockpile, houseTier);
   const gained = result.gained;
   const banked = gained.coins + goodsTotal(gained.goods);
-  const stockChanged = goodsTotal(result.consumed) > 0;
+  const stockChanged =
+    goodsTotal(result.consumed) > 0 || goodsTotal(result.stocked) > 0;
   const produced = banked > 0 || stockChanged;
 
   // Quest counters: one collect (banked > 0) and any processed output produced.
@@ -1235,7 +1262,9 @@ export const doCollect = async (
     await maybeFlair(player.level, me);
   }
   if (stockChanged) {
-    for (const g of GOODS) stockpile[g] -= result.consumed[g] ?? 0;
+    for (const g of GOODS) {
+      stockpile[g] += (result.stocked[g] ?? 0) - (result.consumed[g] ?? 0);
+    }
     await putStockpile(stockpile);
   }
   await broadcastTile(key, result.tile);
@@ -1273,22 +1302,36 @@ export const doCollectAll = async (
     if (tile.owner !== userId || !tile.buildingId) continue;
     const { x, y } = parseKey(key);
     const adj = adjacencyBonus(grid, x, y, city.festival, now);
-    // Thread the (mutating) stockpile so later processors see earlier draws.
+    // Thread the (mutating) stockpile so later processors see earlier draws —
+    // and later auto-sales price against the units earlier tiles just stocked.
     const result = applyCollect(tile, me, city, now, adj, stockpile, houseTier);
     me = result.player;
     total.coins += result.gained.coins;
     total.goods = mergeGoods(total.goods, result.gained.goods);
     total.xp += result.gained.xp;
+    if (result.gained.sold) {
+      const soldTotal = { ...(total.sold ?? {}) };
+      for (const g of GOODS) {
+        const s = result.gained.sold[g];
+        if (!s) continue;
+        const prev = soldTotal[g] ?? { units: 0, coins: 0 };
+        soldTotal[g] = { units: prev.units + s.units, coins: prev.coins + s.coins };
+      }
+      total.sold = soldTotal;
+    }
     const consumedUnits = goodsTotal(result.consumed);
-    if (consumedUnits > 0) {
-      for (const g of GOODS) stockpile[g] -= result.consumed[g] ?? 0;
+    const stockedUnits = goodsTotal(result.stocked);
+    if (consumedUnits > 0 || stockedUnits > 0) {
+      for (const g of GOODS) {
+        stockpile[g] += (result.stocked[g] ?? 0) - (result.consumed[g] ?? 0);
+      }
       stockChanged = true;
     }
     const banked = result.gained.coins + goodsTotal(result.gained.goods);
     if (banked > 0) collectsBump += 1;
     processedBump += processedUnits(tile.buildingId, result.gained, result.consumed);
     const boostChanged = result.tile.boostUntil !== tile.boostUntil;
-    if (banked > 0 || boostChanged || consumedUnits > 0) {
+    if (banked > 0 || boostChanged || consumedUnits > 0 || stockedUnits > 0) {
       changed.push({ key, tile: result.tile });
     }
   }
@@ -1620,211 +1663,6 @@ export const doContribute = async (
   return { city: nextCity, me };
 };
 
-// --- Market: sell / buy -----------------------------------------------------
-
-/**
- * Run a market trade as an optimistic transaction (the same pattern doClaim
- * uses): watch the stockpile + player hashes, re-read both inside the watch
- * window, let `mutate` validate and produce the post-trade states, then write
- * both hashes atomically. A concurrent write to either key voids the exec and
- * surfaces a retryable 409.
- */
-const marketTx = async (
-  userId: string,
-  mutate: (
-    player: PlayerState,
-    stockpile: Stockpile
-  ) => { me: PlayerState; nextStock: Stockpile }
-): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
-  // Ensure the player hash exists before entering the watch window.
-  await ensurePlayer(userId);
-
-  const tx = await redis.watch(STOCKPILE_KEY, playerRedisKey(userId));
-  // Re-read both inside the watch window; any concurrent mutation of either
-  // hash after this point aborts the exec below.
-  const [player, stockpile] = await Promise.all([
-    getPlayer(userId),
-    getStockpile(),
-  ]);
-  if (!player) {
-    await tx.unwatch();
-    throw new OpError(500, 'Player state unavailable.');
-  }
-
-  let me: PlayerState;
-  let nextStock: Stockpile;
-  try {
-    ({ me, nextStock } = mutate(player, stockpile));
-  } catch (error) {
-    await tx.unwatch();
-    throw error;
-  }
-
-  await tx.multi();
-  await tx.hSet(playerRedisKey(userId), playerFields(me));
-  await tx.hSet(STOCKPILE_KEY, stockpileFields(nextStock));
-  let result: unknown[];
-  try {
-    result = await tx.exec();
-  } catch {
-    throw new OpError(409, 'The market just moved — try again.');
-  }
-  if (!result || result.length === 0) {
-    throw new OpError(409, 'The market just moved — try again.');
-  }
-
-  // Broadcast only when a price actually changed (throttles stock-only ticks).
-  if (anyPriceChanged(pricesFor(stockpile), pricesFor(nextStock))) {
-    await broadcastMarket(nextStock);
-  }
-  return { me, stockpile: nextStock, prices: pricesFor(nextStock) };
-};
-
-export const doSell = async (
-  userId: string,
-  good: Good,
-  qty: number
-): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> => {
-  // The per-order sell cap rises with the Village Hall (`sellCap` perk).
-  const city = await getCity();
-  const cap = hallPerks(city.hallLevel).sellCap;
-  if (qty > cap) {
-    throw new OpError(400, `You can sell at most ${cap} ${good} in one order.`);
-  }
-  return marketTx(userId, (player, stockpile) => {
-    const held = player.wallet[good];
-    if (held <= 0) throw new OpError(400, `You have no ${good} to sell.`);
-
-    const amount = Math.min(qty, held);
-    const before = stockpile[good];
-    const coins = sellValue(amount, before, good);
-
-    // Market income is deliberately NOT counted toward lb:earned (production
-    // only). soldUnits (a quest counter) tracks the units actually sold.
-    const me: PlayerState = {
-      ...player,
-      coins: player.coins + coins,
-      wallet: { ...player.wallet, [good]: held - amount },
-      soldUnits: player.soldUnits + amount,
-    };
-    const nextStock: Stockpile = { ...stockpile, [good]: before + amount };
-    return { me, nextStock };
-  });
-};
-
-export const doBuy = async (
-  userId: string,
-  good: Good,
-  qty: number
-): Promise<{ me: PlayerState; stockpile: Stockpile; prices: Prices }> =>
-  marketTx(userId, (player, stockpile) => {
-    const before = stockpile[good];
-    if (before < qty) {
-      throw new OpError(400, `The market only has ${before} ${good}.`);
-    }
-    const cost = buyValue(qty, before, good);
-    if (player.coins < cost) throw new OpError(400, 'Not enough coins.');
-
-    const me: PlayerState = {
-      ...player,
-      coins: player.coins - cost,
-      wallet: { ...player.wallet, [good]: player.wallet[good] + qty },
-    };
-    const nextStock: Stockpile = { ...stockpile, [good]: before - qty };
-    return { me, nextStock };
-  });
-
-// --- Wandering trader -------------------------------------------------------
-
-/** Whether a wallet can cover an offer's `give` side. */
-export const canAffordOffer = (
-  wallet: PlayerState['wallet'],
-  offer: TraderOffer
-): boolean => wallet[offer.give.good] >= offer.give.qty;
-
-/**
- * Validate a trade attempt: rejects an already-used daily trade or a wallet that
- * cannot cover the offer's `give` side. Pure — unit-tested.
- */
-export const validateTrade = (
-  alreadyTraded: boolean,
-  wallet: PlayerState['wallet'],
-  offer: TraderOffer
-): string | null => {
-  if (alreadyTraded) return 'You have already traded today.';
-  if (!canAffordOffer(wallet, offer)) {
-    return `You need ${offer.give.qty} ${offer.give.good}.`;
-  }
-  return null;
-};
-
-export const doTrade = async (
-  userId: string,
-  offerIndex: number
-): Promise<{ me: PlayerState; tile?: { key: string; tile: TileState } }> => {
-  const [player, city] = await Promise.all([ensurePlayer(userId), getCity()]);
-  const today = utcDay(Date.now());
-
-  const offers = offersForDay(today, hallPerks(city.hallLevel).traderOffers);
-  const offer = offers[offerIndex];
-  if (!offer) throw new OpError(400, 'That trade offer does not exist.');
-
-  // Advisory pre-check (friendly early rejection with the exact reason)…
-  const alreadyTraded = await hasTradedToday(today, userId);
-  const err = validateTrade(alreadyTraded, player.wallet, offer);
-  if (err) throw new OpError(400, err);
-
-  // …then the atomic claim: hSetNX means racing duplicate requests cannot both
-  // pass the once-per-day gate — exactly one wins the flag, the rest reject.
-  // Claimed only after wallet validation so a failed attempt never locks the
-  // player out of their daily trade.
-  if (!(await claimDailyTrade(today, userId))) {
-    throw new OpError(400, 'You have already traded today.');
-  }
-
-  const wallet = {
-    ...player.wallet,
-    [offer.give.good]: player.wallet[offer.give.good] - offer.give.qty,
-  };
-
-  let cosmeticTile: { key: string; tile: TileState } | undefined;
-
-  if ('cosmetic' in offer.get) {
-    // SIMPLIFICATION (documented): the golden-roof cosmetic is auto-applied to
-    // the player's highest-value building tile (by tier, then build cost).
-    const grid = await getGrid();
-    let bestKey: string | null = null;
-    let bestScore = -1;
-    for (const [key, tile] of Object.entries(grid)) {
-      if (tile.owner !== userId || !tile.buildingId) continue;
-      const score = tile.tier * 10000 + CATALOG[tile.buildingId].cost;
-      if (score > bestScore) {
-        bestScore = score;
-        bestKey = key;
-      }
-    }
-    if (!bestKey) {
-      throw new OpError(400, 'You need a building for the golden roof.');
-    }
-    const chosen = grid[bestKey];
-    if (!chosen) throw new OpError(400, 'You need a building for the golden roof.');
-    const decorated: TileState = { ...chosen, cosmetic: offer.get.cosmetic };
-    await putTile(bestKey, decorated);
-    await broadcastTile(bestKey, decorated);
-    cosmeticTile = { key: bestKey, tile: decorated };
-  } else {
-    wallet[offer.get.good] += offer.get.qty;
-  }
-
-  const me: PlayerState = {
-    ...player,
-    wallet,
-    tradesDone: player.tradesDone + 1,
-  };
-  await putPlayer(me);
-  return { me, ...(cosmeticTile ? { tile: cosmeticTile } : {}) };
-};
-
 // --- Grand Keep stage naming ------------------------------------------------
 
 /** Join two word-list picks into a stage name; null if either index is bad. */
@@ -1881,23 +1719,6 @@ export const doNameStage = async (
   await putCity({ stageNames });
   await broadcastCity(nextCity);
   return { city: nextCity };
-};
-
-export const doVote = async (
-  userId: string,
-  category: FestivalCategory
-): Promise<{ counts: Record<FestivalCategory, number> }> => {
-  const today = utcDay(Date.now());
-  if (await hasVoted(today, userId)) {
-    throw new OpError(400, 'You have already voted today.');
-  }
-  // Vote is per-day gated in redis but the lifetime votesCast quest counter needs
-  // a player write — doVote otherwise never touches the player hash.
-  const player = await ensurePlayer(userId);
-  await recordVote(today, userId, category);
-  await putPlayer({ ...player, votesCast: player.votesCast + 1 });
-  const counts = await getBallot(today);
-  return { counts };
 };
 
 /**
@@ -1971,11 +1792,10 @@ export const loadLeaderboards = async (
 };
 
 /**
- * The daily cycle's economy roll: tally yesterday's ballot into today's festival
- * (majority wins; a tie or empty ballot rotates from the current festival) and
- * roll today's weather, persist both, and broadcast. Returns the festival +
- * weather + a market snapshot for the daily post. Used by the daily-cycle
- * scheduler.
+ * The daily cycle's economy roll: auto-rotate the festival to the next category
+ * (coins → raw → processed → decor — the ballot is retired) and roll today's
+ * weather, persist both, and broadcast. Returns the festival + weather + a
+ * market snapshot for the daily post. Used by the daily-cycle scheduler.
  */
 export const runFestivalRotation = async (
   now: number
@@ -1987,13 +1807,10 @@ export const runFestivalRotation = async (
   hallLevel: number;
   stockpile: Stockpile;
   prices: Prices;
-  offers: TraderOffer[];
 }> => {
   const [city, stockpile] = await Promise.all([getCity(), getStockpile()]);
   const today = utcDay(now);
-  const yesterday = prevDay(today);
-  const counts = await getBallot(yesterday);
-  const festival = tallyBallot(counts, city.festival);
+  const festival = nextFestival(city.festival);
   const weather = weatherForDay(today);
 
   await putCity({ festival, festivalDate: today, weather, weatherDate: today });
@@ -2009,7 +1826,6 @@ export const runFestivalRotation = async (
     hallLevel: city.hallLevel,
     stockpile,
     prices: pricesFor(stockpile),
-    offers: offersForDay(today, hallPerks(city.hallLevel).traderOffers),
   };
 };
 
@@ -2085,15 +1901,6 @@ export const isBuildingId = (value: unknown): value is BuildingId =>
 
 export const isShareKind = (value: unknown): value is ShareKind =>
   value === 'levelup' || value === 'stage';
-
-export const isCategory = (value: unknown): value is FestivalCategory =>
-  value === 'coins' ||
-  value === 'raw' ||
-  value === 'processed' ||
-  value === 'decor';
-
-export const isGood = (value: unknown): value is Good =>
-  typeof value === 'string' && (GOODS as string[]).includes(value);
 
 export const isProcessedGood = (value: unknown): value is 'planks' | 'bricks' =>
   value === 'planks' || value === 'bricks';

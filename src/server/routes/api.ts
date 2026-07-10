@@ -5,7 +5,6 @@ import {
   OpError,
   doBoost,
   doBuild,
-  doBuy,
   doCheckIn,
   doClaim,
   doClaimQuest,
@@ -15,14 +14,9 @@ import {
   doDemolish,
   doNameStage,
   doPaint,
-  doSell,
   doShare,
-  doTrade,
   doUpgrade,
-  doVote,
   isBuildingId,
-  isCategory,
-  isGood,
   isProcessedGood,
   isRoofColor,
   isShareKind,
@@ -226,12 +220,7 @@ api.post('/boost', async (c) => {
   }
 });
 
-/** Market buys are priced marginally in an O(qty) loop — bound them. */
-const MAX_BUY_QTY = 500;
-/** Hard upper bound for a sell order (the Village Hall `sellCap` perk tops out
- * at 750; `doSell` enforces the exact per-Hall-level cap). */
-const MAX_SELL_QTY = 750;
-/** Sanity bound for non-market quantities (keep contributions). */
+/** Sanity bound for contribution quantities. */
 const MAX_QTY = 1_000_000;
 
 const asQty = (value: unknown, max: number): number | null => {
@@ -266,66 +255,18 @@ api.post('/contribute', async (c) => {
   }
 });
 
-api.post('/sell', async (c) => {
-  try {
-    const userId = requireUser();
-    const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
-    if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
-    const qty = asQty(body.qty, MAX_SELL_QTY);
-    if (qty === null) {
-      return c.json(
-        ...fail(`Quantity must be a whole number between 1 and ${MAX_SELL_QTY}.`, 400)
-      );
-    }
-    const result = await doSell(userId, body.good, qty);
-    return c.json(result);
-  } catch (error) {
-    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
-    console.error('POST /api/sell failed:', error);
-    return c.json(...fail('Failed to sell.', 500));
-  }
-});
+// S1: manual market orders are retired — harvests auto-sell on collect. Kept as
+// permanent 410s so stale clients get a legible message instead of a 404.
+api.post('/sell', (c) =>
+  c.json(...fail('The market stall has closed — your harvests sell themselves now.', 410))
+);
 
-api.post('/buy', async (c) => {
-  try {
-    const userId = requireUser();
-    const body = await c.req.json<{ good?: unknown; qty?: unknown }>();
-    if (!isGood(body.good)) return c.json(...fail('Unknown good.', 400));
-    const qty = asQty(body.qty, MAX_BUY_QTY);
-    if (qty === null) {
-      return c.json(
-        ...fail(`Quantity must be a whole number between 1 and ${MAX_BUY_QTY}.`, 400)
-      );
-    }
-    const result = await doBuy(userId, body.good, qty);
-    return c.json(result);
-  } catch (error) {
-    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
-    console.error('POST /api/buy failed:', error);
-    return c.json(...fail('Failed to buy.', 500));
-  }
-});
+api.post('/buy', (c) =>
+  c.json(...fail('The market stall has closed — your harvests sell themselves now.', 410))
+);
 
-api.post('/trade', async (c) => {
-  try {
-    const userId = requireUser();
-    const body = await c.req.json<{ offerIndex?: unknown }>();
-    if (
-      typeof body.offerIndex !== 'number' ||
-      !Number.isInteger(body.offerIndex) ||
-      body.offerIndex < 0 ||
-      body.offerIndex > 3
-    ) {
-      return c.json(...fail('Invalid trade offer.', 400));
-    }
-    const result = await doTrade(userId, body.offerIndex);
-    return c.json(result);
-  } catch (error) {
-    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
-    console.error('POST /api/trade failed:', error);
-    return c.json(...fail('Failed to trade.', 500));
-  }
-});
+// S1: the wandering trader is retired.
+api.post('/trade', (c) => c.json(...fail('The trader has left the village.', 410)));
 
 api.post('/name-stage', async (c) => {
   try {
@@ -348,21 +289,10 @@ api.post('/name-stage', async (c) => {
   }
 });
 
-api.post('/vote', async (c) => {
-  try {
-    const userId = requireUser();
-    const body = await c.req.json<{ category?: unknown }>();
-    if (!isCategory(body.category)) {
-      return c.json(...fail('Unknown festival category.', 400));
-    }
-    const result = await doVote(userId, body.category);
-    return c.json(result);
-  } catch (error) {
-    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
-    console.error('POST /api/vote failed:', error);
-    return c.json(...fail('Failed to record vote.', 500));
-  }
-});
+// S1: the festival ballot is retired — the festival auto-rotates daily.
+api.post('/vote', (c) =>
+  c.json(...fail('The ballot box is gone — festivals now rotate on their own.', 410))
+);
 
 api.post('/share', async (c) => {
   try {

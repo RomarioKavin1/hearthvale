@@ -1,24 +1,20 @@
 import type { Game } from 'phaser';
 import {
   KEEP_STAGE_COSTS,
-  MARKET,
   MAX_LEVEL,
   PLOT_LEVELS,
 } from '../../shared/catalog';
-import type { Good, PlayerState, StateResponse } from '../../shared/types';
-import { GOODS, goodsTotal, xpFor } from '../../shared/logic/economy';
+import type { PlayerState, StateResponse } from '../../shared/types';
+import { goodsTotal, xpFor } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
 import { HV_TILE_SELECTED } from '../events';
 import { api } from '../net';
 import { store } from '../state';
 import {
   activeQuest,
-  CATEGORY_META,
   clearPending,
   el,
-  FESTIVAL_TIP,
   fmtInt,
-  GOOD_LABEL,
   goodIcon,
   iconEl,
   injectStyles,
@@ -29,11 +25,13 @@ import {
   promptLogin,
   readyCount,
   setGame,
+  soldSummary,
   toast,
   toastAction,
+  todayLabel,
+  todayTip,
   todayUtc,
   WEATHER_META,
-  WEATHER_TIP,
   withTip,
 } from './dom';
 import type { ShareKind } from '../net';
@@ -43,11 +41,12 @@ import { openKeepSheet, openLevelSheet, openMarketSheet } from './sheets';
 import { mountJournal } from './journal';
 
 /**
- * The persistent HUD chrome: the top resource bar, the wallet drawer, the
- * bottom-right FAB rail, the toast host, the first-run tutorial, and `initHud`
- * — the entry point `game.ts` calls once Phaser has booted. Everything reads from
- * `store` and re-renders on `'change'`; nothing here is torn down (it lives for
- * the whole session), so there are no listener leaks to chase.
+ * The persistent HUD chrome: the top resource bar (coins, Hall-material chips,
+ * the one "Today" chip), the bottom-right FAB rail, the toast host, and
+ * `initHud` — the entry point `game.ts` calls once Phaser has booted.
+ * Everything reads from `store` and re-renders on `'change'`; nothing here is
+ * torn down (it lives for the whole session), so there are no listener leaks
+ * to chase.
  */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -55,33 +54,29 @@ const RING_R = 16;
 const RING_C = 2 * Math.PI * RING_R;
 
 // Persistent element references (built once, updated on each render).
-let coinsChip: HTMLButtonElement;
+let coinsChip: HTMLElement;
 let coinsNum: HTMLElement;
 let ring: HTMLElement;
 let ringProgress: SVGCircleElement;
 let ringLevel: HTMLElement;
-let weatherChip: HTMLElement;
-let weatherIcon: HTMLElement;
-let weatherLabel: HTMLElement;
-let festChip: HTMLElement;
-let festIcon: HTMLElement;
-let festLabel: HTMLElement;
+// One "Today" chip merges weather + festival ("Today: Rain · Craft ×1.5").
+let todayChip: HTMLElement;
+let todayIcon: HTMLElement;
+let todayText: HTMLElement;
 let signinPill: HTMLElement;
-let walletCaret: HTMLButtonElement;
+// Planks/bricks (the only held goods — Hall material), shown only when nonzero.
+let planksChip: HTMLButtonElement;
+let planksNum: HTMLElement;
+let bricksChip: HTMLButtonElement;
+let bricksNum: HTMLElement;
 
 // Keep pill (top-left column, beneath the Journal banner).
 let keepPill: HTMLButtonElement;
 let keepLabel: HTMLElement;
 let keepFill: HTMLElement;
 
-let walletDrawer: HTMLElement;
-let walletOpen = false;
-const walletCounts = new Map<Good, HTMLElement>();
-
 let collectFab: HTMLButtonElement;
 let collectBadge: HTMLElement;
-let marketFab: HTMLButtonElement;
-let marketPulse: HTMLElement;
 let checkinFab: HTMLButtonElement;
 let checkinStreak: HTMLElement;
 
@@ -119,7 +114,6 @@ export const initHud = (game: Game): void => {
   host.appendChild(hud);
 
   hud.appendChild(buildTopBar());
-  hud.appendChild(buildWalletDrawer());
   hud.appendChild(buildFabs());
 
   // Top-left column: the Journal banner, then the Keep pill, stacked — plus
@@ -191,24 +185,42 @@ const buildRing = (): void => {
   ring.appendChild(ringLevel);
 };
 
+/** A small top-bar chip for a Hall-material good (planks/bricks); tapping it
+ * opens the Hall sheet where the goods are spent. Hidden while the count is 0. */
+const buildGoodChip = (
+  good: 'planks' | 'bricks',
+  tip: string
+): { chip: HTMLButtonElement; num: HTMLElement } => {
+  const num = el('span', { cls: 'hv-chip-num', text: '0' });
+  const chip = el('button', {
+    cls: 'hv-chip hv-chip-good',
+    attrs: { type: 'button' },
+    children: [goodIcon(good, 16), num],
+    on: { click: () => openKeepSheet() },
+  });
+  withTip(chip, tip);
+  chip.style.display = 'none';
+  return { chip, num };
+};
+
 const buildTopBar = (): HTMLElement => {
-  // Left: coins chip + a caret that toggles the goods wallet drawer.
+  // Left: coins, plus planks/bricks chips that appear only when held.
   coinsNum = el('span', { cls: 'hv-chip-num', text: '0' });
-  coinsChip = el('button', {
+  coinsChip = el('div', {
     cls: 'hv-chip',
-    attrs: { type: 'button' },
     children: [iconEl('icon-coin', 16), coinsNum],
-    on: { click: () => toggleWallet() },
   });
-  withTip(coinsChip, 'Your coins — tap for wallet');
-  walletCaret = el('button', {
-    cls: 'hv-caret',
-    attrs: { type: 'button' },
-    children: [iconEl('icon-arrow-down', 16)],
-    on: { click: () => toggleWallet() },
+  withTip(coinsChip, 'Your coins');
+  const planks = buildGoodChip('planks', 'Planks — contribute at the Village Hall');
+  planksChip = planks.chip;
+  planksNum = planks.num;
+  const bricks = buildGoodChip('bricks', 'Bricks — contribute at the Village Hall');
+  bricksChip = bricks.chip;
+  bricksNum = bricks.num;
+  const left = el('div', {
+    cls: 'hv-tb-left',
+    children: [coinsChip, planksChip, bricksChip],
   });
-  withTip(walletCaret, 'Show your goods');
-  const left = el('div', { cls: 'hv-tb-left', children: [coinsChip, walletCaret] });
 
   // Right: level ring (logged in) or the sign-in pill (logged out).
   buildRing();
@@ -220,70 +232,19 @@ const buildTopBar = (): HTMLElement => {
   });
   const right = el('div', { cls: 'hv-tb-right', children: [ring, signinPill] });
 
-  // Center: weather + festival, cream-on-ink, truncating on narrow screens.
-  weatherIcon = iconEl('icon-star', 14);
-  weatherLabel = el('span', { cls: 'hv-tb-label', text: 'Sunny' });
-  weatherChip = el('div', {
+  // Center: ONE compact "Today" chip covering weather + festival.
+  todayIcon = iconEl('icon-star', 14);
+  todayText = el('span', { cls: 'hv-tb-label', text: 'Today' });
+  todayChip = el('div', {
     cls: 'hv-tb-chip',
-    children: [weatherIcon, weatherLabel],
+    children: [todayIcon, todayText],
   });
-  withTip(weatherChip, () => WEATHER_TIP[store.data?.weather ?? 'sunny']);
-  festIcon = iconEl('icon-coin', 14);
-  festLabel = el('span', { cls: 'hv-tb-label', text: 'Festival' });
-  festChip = el('div', {
-    cls: 'hv-tb-chip hv-tb-fest',
-    children: [festIcon, festLabel],
-  });
-  withTip(festChip, () => FESTIVAL_TIP[store.data?.city.festival ?? 'coins']);
-  const center = el('div', { cls: 'hv-tb-center', children: [weatherChip, festChip] });
+  withTip(todayChip, () =>
+    todayTip(store.data?.weather ?? 'sunny', store.data?.city.festival ?? 'coins')
+  );
+  const center = el('div', { cls: 'hv-tb-center', children: [todayChip] });
 
   return el('div', { cls: 'hv-topbar', children: [left, center, right] });
-};
-
-// ── Wallet drawer ────────────────────────────────────────────────────────────
-
-const buildWalletDrawer = (): HTMLElement => {
-  walletDrawer = el('div', { cls: 'hv-wallet' });
-  for (const good of GOODS) {
-    const count = el('span', { cls: 'hv-wallet-count', text: '0' });
-    walletCounts.set(good, count);
-    const row = el('button', {
-      cls: 'hv-wallet-row',
-      attrs: { type: 'button' },
-      children: [
-        goodIcon(good, 24),
-        el('div', {
-          cls: 'hv-wallet-main',
-          children: [
-            el('span', { cls: 'hv-wallet-name', text: GOOD_LABEL[good] }),
-            count,
-          ],
-        }),
-      ],
-      on: {
-        click: () => {
-          setWallet(false);
-          openMarketSheet(good);
-        },
-      },
-    });
-    walletDrawer.appendChild(row);
-  }
-  return walletDrawer;
-};
-
-const setWallet = (open: boolean): void => {
-  walletOpen = open;
-  walletDrawer.classList.toggle('is-open', open);
-  walletCaret.classList.toggle('is-open', open);
-};
-
-const toggleWallet = (): void => {
-  if (!store.data?.me) {
-    promptLogin();
-    return;
-  }
-  setWallet(!walletOpen);
 };
 
 // ── FAB stack ────────────────────────────────────────────────────────────────
@@ -314,15 +275,12 @@ const buildFabs = (): HTMLElement => {
   collectFab.appendChild(collectBadge);
   collectFab.addEventListener('click', doCollectAll);
 
-  marketFab = buildFab(
+  const marketFab = buildFab(
     iconEl('icon-cart', 24),
     'Market',
-    'Open the village market to buy and sell goods',
+    'See village prices and what the village needs',
     false
   );
-  marketPulse = el('span', { cls: 'hv-fab-pulse' });
-  marketPulse.style.display = 'none';
-  marketFab.appendChild(marketPulse);
   marketFab.addEventListener('click', () => openMarketSheet());
 
   checkinFab = buildFab(
@@ -338,7 +296,7 @@ const buildFabs = (): HTMLElement => {
   const menuFab = buildFab(
     iconEl('icon-gear', 24),
     'Menu',
-    'Market, trader, hall, ballot, leaderboards and help',
+    'Market, hall, leaderboards and help',
     false
   );
   menuFab.addEventListener('click', () => openMenuSheet());
@@ -521,7 +479,12 @@ const doCollectAll = (): void => {
       const tiles = Object.entries(res.tiles).map(([key, tile]) => ({ key, tile }));
       store.applyMutation({ tiles, me: res.me });
       const got = res.gained.coins + goodsTotal(res.gained.goods);
-      if (got > 0) toast(`Collected +${fmtInt(got)}`, 'gain');
+      if (got > 0) {
+        const coins = res.gained.coins;
+        toast(coins > 0 ? `+${fmtInt(coins)} coins` : `Collected +${fmtInt(got)}`, 'gain');
+        const detail = soldSummary(res.gained);
+        if (detail) toast(detail, 'info');
+      }
     })
     .catch((err: unknown) =>
       notifyError(err instanceof Error ? err.message : 'Could not collect.')
@@ -591,36 +554,29 @@ const swapIcon = (slot: HTMLElement, next: HTMLElement): HTMLElement => {
   return next;
 };
 
-const renderWeather = (data: StateResponse): void => {
-  const meta = WEATHER_META[data.weather];
-  weatherIcon = swapIcon(weatherIcon, iconEl(meta.icon, 14));
-  weatherLabel.textContent = meta.label;
-  weatherChip.setAttribute('aria-label', WEATHER_TIP[data.weather]);
+const renderToday = (data: StateResponse): void => {
+  todayIcon = swapIcon(todayIcon, iconEl(WEATHER_META[data.weather].icon, 14));
+  todayText.textContent = todayLabel(data.weather, data.city.festival);
+  todayChip.setAttribute('aria-label', todayTip(data.weather, data.city.festival));
 };
 
-const renderFestival = (data: StateResponse): void => {
-  const meta = CATEGORY_META[data.city.festival];
-  festIcon = swapIcon(festIcon, iconEl(meta.icon, 14));
-  festLabel.textContent = meta.label;
-  festChip.setAttribute('aria-label', FESTIVAL_TIP[data.city.festival]);
-};
-
-const renderWallet = (me: PlayerState): void => {
-  for (const good of GOODS) {
-    const span = walletCounts.get(good);
-    if (span) span.textContent = fmtInt(me.wallet[good]);
-  }
+/** The planks/bricks chips appear in the top bar only while the player actually
+ * holds some (the Hall building material is the only wallet content left). */
+const renderGoodChips = (me: PlayerState): void => {
+  planksNum.textContent = fmtInt(me.wallet.planks);
+  planksChip.style.display = me.wallet.planks > 0 ? '' : 'none';
+  bricksNum.textContent = fmtInt(me.wallet.bricks);
+  bricksChip.style.display = me.wallet.bricks > 0 ? '' : 'none';
 };
 
 const renderPlayer = (me: PlayerState): void => {
   coinsChip.style.display = '';
-  walletCaret.style.display = '';
   ring.style.display = '';
   signinPill.style.display = 'none';
 
   animateCount(coinsNum, lastCoins, me.coins);
   lastCoins = me.coins;
-  renderWallet(me);
+  renderGoodChips(me);
 
   const cur = xpFor(me.level);
   const next = xpFor(me.level + 1);
@@ -644,24 +600,13 @@ const renderPlayer = (me: PlayerState): void => {
 
 const renderLoggedOut = (): void => {
   coinsChip.style.display = 'none';
-  walletCaret.style.display = 'none';
+  planksChip.style.display = 'none';
+  bricksChip.style.display = 'none';
   ring.style.display = 'none';
   signinPill.style.display = '';
-  setWallet(false);
-};
-
-/** True when any good's market price has climbed to ≥1.5× its base. */
-const anyPriceHot = (data: StateResponse): boolean => {
-  for (const g of GOODS) {
-    if (data.prices[g] >= MARKET[g].base * 1.5) return true;
-  }
-  return false;
 };
 
 const renderFabs = (data: StateResponse, me: PlayerState | null): void => {
-  // Market FAB is public (prices are visible logged out); pulse when goods are hot.
-  marketPulse.style.display = anyPriceHot(data) ? '' : 'none';
-
   if (!me) {
     collectFab.style.display = 'none';
     checkinFab.style.display = 'none';
@@ -688,8 +633,7 @@ const renderHud = (): void => {
   if (!data) return;
   const me = data.me;
 
-  renderWeather(data);
-  renderFestival(data);
+  renderToday(data);
   renderKeepPill(data);
   renderObjChips(data);
   if (me) renderPlayer(me);

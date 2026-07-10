@@ -28,9 +28,6 @@ export type Mutation = {
   tiles?: Array<{ key: string; tile: TileState }>;
   me?: PlayerState;
   city?: CityState;
-  /** Market trades return the fresh village stockpile + derived prices. */
-  stockpile?: Stockpile;
-  prices?: Prices;
 };
 
 const listeners = new Set<ChangeListener>();
@@ -80,8 +77,8 @@ export const store = {
     emit();
   },
 
-  /** Merge a realtime `{t:'market'}` broadcast (or a trade response) into the
-   * snapshot's market board and emit one change. */
+  /** Merge a realtime `{t:'market'}` broadcast into the snapshot's market
+   * board and emit one change. */
   patchMarket(prices: Prices, stockpile: Stockpile): void {
     if (!data) return;
     data.prices = prices;
@@ -98,8 +95,6 @@ export const store = {
     }
     if (m.me) data.me = m.me;
     if (m.city) data.city = m.city;
-    if (m.stockpile) data.stockpile = m.stockpile;
-    if (m.prices) data.prices = m.prices;
     emit();
   },
 

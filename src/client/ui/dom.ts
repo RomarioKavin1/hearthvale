@@ -4,6 +4,7 @@ import { PAL } from '../../shared/palette';
 import type {
   BuildingId,
   FestivalCategory,
+  Gained,
   Good,
   PlayerState,
   QuestView,
@@ -19,6 +20,7 @@ import { parseKey } from '../../shared/logic/grid';
 import {
   accrue,
   adjacencyBonus,
+  GOODS,
   goodsTotal,
   utcDay,
 } from '../../shared/logic/economy';
@@ -236,6 +238,22 @@ export const GOOD_LABEL: Record<Good, string> = {
 export const goodIcon = (good: Good, size = 18): HTMLElement =>
   iconEl(GOOD_SPRITE[good], size);
 
+/** One compact line describing a collect's auto-sale, e.g.
+ * `12 wheat sold at 5 · 3 flour sold at 9` (price is the average per unit).
+ * Null when nothing was auto-sold. */
+export const soldSummary = (gained: Gained): string | null => {
+  const sold = gained.sold;
+  if (!sold) return null;
+  const parts: string[] = [];
+  for (const g of GOODS) {
+    const s = sold[g];
+    if (!s || s.units <= 0) continue;
+    const avg = Math.round(s.coins / s.units);
+    parts.push(`${fmtInt(s.units)} ${GOOD_LABEL[g].toLowerCase()} sold at ${fmtInt(avg)}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+};
+
 /** The representative sprite for a building's card icon: a stacked building's
  * wall base (a recognisable house silhouette) or a flat piece's tier-1 sprite. */
 export const buildingIconKey = (id: BuildingId): SpriteKey => {
@@ -276,13 +294,28 @@ export const WEATHER_TIP: Record<Weather, string> = {
   harvestmoon: 'Harvest Moon: every producer earns +50% today',
 };
 
-/** Plain-language tooltip for the festival chip (what today's festival favours). */
+/** Plain-language tooltip for the festival half of the Today chip. */
 export const FESTIVAL_TIP: Record<FestivalCategory, string> = {
   coins: 'Coin Festival: coin buildings earn ×1.5 today',
   raw: 'Harvest Festival: raw goods produce ×1.5 today',
   processed: 'Craft Festival: workshops produce ×1.5 today',
   decor: 'Decor Festival: decorations boost ×1.5 today',
 };
+
+// ── The "Today" chip (weather + festival merged into one line) ───────────────
+
+/** Compact top-bar label, e.g. `Today: Rain · Craft ×1.5`. */
+export const todayLabel = (
+  weather: Weather,
+  festival: FestivalCategory
+): string =>
+  `Today: ${WEATHER_META[weather].label} · ${CATEGORY_META[festival].label} ×1.5`;
+
+/** The Today chip's tooltip: both of the day's effects, spelled out. */
+export const todayTip = (
+  weather: Weather,
+  festival: FestivalCategory
+): string => `${WEATHER_TIP[weather]}. ${FESTIVAL_TIP[festival]}.`;
 
 // ── Formatting ───────────────────────────────────────────────────────────────
 
@@ -587,24 +620,13 @@ const CSS = `
 .hv-chip:active { transform: translateY(1px); }
 .hv-chip-num { font-variant-numeric: tabular-nums; }
 .hv-chip .hv-icon-mask { color: var(--wood-dark); }
-
-.hv-caret {
-  pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px; height: 34px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  color: var(--cream);
-  cursor: pointer;
+/* Hall-material chips (planks/bricks): slightly smaller, tappable → Hall sheet. */
+.hv-chip-good {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 13px;
+  font-family: inherit;
 }
-.hv-caret .hv-icon-mask { color: var(--cream); }
-.hv-caret .hv-icon { transition: transform 180ms ease-out; }
-.hv-caret.is-open .hv-icon { transform: rotate(180deg); }
-.hv-caret:active { transform: translateY(1px); }
 
 .hv-ring {
   pointer-events: auto;
@@ -751,31 +773,9 @@ const CSS = `
   font-size: 11px;
   font-weight: 800;
 }
-/* Market "prices are high" pulsing dot. */
-.hv-fab-pulse {
-  position: absolute;
-  top: -5px; right: -5px;
-  width: 14px; height: 14px;
-  background: var(--red);
-  border: 2px solid var(--ink);
-  border-radius: 7px;
-}
-.hv-fab-pulse::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: 9px;
-  border: 2px solid var(--red);
-  animation: hv-pulse-ring 1.6s ease-out infinite;
-}
-@keyframes hv-pulse-ring {
-  0% { transform: scale(1); opacity: 0.7; }
-  100% { transform: scale(2.1); opacity: 0; }
-}
-
 /* ── Modal (centred card over a blurred backdrop) ────────── */
 /* Explicit z-order: the backdrop/modal (20) sits ABOVE the top-left objectives
- * column (2) and the wallet drawer (3), so an open modal always covers them. */
+ * column (2), so an open modal always covers it. */
 .hv-backdrop {
   position: absolute;
   inset: 0;
@@ -973,29 +973,6 @@ const CSS = `
 .hv-card .hv-card-cost { font-size: 11px; font-weight: 800; }
 .hv-card .hv-card-cost.is-broke { color: var(--red); }
 .hv-card .hv-lock { font-size: 10px; font-weight: 800; color: var(--cream); background: var(--stone); border: 2px solid var(--ink); border-radius: 4px; padding: 0 4px; }
-
-/* ── Category vote cards ─────────────────────────────────── */
-.hv-cat-cards { display: flex; flex-direction: column; gap: 10px; }
-.hv-cat {
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--wall);
-  border: 3px solid var(--ink);
-  border-radius: 12px;
-  cursor: pointer;
-}
-.hv-cat:active { transform: translateY(2px); }
-.hv-cat.is-picked { box-shadow: 0 0 0 3px var(--glow); }
-.hv-cat[disabled] { cursor: default; }
-.hv-cat-emoji { font-size: 24px; }
-.hv-cat-main { flex: 1 1 auto; }
-.hv-cat-name { font-size: 15px; font-weight: 800; letter-spacing: 0.4px; }
-.hv-cat-bar { position: relative; height: 12px; margin-top: 5px; background: var(--wall-shade); border: 2px solid var(--ink); border-radius: 6px; overflow: hidden; }
-.hv-cat-bar > i { display: block; height: 100%; }
-.hv-cat-count { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
 
 /* ── Menu list ───────────────────────────────────────────── */
 .hv-menu { display: flex; flex-direction: column; gap: 10px; }
@@ -1465,46 +1442,7 @@ const CSS = `
 }
 .hv-toast-btn:active { transform: translateY(1px); }
 
-/* ── Wallet drawer ───────────────────────────────────────── */
-.hv-wallet {
-  position: absolute;
-  left: calc(var(--sal) + 8px);
-  right: calc(var(--sar) + 8px);
-  top: calc(var(--sat) + 64px);
-  z-index: 3;
-  pointer-events: none;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  padding: 8px;
-  background: var(--cream);
-  border: 3px solid var(--ink);
-  border-radius: 12px;
-  box-shadow: 0 4px 0 rgba(59,51,71,0.35);
-  opacity: 0;
-  transform: translateY(-8px) scale(0.98);
-  transition: opacity 180ms ease-out, transform 180ms cubic-bezier(0.22,1,0.36,1);
-}
-.hv-wallet.is-open { opacity: 1; transform: none; pointer-events: auto; }
-.hv-wallet-row {
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 44px;
-  padding: 4px 8px;
-  background: var(--wall);
-  border: 3px solid var(--ink);
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: left;
-}
-.hv-wallet-row:active { transform: translateY(2px); }
-.hv-wallet-name { font-size: 11px; font-weight: 800; opacity: 0.75; letter-spacing: 0.2px; }
-.hv-wallet-count { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.hv-wallet-main { display: flex; flex-direction: column; line-height: 1.05; }
-
-/* ── Market sheet ────────────────────────────────────────── */
+/* ── Market info panel ───────────────────────────────────── */
 .hv-callout {
   display: flex;
   align-items: center;
@@ -1530,57 +1468,38 @@ const CSS = `
   overflow: hidden;
 }
 .hv-mkt-head {
-  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 52px;
   padding: 8px 12px;
-  cursor: pointer;
 }
-.hv-mkt-head:active { transform: translateY(1px); }
-.hv-mkt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hv-mkt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .hv-mkt-name { font-size: 14.5px; font-weight: 800; letter-spacing: 0.3px; }
 .hv-mkt-sub { font-size: 11px; opacity: 0.75; line-height: 1.3; }
 .hv-mkt-right { margin-left: auto; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .hv-mkt-price { display: inline-flex; align-items: center; gap: 3px; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .hv-trend-up { color: var(--leaf); }
 .hv-trend-down { opacity: 0.6; }
-.hv-mkt-hold { font-size: 11px; font-weight: 700; opacity: 0.8; }
-.hv-mkt-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
 .hv-mkt-seg { display: flex; flex-direction: column; gap: 6px; }
 .hv-mkt-seg-label { font-size: 12px; font-weight: 800; letter-spacing: 0.3px; opacity: 0.85; }
-.hv-preview { font-size: 12.5px; font-weight: 700; opacity: 0.9; text-align: right; font-variant-numeric: tabular-nums; }
-
-/* ── Trader sheet ────────────────────────────────────────── */
-.hv-trade-cards { display: flex; flex-direction: column; gap: 12px; }
-.hv-trade {
-  padding: 12px;
-  background: var(--wall);
-  border: 3px solid var(--ink);
-  border-radius: 14px;
-}
-.hv-trade.is-golden {
-  background: var(--straw);
-  box-shadow: 0 0 0 3px var(--glow), 0 4px 0 var(--wood-dark);
-}
-.hv-trade-deal { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; }
-.hv-trade-side { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 66px; }
-.hv-trade-qty { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.hv-trade-cap { font-size: 10.5px; font-weight: 700; opacity: 0.8; }
-.hv-trade-arrow { display: inline-flex; opacity: 0.7; }
-.hv-badge-dot {
-  position: absolute;
-  top: -4px; right: -4px;
-  width: 14px; height: 14px;
-  background: var(--red);
-  border: 2px solid var(--ink);
-  border-radius: 7px;
-}
-.hv-menu-btn { position: relative; }
 
 /* ── Keep sheet ──────────────────────────────────────────── */
 .hv-keep-bars { display: flex; flex-direction: column; gap: 8px; }
+/* Held Hall material (planks/bricks) chips beside the contribute steppers. */
+.hv-held-row { display: flex; gap: 8px; }
+.hv-held-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--wall);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
 .hv-plaque { display: flex; flex-direction: column; gap: 8px; }
 .hv-plaque-row {
   padding: 8px 10px;

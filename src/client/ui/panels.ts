@@ -24,11 +24,12 @@ import {
   canClaim,
   CHAIN_PAIRS,
   goodsTotal,
+  isAutoSold,
   plotsAllowed,
   roleToFestival,
 } from '../../shared/logic/economy';
 import { isRiver } from '../../shared/logic/expansion';
-import { priceFor } from '../../shared/logic/market';
+import { priceFor, sellValue } from '../../shared/logic/market';
 import type { HvTileSelected } from '../events';
 import { api } from '../net';
 import { store } from '../state';
@@ -46,17 +47,16 @@ import {
   ownedCount,
   pctStr,
   promptLogin,
+  soldSummary,
   withTip,
 } from './dom';
 import type { SpriteKey } from '../art/manifest';
 import { action, openSheet, setSheetTitle, toast } from './sheet';
 import {
-  openBallotSheet,
   openHowToSheet,
   openKeepSheet,
   openLeaderboardsSheet,
   openMarketSheet,
-  openTraderSheet,
 } from './sheets';
 
 /**
@@ -476,7 +476,7 @@ const renderProducerStats = (
       cls: 'hv-warn',
       children: [
         goodIcon(input, 18),
-        el('span', { text: `The stockpile has no ${GOOD_LABEL[input]} — sell some or build fields.` }),
+        el('span', { text: `The stockpile has no ${GOOD_LABEL[input]} — harvest some or build fields.` }),
       ],
     });
     withTip(
@@ -488,7 +488,7 @@ const renderProducerStats = (
       cls: 'hv-btn hv-btn-ghost',
       text: 'Open market',
       attrs: { type: 'button' },
-      on: { click: () => openMarketSheet(input) },
+      on: { click: () => openMarketSheet() },
     });
     stack.appendChild(openMkt);
   }
@@ -501,39 +501,74 @@ const renderProducerStats = (
   );
   stack.appendChild(el('div', { cls: 'hv-fill-cap', text: `Storage ${fmtInt(accrued)} / ${fmtInt(statsT.cap)}` }));
 
-  // Collecting a processor silently spends stockpile inputs from the owner's
-  // coin balance — preview that cost so it isn't a surprise. Uses the same
-  // `consumed` the accrual above already computed; the server remains the
-  // authority on the exact charge (this is only an estimate, hence '≈').
-  if (spec.role === 'processor' && spec.input) {
+  // Auto-sell preview: raw harvests (and the windmill's flour) sell into the
+  // stockpile on collect — show the estimated coins so the tap has a number.
+  // Server authority on the exact figure (buffs land there), hence '≈'.
+  let estCoins = gained.coins;
+  if (spec.role === 'raw' && spec.good && isAutoSold(spec.good)) {
+    const units = gained.goods[spec.good] ?? 0;
+    estCoins = sellValue(units, data.stockpile[spec.good], spec.good);
+    if (units > 0) {
+      stack.appendChild(
+        el('div', {
+          cls: 'hv-note hv-muted',
+          text: `Sells automatically — ${fmtInt(units)} ${GOOD_LABEL[spec.good]} at today's prices`,
+        })
+      );
+    }
+  } else if (spec.role === 'processor' && spec.input && spec.output) {
     const inputGood = spec.input.good;
     const units = consumed[inputGood] ?? 0;
-    if (units > 0) {
-      const price = priceFor(data.stockpile[inputGood], inputGood);
-      const cost = price * units;
-      if (spec.output === 'coins') {
-        const net = Math.max(0, gained.coins - cost);
+    const cost = units > 0 ? priceFor(data.stockpile[inputGood], inputGood) * units : 0;
+    if (spec.output === 'coins') {
+      // Bakery: net-coins preview after buying its flour.
+      estCoins = Math.max(0, gained.coins - cost);
+      if (units > 0) {
         stack.appendChild(
           el('div', {
             cls: 'hv-note hv-muted',
-            text: `≈${fmtInt(net)} coins after buying ${GOOD_LABEL[inputGood]}`,
-          })
-        );
-      } else {
-        stack.appendChild(
-          el('div', {
-            cls: 'hv-note hv-muted',
-            text: `Inputs: ~${fmtInt(units)} ${GOOD_LABEL[inputGood]} (≈${fmtInt(cost)} coins from your balance)`,
+            text: `≈${fmtInt(estCoins)} coins after buying ${GOOD_LABEL[inputGood]}`,
           })
         );
       }
+    } else if (isAutoSold(spec.output)) {
+      // Windmill: its flour is auto-sold; the wheat cost nets out of the sale.
+      const outUnits = gained.goods[spec.output] ?? 0;
+      const sale = sellValue(outUnits, data.stockpile[spec.output], spec.output);
+      estCoins = Math.max(0, sale - cost);
+      stack.appendChild(
+        el('div', {
+          cls: 'hv-note hv-muted',
+          text: "Grinds the village's wheat into flour — sold automatically.",
+        })
+      );
+    } else if (units > 0) {
+      // Sawmill/kiln: planks/bricks go to your wallet; inputs cost coins.
+      stack.appendChild(
+        el('div', {
+          cls: 'hv-note hv-muted',
+          text: `Inputs: ~${fmtInt(units)} ${GOOD_LABEL[inputGood]} (≈${fmtInt(cost)} coins from your balance)`,
+        })
+      );
     }
   }
 
+  // The collect button leads with coins for anything that pays coins on tap.
+  const paysCoins =
+    spec.role === 'coins' ||
+    (spec.role === 'raw' && spec.good !== undefined && isAutoSold(spec.good)) ||
+    (spec.role === 'processor' &&
+      (spec.output === 'coins' || (spec.output !== undefined && isAutoSold(spec.output))));
+  const collectLabel = paysCoins
+    ? `Collect ≈${fmtInt(estCoins)}`
+    : `Collect ${fmtInt(accrued)}`;
   const collect = el('button', {
     cls: 'hv-btn',
     attrs: { type: 'button' },
-    children: [el('span', { text: `Collect ${fmtInt(accrued)}` }), outputIcon(spec, 16)],
+    children: [
+      el('span', { text: collectLabel }),
+      paysCoins ? iconEl('icon-coin', 16) : outputIcon(spec, 16),
+    ],
   });
   if (accrued <= 0 || isPending('collect')) collect.disabled = true;
   collect.addEventListener('click', () => {
@@ -541,7 +576,9 @@ const renderProducerStats = (
       const res = await api.collect(x, y);
       store.applyMutation({ key, tile: res.tile, me: res.me });
       const got = res.gained.coins + goodsTotal(res.gained.goods);
-      toast(`+${fmtInt(got)}`, 'gain');
+      toast(res.gained.coins > 0 ? `+${fmtInt(res.gained.coins)} coins` : `+${fmtInt(got)}`, 'gain');
+      const detail = soldSummary(res.gained);
+      if (detail) toast(detail, 'info');
     });
   });
   stack.appendChild(collect);
@@ -721,19 +758,11 @@ type MenuItem = {
   icon: SpriteKey;
   label: string;
   open: () => void;
-  badge?: () => boolean;
 };
 
 const MENU: MenuItem[] = [
-  { icon: 'icon-cart', label: 'Market', open: () => openMarketSheet() },
-  {
-    icon: 'icon-scroll',
-    label: 'Wandering Trader',
-    open: openTraderSheet,
-    badge: () => store.data?.trader.done === false,
-  },
+  { icon: 'icon-cart', label: 'Village Market', open: () => openMarketSheet() },
   { icon: 'castle-tower', label: 'Village Hall', open: openKeepSheet },
-  { icon: 'icon-star', label: 'Festival ballot', open: openBallotSheet },
   { icon: 'icon-trophy', label: 'Leaderboards', open: openLeaderboardsSheet },
   { icon: 'icon-question', label: 'How to play', open: openHowToSheet },
 ];
@@ -760,7 +789,6 @@ export const openMenuSheet = (): void => {
       const menu = el('div', { cls: 'hv-menu' });
       for (const item of MENU) {
         const iconSlot = el('span', { cls: 'hv-menu-emoji', children: [iconEl(item.icon, 22)] });
-        if (item.badge?.()) iconSlot.appendChild(el('span', { cls: 'hv-badge-dot' }));
         const btn = el('button', {
           cls: 'hv-menu-btn',
           attrs: { type: 'button' },

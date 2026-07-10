@@ -62,19 +62,14 @@ describe('hallPerks', () => {
   it('grants cumulative perks per Village Hall level', () => {
     expect(hallPerks(0)).toEqual({
       productionPct: 0,
-      traderOffers: 3,
-      sellCap: 500,
       bonusPlot: 0,
       boostLimit: 5,
     });
     expect(hallPerks(1)).toEqual({
       productionPct: 3,
-      traderOffers: 4,
-      sellCap: 500,
       bonusPlot: 0,
       boostLimit: 5,
     });
-    expect(hallPerks(2).sellCap).toBe(750);
     expect(hallPerks(3).bonusPlot).toBe(1);
     expect(hallPerks(4).boostLimit).toBe(7);
     expect(hallPerks(5).productionPct).toBe(15);

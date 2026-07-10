@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CityState, Gained, Good, PlayerState, TileState } from '../../shared/types';
 import { CATALOG, KEEP_STAGE_COSTS, PAINT_COST } from '../../shared/catalog';
 import { emptyStockpile } from '../../shared/logic/economy';
+import { sellValue } from '../../shared/logic/market';
 import {
   CHECKIN_XP,
   affordableRuns,
@@ -10,7 +11,6 @@ import {
   applyKeepContribution,
   applyLevelUp,
   boostsUsedToday,
-  canAffordOffer,
   canCheckIn,
   demolishRefund,
   expansionGate,
@@ -23,14 +23,12 @@ import {
   shareText,
   stageNameFromWords,
   stagePot,
-  tallyBallot,
   tryHallLevelUp,
   validateBoost,
   validateBuild,
   validateDemolish,
   validateNaming,
   validatePaint,
-  validateTrade,
   validateUpgrade,
 } from './village';
 
@@ -300,8 +298,8 @@ describe('applyCollect — coins buildings', () => {
   });
 });
 
-describe('applyCollect — raw producers (goods, not lb:earned)', () => {
-  it('routes goods into the wallet and never touches lifetimeEarned', () => {
+describe('applyCollect — raw producers (auto-sell)', () => {
+  it('auto-sells the harvest: units to the stockpile, coins to the owner', () => {
     const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(
       t,
@@ -312,12 +310,31 @@ describe('applyCollect — raw producers (goods, not lb:earned)', () => {
       emptyStockpile(),
       0
     );
-    // wheatfield tier-1 cap is 90.
-    expect(res.gained.goods.wheat).toBe(90);
-    expect(res.player.wallet.wheat).toBe(90);
-    expect(res.player.coins).toBe(0);
-    // Production of goods is not coin income → lb:earned unchanged.
-    expect(res.player.lifetimeEarned).toBe(500);
+    // wheatfield tier-1 cap is 90 — all 90 wheat sell marginally from stock 0.
+    const coins = sellValue(90, 0, 'wheat');
+    expect(coins).toBeGreaterThan(0);
+    expect(res.gained.coins).toBe(coins);
+    expect(res.gained.sold).toEqual({ wheat: { units: 90, coins } });
+    expect(res.stocked).toEqual({ wheat: 90 });
+    // Nothing reaches the wallet — wheat is never held.
+    expect(res.gained.goods).toEqual({});
+    expect(res.player.wallet.wheat).toBe(0);
+    expect(res.player.coins).toBe(coins);
+    // Auto-sell income IS production income (lb:earned) now.
+    expect(res.player.lifetimeEarned).toBe(500 + coins);
+    // The harvest counter (soldUnits field, reused) advances by the units sold.
+    expect(res.player.soldUnits).toBe(90);
+  });
+
+  it('prices later units against the growing stockpile (marginal, replay-safe)', () => {
+    const t = tile({ buildingId: 'wheatfield', lastCollect: 0, readyAt: 0 });
+    const start = player({ coins: 0 });
+    const a = applyCollect(t, start, city({ festival: 'coins' }), 1_000_000_000, 0, stock({ wheat: 200 }), 0);
+    const b = applyCollect(t, start, city({ festival: 'coins' }), 1_000_000_000, 0, stock({ wheat: 200 }), 0);
+    // A glutted market pays less than a fresh one, and the maths is deterministic.
+    expect(a.gained.coins).toBe(sellValue(90, 200, 'wheat'));
+    expect(a.gained.coins).toBeLessThan(sellValue(90, 0, 'wheat'));
+    expect(a.player.coins).toBe(b.player.coins);
   });
 
   it('grants a level-up (and plots) when the collected xp crosses a threshold', () => {
@@ -332,6 +349,7 @@ describe('applyCollect — raw producers (goods, not lb:earned)', () => {
       emptyStockpile(),
       0
     );
+    // xp is still granted per unit produced, before the auto-sale.
     expect(res.player.xp).toBe(340);
     expect(res.player.level).toBe(3);
     expect(res.player.plots).toBe(2);
@@ -339,56 +357,85 @@ describe('applyCollect — raw producers (goods, not lb:earned)', () => {
 });
 
 describe('applyCollect — processors', () => {
-  it('a windmill grinds stockpile wheat into wallet flour and charges the owner', () => {
+  it('a windmill grinds stockpile wheat into flour that auto-sells, netting the wheat cost', () => {
     const t = tile({ buildingId: 'windmill', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(
+      t,
+      player({ coins: 0 }),
+      city({ festival: 'coins' }),
+      1_000_000_000,
+      0,
+      stock({ wheat: 100 }),
+      0
+    );
+    // cap 45 flour; priceFor(100, wheat) === 3, per 2 → wheat cost 3×90 = 270.
+    // The 45 flour sell into an empty flour stockpile; the cost nets out.
+    const sale = sellValue(45, 0, 'flour');
+    const net = Math.max(0, sale - 270);
+    expect(res.consumed).toEqual({ wheat: 90 });
+    expect(res.stocked).toEqual({ flour: 45 });
+    expect(res.gained.sold).toEqual({ flour: { units: 45, coins: sale } });
+    expect(res.gained.coins).toBe(net);
+    // Flour never reaches the wallet, and no upfront coins were needed.
+    expect(res.player.wallet.flour).toBe(0);
+    expect(res.player.coins).toBe(net);
+    expect(res.player.lifetimeEarned).toBe(net);
+    expect(res.player.soldUnits).toBe(45);
+  });
+
+  it('a sawmill outputs planks to the wallet and pays inputs from the balance', () => {
+    const t = tile({ buildingId: 'sawmill', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(
       t,
       player({ coins: 1000 }),
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      stock({ wheat: 100 }),
+      stock({ logs: 100 }),
       0
     );
-    // cap 45 flour; priceFor(100, wheat) === 3, per 2 → cost 3×90 = 270.
-    expect(res.gained.goods.flour).toBe(45);
-    expect(res.player.wallet.flour).toBe(45);
-    expect(res.consumed).toEqual({ wheat: 90 });
-    expect(res.player.coins).toBe(1000 - 270);
+    // cap 36 planks; priceFor(100, logs) === 4, per 2 → cost 4×72 = 288.
+    expect(res.gained.goods.planks).toBe(36);
+    expect(res.player.wallet.planks).toBe(36);
+    expect(res.consumed).toEqual({ logs: 72 });
+    expect(res.stocked).toEqual({});
+    expect(res.gained.sold).toBeUndefined();
+    expect(res.player.coins).toBe(1000 - 288);
     expect(res.player.lifetimeEarned).toBe(0);
+    expect(res.player.soldUnits).toBe(0);
   });
 
-  it('limits runs to what the owner can afford when short on coins', () => {
-    const t = tile({ buildingId: 'windmill', lastCollect: 0, readyAt: 0 });
+  it('limits sawmill runs to what the owner can afford when short on coins', () => {
+    const t = tile({ buildingId: 'sawmill', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(
       t,
       player({ coins: 10 }),
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      stock({ wheat: 100 }),
+      stock({ logs: 100 }),
       0
     );
-    // cost/run = price 3 × per 2 = 6; floor(10/6) = 1 run only.
-    expect(res.gained.goods.flour).toBe(1);
-    expect(res.consumed).toEqual({ wheat: 2 });
-    expect(res.player.coins).toBe(10 - 6);
+    // cost/run = price 4 × per 2 = 8; floor(10/8) = 1 run only.
+    expect(res.gained.goods.planks).toBe(1);
+    expect(res.consumed).toEqual({ logs: 2 });
+    expect(res.player.coins).toBe(10 - 8);
   });
 
   it('does not advance lastCollect when the owner can afford zero runs', () => {
-    const t = tile({ buildingId: 'windmill', lastCollect: 0, readyAt: 0 });
+    const t = tile({ buildingId: 'sawmill', lastCollect: 0, readyAt: 0 });
     const res = applyCollect(
       t,
       player({ coins: 5 }),
       city({ festival: 'coins' }),
       1_000_000_000,
       0,
-      stock({ wheat: 100 }),
+      stock({ logs: 100 }),
       0
     );
-    // floor(5/6) = 0 runs.
-    expect(res.gained.goods.flour).toBeUndefined();
-    expect(res.consumed).toEqual({ wheat: 0 });
+    // floor(5/8) = 0 runs.
+    expect(res.gained.goods.planks).toBeUndefined();
+    expect(res.consumed).toEqual({ logs: 0 });
     expect(res.tile.lastCollect).toBe(0);
   });
 
@@ -405,9 +452,12 @@ describe('applyCollect — processors', () => {
     );
     // cap 480 → 40 runs × 12 = 480 coins; priceFor(100, flour) === 5, cost 5×40 = 200.
     expect(res.consumed).toEqual({ flour: 40 });
+    expect(res.stocked).toEqual({});
     expect(res.gained.coins).toBe(280);
     expect(res.player.coins).toBe(280);
     expect(res.player.lifetimeEarned).toBe(280);
+    // The bakery sells nothing into the stockpile — no harvest units counted.
+    expect(res.player.soldUnits).toBe(0);
   });
 });
 
@@ -600,26 +650,6 @@ describe('expansion claim gating', () => {
   });
 });
 
-describe('trader validation', () => {
-  const offer = { give: { good: 'logs' as const, qty: 6 }, get: { good: 'bricks' as const, qty: 4 } };
-
-  it('rejects a second trade the same day', () => {
-    expect(validateTrade(true, player().wallet, offer)).toBe('You have already traded today.');
-  });
-
-  it('rejects an unaffordable give side', () => {
-    const wallet = { ...player().wallet, logs: 2 };
-    expect(validateTrade(false, wallet, offer)).toBe('You need 6 logs.');
-    expect(canAffordOffer(wallet, offer)).toBe(false);
-  });
-
-  it('allows an affordable, first-of-day trade', () => {
-    const wallet = { ...player().wallet, logs: 10 };
-    expect(validateTrade(false, wallet, offer)).toBeNull();
-    expect(canAffordOffer(wallet, offer)).toBe(true);
-  });
-});
-
 describe('stage naming', () => {
   it('joins word-list picks and rejects out-of-range indices', () => {
     expect(stageNameFromWords(0, 0)).toBe('Ancient Keep');
@@ -718,25 +748,16 @@ describe('boost validation', () => {
   });
 });
 
-describe('ballot tally', () => {
-  it('picks the strict majority winner', () => {
-    expect(tallyBallot({ coins: 5, raw: 2, processed: 1, decor: 0 }, 'coins')).toBe('coins');
-  });
-
-  it('rotates to the next category from the current festival on a tie', () => {
-    expect(tallyBallot({ coins: 3, raw: 3, processed: 0, decor: 0 }, 'coins')).toBe('raw');
-  });
-
-  it('rotates when no votes were cast', () => {
-    expect(tallyBallot({ coins: 0, raw: 0, processed: 0, decor: 0 }, 'raw')).toBe('processed');
-    expect(tallyBallot({ coins: 0, raw: 0, processed: 0, decor: 0 }, 'decor')).toBe('coins');
-  });
-
+describe('festival auto-rotation (ballot retired)', () => {
   it('rotates coins -> raw -> processed -> decor -> coins', () => {
     expect(nextFestival('coins')).toBe('raw');
     expect(nextFestival('raw')).toBe('processed');
     expect(nextFestival('processed')).toBe('decor');
     expect(nextFestival('decor')).toBe('coins');
+  });
+
+  it('returns to the start after a full four-day cycle', () => {
+    expect(nextFestival(nextFestival(nextFestival(nextFestival('raw'))))).toBe('raw');
   });
 });
 
@@ -768,9 +789,14 @@ describe('processedUnits quest counter', () => {
     coins = 0
   ): Gained => ({ coins, xp: 0, goods });
 
-  it('counts output-good units for a goods processor (windmill)', () => {
-    // Windmill: input wheat/2 → 1 flour per run; 4 flour produced === 4 runs.
-    expect(processedUnits('windmill', gained({ flour: 4 }), { wheat: 8 })).toBe(4);
+  it('counts wallet-bound output units for a sawmill', () => {
+    // Sawmill: input logs/2 → 1 plank per run; 4 planks produced === 4 runs.
+    expect(processedUnits('sawmill', gained({ planks: 4 }), { logs: 8 })).toBe(4);
+  });
+
+  it('derives windmill runs from the wheat consumed (its flour auto-sells)', () => {
+    // Windmill: input wheat/2 → flour that auto-sells (gained.goods is empty).
+    expect(processedUnits('windmill', gained({}, 30), { wheat: 8 })).toBe(4);
   });
 
   it('counts flour runs consumed for the bakery (output is coins)', () => {

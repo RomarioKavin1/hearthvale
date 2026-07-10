@@ -1,16 +1,12 @@
 import type {
-  FestivalCategory,
   BuildingId,
   CityState,
   ClaimQuestResponse,
   Gained,
-  Good,
   LeaderRow,
   PlayerState,
-  Prices,
   RoofColor,
   StateResponse,
-  Stockpile,
   Summary,
   TileState,
 } from '../shared/types';
@@ -37,7 +33,6 @@ export type CheckInResult = {
   gained: { coins: number; xp: number };
 };
 export type ContributeResult = { city: CityState; me: PlayerState };
-export type VoteResult = { counts: Record<FestivalCategory, number> };
 export type LeaderboardsResult = {
   value: LeaderRow[];
   earned: LeaderRow[];
@@ -46,15 +41,6 @@ export type LeaderboardsResult = {
 export type ShareKind = 'levelup' | 'stage';
 export type ShareResult = { ok: true };
 export type SummaryResult = Summary;
-export type MarketResult = {
-  me: PlayerState;
-  stockpile: Stockpile;
-  prices: Prices;
-};
-export type TradeResult = {
-  me: PlayerState;
-  tile?: { key: string; tile: TileState };
-};
 export type NameStageResult = { city: CityState };
 
 /** True when a parsed body is the server's `{ status: 'error', … }` envelope. */
@@ -148,20 +134,8 @@ export const api = {
     qty: number
   ): Promise<ContributeResult> => post('/api/contribute', { good, qty }),
 
-  sell: (good: Good, qty: number): Promise<MarketResult> =>
-    post('/api/sell', { good, qty }),
-
-  buy: (good: Good, qty: number): Promise<MarketResult> =>
-    post('/api/buy', { good, qty }),
-
-  trade: (offerIndex: number): Promise<TradeResult> =>
-    post('/api/trade', { offerIndex }),
-
   nameStage: (first: number, second: number): Promise<NameStageResult> =>
     post('/api/name-stage', { first, second }),
-
-  vote: (category: FestivalCategory): Promise<VoteResult> =>
-    post('/api/vote', { category }),
 
   share: (kind: ShareKind, value: number): Promise<ShareResult> =>
     post('/api/share', { kind, value }),

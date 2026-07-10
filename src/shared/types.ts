@@ -16,7 +16,9 @@ export type Weather = 'sunny' | 'rain' | 'clear' | 'harvestmoon';
 
 /**
  * A single wandering-trader offer: give a quantity of one good, get either a
- * quantity of another good or a one-off cosmetic (the golden roof).
+ * quantity of another good or a one-off cosmetic (the golden roof). The trader
+ * is RETIRED player-facing (S1); the type remains for the deterministic offer
+ * generator in shared/logic/trader.ts.
  */
 export type TraderOffer = {
   give: { good: Good; qty: number };
@@ -26,7 +28,7 @@ export type TraderOffer = {
 /** What a building's role is, for accrual + festival matching. */
 export type BuildingRole = 'coins' | 'raw' | 'processor' | 'decor';
 
-/** Festival categories the daily ballot rotates through. Note `processed`
+/** Festival categories the daily auto-rotation cycles through. Note `processed`
  * (the festival) corresponds to the `processor` building role. */
 export type FestivalCategory = 'coins' | 'raw' | 'processed' | 'decor';
 
@@ -121,17 +123,21 @@ export type PlayerState = {
   // --- Villager's Journal quest counters (all monotonic; legacy players = 0) ---
   /** Lifetime successful collects (collect + collect-all tiles that produced). */
   collects: number;
-  /** Lifetime goods sold at the market. */
+  /** Lifetime units auto-sold on collect — the "harvest" quest counter. The
+   * field name predates S1 (it counted manual market sales); it is kept to
+   * avoid a store migration and only its meaning was renamed. */
   soldUnits: number;
   /** Lifetime processed-output units produced by processors (incl. bakery runs). */
   processedUnits: number;
   /** Lifetime boosts handed to neighbours. */
   boostsGiven: number;
-  /** Lifetime festival ballots cast. */
+  /** Lifetime festival ballots cast (RETIRED with the ballot; kept to avoid a
+   * store migration — frozen at its pre-S1 value). */
   votesCast: number;
-  /** Lifetime accepted wandering-trader deals. */
+  /** Lifetime accepted trader deals (RETIRED with the trader; kept to avoid a
+   * store migration — frozen at its pre-S1 value). */
   tradesDone: number;
-  /** Index into the quest ladder: 0..17 is the chain, ≥18 is repeatable tiers. */
+  /** Index into the quest ladder: the fixed chain, then repeatable tiers. */
   questIndex: number;
   /** Repeatable-tier lap; scales repeatable targets/rewards by 1.6^lap. */
   questLap: number;
@@ -152,10 +158,6 @@ export type VillageMessage =
   | { t: 'stage'; stage: number }
   | { t: 'market'; prices: Prices; stockpile: Stockpile }
   | { t: 'ring'; bounds: { lo: number; hi: number } };
-
-/** Today's wandering-trader state in a state response: the 3 offers plus
- * whether the requesting player has already accepted one today. */
-export type TraderState = { offers: TraderOffer[]; done: boolean };
 
 /** Land-expansion snapshot: the unlocked ring bounds (derived from the Village
  * Hall level), the population needed for the next Hall level (null once the Hall
@@ -179,8 +181,6 @@ export type StateResponse = {
   prices: Prices;
   /** Today's rolled weather. */
   weather: Weather;
-  /** Today's trader offers + whether this player already traded today. */
-  trader: TraderState;
   /** Land-expansion ring state. */
   ring: RingState;
   /** The player's active Villager's Journal quest (progress + reward). */
@@ -228,9 +228,14 @@ export type Summary = {
   hotPrice: number;
 };
 
-/** The result of a collect: coins + xp + any goods produced into the wallet. */
+/** The result of a collect: coins + xp + any goods produced into the wallet.
+ * `sold` records the wheat/logs/stone/flour units auto-sold into the village
+ * stockpile on this collect (and the coins each fetched), for the client's
+ * "12 wheat sold at 5" breakdown line. Planks/bricks are never auto-sold and
+ * appear in `goods` (the wallet) instead. */
 export type Gained = {
   coins: number;
   xp: number;
   goods: Partial<Record<Good, number>>;
+  sold?: Partial<Record<Good, { units: number; coins: number }>>;
 };

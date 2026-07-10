@@ -1,4 +1,4 @@
-import type { FestivalCategory, Good, LeaderRow, TraderOffer } from '../../shared/types';
+import type { Good, LeaderRow } from '../../shared/types';
 import {
   CATALOG,
   HALL_POPULATION,
@@ -16,13 +16,11 @@ import {
   QUEST_CHAIN,
   questAt,
 } from '../../shared/quests';
-import { buyValue, priceFor, sellValue } from '../../shared/logic/market';
 import type { SpriteKey } from '../art/manifest';
 import { api } from '../net';
 import { store } from '../state';
 import {
   activeQuest,
-  CATEGORY_META,
   el,
   fmtInt,
   GOOD_LABEL,
@@ -31,60 +29,20 @@ import {
   isPending,
   pctStr,
   promptLogin,
-  todayUtc,
   withTip,
 } from './dom';
 import { action, openSheet, refreshSheet, setSheetTitle, toast } from './sheet';
 
 /**
- * The v2 "menu" sheets: the village Market (moving prices + sell/buy steppers),
- * the wandering Trader (daily swap offers), the Grand Keep (planks/bricks
- * contributions with a pro-rata pot + stage naming), the festival ballot, the
- * leaderboards and the how-to guide. Each keeps its own small module-scoped UI
- * state so the sheet manager's frequent re-renders don't discard it.
+ * The "menu" sheets: the read-only Village Market info panel (prices, trends,
+ * stockpile), the Village Hall (planks/bricks contributions with a pro-rata pot
+ * + stage naming), the leaderboards, the how-to guide, the Journal and the
+ * level-unlocks sheet. Each keeps its own small module-scoped UI state so the
+ * sheet manager's frequent re-renders don't discard it.
  */
 
-const CATS: FestivalCategory[] = ['coins', 'raw', 'processed', 'decor'];
-
-const TRADE_CAP = 500;
-
-// ── Market ─────────────────────────────────────────────────────────────────
-
-type QtyPick = '1' | '10' | '50' | 'max';
-const QTY_PICKS: QtyPick[] = ['1', '10', '50', 'max'];
-
-let marketFocus: Good | null = null;
-let sellPick: QtyPick = '1';
-let buyPick: QtyPick = '1';
-
-/** Largest quantity of `good` a player with `coins` can buy from `stock`. */
-const maxAffordableBuy = (good: Good, stock: number, coins: number): number => {
-  const limit = Math.min(stock, TRADE_CAP);
-  let qty = 0;
-  let cost = 0;
-  while (qty < limit) {
-    const next = cost + Math.ceil(priceFor(stock - 1 - qty, good) * 1.25);
-    if (next > coins) break;
-    cost = next;
-    qty += 1;
-  }
-  return qty;
-};
-
-const sellQty = (pick: QtyPick, holding: number): number => {
-  const cap = Math.min(holding, TRADE_CAP);
-  return pick === 'max' ? cap : Math.min(Number(pick), cap);
-};
-
-const buyQty = (
-  pick: QtyPick,
-  good: Good,
-  stock: number,
-  coins: number
-): number => {
-  const max = maxAffordableBuy(good, stock, coins);
-  return pick === 'max' ? max : Math.min(Number(pick), max);
-};
+// ── Village Market (read-only info panel) ────────────────────────────────────
+// S1: harvests auto-sell on collect, so the market is a dashboard, not a shop.
 
 /** The good the village most needs: highest price-to-base ratio above 1×. */
 const hottestGood = (): Good | null => {
@@ -102,116 +60,11 @@ const hottestGood = (): Good | null => {
   return best;
 };
 
-const stepRow = (
-  picks: QtyPick[],
-  active: QtyPick,
-  onPick: (p: QtyPick) => void
-): HTMLElement => {
-  const steps = el('div', { cls: 'hv-steps' });
-  for (const p of picks) {
-    const b = el('button', {
-      cls: `hv-step${active === p ? ' is-picked' : ''}`,
-      text: p === 'max' ? 'Max' : p,
-      attrs: { type: 'button' },
-    });
-    b.addEventListener('click', () => onPick(p));
-    steps.appendChild(b);
-  }
-  return steps;
-};
-
-const renderMarketBody = (good: Good): HTMLElement => {
-  const data = store.data;
-  const me = data?.me ?? null;
-  const stock = data?.stockpile[good] ?? 0;
-  const coins = me?.coins ?? 0;
-  const holding = me?.wallet[good] ?? 0;
-
-  const body = el('div', { cls: 'hv-mkt-body' });
-
-  // Sell segment.
-  const sQty = sellQty(sellPick, holding);
-  const sGain = sellValue(sQty, stock, good);
-  const sellSeg = el('div', { cls: 'hv-mkt-seg' });
-  sellSeg.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'Sell to the village' }));
-  sellSeg.appendChild(
-    stepRow(QTY_PICKS, sellPick, (p) => {
-      sellPick = p;
-      refreshSheet();
-    })
-  );
-  sellSeg.appendChild(
-    el('div', { cls: 'hv-preview', text: `Sell ${fmtInt(sQty)} → +${fmtInt(sGain)} coins` })
-  );
-  const sellBtn = el('button', {
-    cls: 'hv-btn',
-    text: me ? `Sell ${fmtInt(sQty)}` : 'Sign in to sell',
-    attrs: { type: 'button' },
-  });
-  if (me && (sQty <= 0 || isPending('sell'))) sellBtn.disabled = true;
-  sellBtn.addEventListener('click', () => {
-    if (!me) {
-      promptLogin();
-      return;
-    }
-    void action('sell', async () => {
-      const res = await api.sell(good, sQty);
-      store.applyMutation({ me: res.me, stockpile: res.stockpile, prices: res.prices });
-      toast(`Sold ${fmtInt(sQty)} ${GOOD_LABEL[good]} for +${fmtInt(sGain)}`, 'gain');
-    });
-  });
-  sellSeg.appendChild(sellBtn);
-  body.appendChild(sellSeg);
-
-  // Buy segment.
-  const bQty = buyQty(buyPick, good, stock, coins);
-  const bCost = buyValue(bQty, stock, good);
-  const buySeg = el('div', { cls: 'hv-mkt-seg' });
-  buySeg.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'Buy from the village' }));
-  buySeg.appendChild(
-    stepRow(QTY_PICKS, buyPick, (p) => {
-      buyPick = p;
-      refreshSheet();
-    })
-  );
-  buySeg.appendChild(
-    el('div', { cls: 'hv-preview', text: `Buy ${fmtInt(bQty)} → −${fmtInt(bCost)} coins` })
-  );
-  const buyBtn = el('button', {
-    cls: 'hv-btn hv-btn-ghost',
-    text: me ? `Buy ${fmtInt(bQty)}` : 'Sign in to buy',
-    attrs: { type: 'button' },
-  });
-  if (me && (bQty <= 0 || bCost > coins || stock < bQty || isPending('buy'))) {
-    buyBtn.disabled = true;
-  }
-  buyBtn.addEventListener('click', () => {
-    if (!me) {
-      promptLogin();
-      return;
-    }
-    void action('buy', async () => {
-      const res = await api.buy(good, bQty);
-      store.applyMutation({ me: res.me, stockpile: res.stockpile, prices: res.prices });
-      toast(`Bought ${fmtInt(bQty)} ${GOOD_LABEL[good]} for −${fmtInt(bCost)}`, 'gain');
-    });
-  });
-  buySeg.appendChild(buyBtn);
-  if (stock <= 0) {
-    buySeg.appendChild(el('p', { cls: 'hv-note hv-muted', text: 'The stockpile is empty — nothing to buy.' }));
-  }
-  body.appendChild(buySeg);
-
-  return body;
-};
-
 const renderMarketRow = (good: Good): HTMLElement => {
   const data = store.data;
   const price = data?.prices[good] ?? 0;
   const stock = data?.stockpile[good] ?? 0;
-  const holding = data?.me?.wallet[good] ?? 0;
   const base = MARKET[good].base;
-  const expanded = marketFocus === good;
 
   const priceChildren: Node[] = [];
   if (price > base) priceChildren.push(iconEl('icon-arrow-up', 13));
@@ -227,9 +80,16 @@ const renderMarketRow = (good: Good): HTMLElement => {
     withTip(priceEl, 'Price below base — the village is well stocked');
   }
 
-  const head = el('button', {
+  // Stockpile bar pivots on the market target: half-full at the target stock
+  // (the neutral price point), full at a 2x-target glut (the price floor).
+  const frac = stock / (2 * MARKET[good].target);
+  const bar = el('div', {
+    cls: 'hv-fill',
+    children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })],
+  });
+
+  const head = el('div', {
     cls: 'hv-mkt-head',
-    attrs: { type: 'button' },
     children: [
       goodIcon(good, 34),
       el('div', {
@@ -237,30 +97,19 @@ const renderMarketRow = (good: Good): HTMLElement => {
         children: [
           el('div', { cls: 'hv-mkt-name', text: GOOD_LABEL[good] }),
           el('div', { cls: 'hv-mkt-sub', text: `In stock: ${fmtInt(stock)}` }),
+          bar,
         ],
       }),
-      el('div', {
-        cls: 'hv-mkt-right',
-        children: [priceEl, el('div', { cls: 'hv-mkt-hold', text: `You: ${fmtInt(holding)}` })],
-      }),
+      el('div', { cls: 'hv-mkt-right', children: [priceEl] }),
     ],
   });
-  head.addEventListener('click', () => {
-    marketFocus = expanded ? null : good;
-    sellPick = '1';
-    buyPick = '1';
-    refreshSheet();
-  });
 
-  const wrap = el('div', { cls: 'hv-mkt', children: [head] });
-  if (expanded) wrap.appendChild(renderMarketBody(good));
-  return wrap;
+  return el('div', { cls: 'hv-mkt', children: [head] });
 };
 
-export const openMarketSheet = (focus?: Good): void => {
-  if (focus) marketFocus = focus;
+export const openMarketSheet = (): void => {
   openSheet({
-    title: 'Market',
+    title: 'Village Market',
     render: (body) => {
       const stack = el('div', { cls: 'hv-stack' });
 
@@ -276,129 +125,16 @@ export const openMarketSheet = (focus?: Good): void => {
           })
         );
       }
-      // A one-line explainer so mobile players (no hover tooltips) still learn
-      // how prices move.
       stack.appendChild(
         el('p', {
-          cls: 'hv-note hv-muted',
-          text: 'Prices rise when the village runs short and fall when it is well stocked.',
+          cls: 'hv-note',
+          text: 'Your harvests sell here automatically — prices rise when the village runs short.',
         })
       );
 
       const rows = el('div', { cls: 'hv-mkt-rows' });
       for (const good of GOODS) rows.appendChild(renderMarketRow(good));
       stack.appendChild(rows);
-      body.appendChild(stack);
-    },
-    onClose: () => {
-      marketFocus = null;
-    },
-  });
-};
-
-// ── Trader ─────────────────────────────────────────────────────────────────
-
-const getSide = (offer: TraderOffer): HTMLElement => {
-  if ('cosmetic' in offer.get) {
-    return el('div', {
-      cls: 'hv-trade-side',
-      children: [
-        iconEl('icon-star', 30),
-        el('div', { cls: 'hv-trade-qty', text: 'Golden' }),
-        el('div', { cls: 'hv-trade-cap', text: 'roof cosmetic' }),
-      ],
-    });
-  }
-  const g = offer.get;
-  return el('div', {
-    cls: 'hv-trade-side',
-    children: [
-      goodIcon(g.good, 30),
-      el('div', { cls: 'hv-trade-qty', text: fmtInt(g.qty) }),
-      el('div', { cls: 'hv-trade-cap', text: GOOD_LABEL[g.good] }),
-    ],
-  });
-};
-
-const renderTradeCard = (offer: TraderOffer, index: number): HTMLElement => {
-  const data = store.data;
-  const me = data?.me ?? null;
-  const done = data?.trader.done ?? false;
-  const golden = 'cosmetic' in offer.get;
-  const have = me?.wallet[offer.give.good] ?? 0;
-  const short = have < offer.give.qty;
-
-  const deal = el('div', {
-    cls: 'hv-trade-deal',
-    children: [
-      el('div', {
-        cls: 'hv-trade-side',
-        children: [
-          goodIcon(offer.give.good, 30),
-          el('div', { cls: 'hv-trade-qty', text: fmtInt(offer.give.qty) }),
-          el('div', { cls: 'hv-trade-cap', text: GOOD_LABEL[offer.give.good] }),
-        ],
-      }),
-      el('div', { cls: 'hv-trade-arrow', children: [iconEl('icon-arrow-up', 20)] }),
-      getSide(offer),
-    ],
-  });
-
-  let reason: string | null = null;
-  if (!me) reason = null;
-  else if (done) reason = 'You’ve already traded today.';
-  else if (short) reason = `You need ${fmtInt(offer.give.qty)} ${GOOD_LABEL[offer.give.good]}.`;
-
-  const btn = el('button', {
-    cls: 'hv-btn',
-    text: me ? 'Accept' : 'Sign in to trade',
-    attrs: { type: 'button' },
-  });
-  withTip(btn, 'One trade per day — choose the offer you want most');
-  if ((me && reason !== null) || isPending('trade')) btn.disabled = true;
-  btn.addEventListener('click', () => {
-    if (!me) {
-      promptLogin();
-      return;
-    }
-    void action('trade', async () => {
-      const res = await api.trade(index);
-      const cur = store.data;
-      if (cur) cur.trader.done = true;
-      const mut = res.tile
-        ? { me: res.me, key: res.tile.key, tile: res.tile.tile }
-        : { me: res.me };
-      store.applyMutation(mut);
-      toast('The trader tips their hat — deal done!', 'celebrate');
-    });
-  });
-
-  const card = el('div', {
-    cls: `hv-trade${golden ? ' is-golden' : ''}`,
-    children: [deal, btn],
-  });
-  if (me && reason !== null) card.appendChild(el('p', { cls: 'hv-note hv-muted', text: reason }));
-  return card;
-};
-
-export const openTraderSheet = (): void => {
-  openSheet({
-    title: 'Wandering Trader',
-    render: (body) => {
-      const data = store.data;
-      const stack = el('div', { cls: 'hv-stack' });
-      stack.appendChild(
-        el('p', { cls: 'hv-note', text: 'A trader passes through daily. Take one deal — choose well.' })
-      );
-
-      const offers = data?.trader.offers ?? [];
-      const cards = el('div', { cls: 'hv-trade-cards' });
-      offers.forEach((offer, i) => cards.appendChild(renderTradeCard(offer, i)));
-      stack.appendChild(cards);
-
-      stack.appendChild(
-        el('p', { cls: 'hv-note hv-muted', text: 'New offers at midnight UTC.' })
-      );
       body.appendChild(stack);
     },
   });
@@ -537,13 +273,29 @@ const villagerBar = (have: number, need: number): HTMLElement => {
  * (the delta over the previous level), for the "Next level" teaser list. */
 const perkLines = (target: number): string[] => {
   const lines: string[] = [`+3% village production (${hallPerks(target).productionPct}% total)`];
-  if (target === 1) lines.push('Trader offers 3 → 4 each day');
-  if (target === 2) lines.push('Market sell cap 500 → 750');
   if (target === 3) lines.push('+1 plot for every villager');
   if (target === 4) lines.push('Boost limit 5 → 7 per day');
   if (target === 5) lines.push('Golden Hall banner for the village');
   return lines;
 };
+
+/** The player's held Hall material (planks + bricks) as two compact chips —
+ * the only goods a villager still carries; they are spent right below. */
+const heldGoodsRow = (planks: number, bricks: number): HTMLElement =>
+  el('div', {
+    cls: 'hv-held-row',
+    children: (['planks', 'bricks'] as const).map((good) =>
+      el('span', {
+        cls: 'hv-held-chip',
+        children: [
+          goodIcon(good, 18),
+          el('span', {
+            text: `${fmtInt(good === 'planks' ? planks : bricks)} ${GOOD_LABEL[good]}`,
+          }),
+        ],
+      })
+    ),
+  });
 
 export const openKeepSheet = (): void => {
   openSheet({
@@ -609,7 +361,21 @@ export const openKeepSheet = (): void => {
       bars.appendChild(villagerBar(city.population, popNeed));
       stack.appendChild(bars);
 
-      // Contribute controls per good.
+      // What the player is carrying, then the contribute controls per good.
+      if (me) {
+        stack.appendChild(
+          el('div', { cls: 'hv-mkt-seg-label', text: 'Your building material' })
+        );
+        stack.appendChild(heldGoodsRow(me.wallet.planks, me.wallet.bricks));
+        if (me.wallet.planks <= 0 && me.wallet.bricks <= 0) {
+          stack.appendChild(
+            el('p', {
+              cls: 'hv-note hv-muted',
+              text: 'Sawmills make planks and kilns make bricks — build one to start contributing.',
+            })
+          );
+        }
+      }
       stack.appendChild(contributeControls('planks'));
       stack.appendChild(contributeControls('bricks'));
 
@@ -708,134 +474,6 @@ const openNameStageSheet = (stageIndex: number): void => {
   });
 };
 
-// ── Ballot ───────────────────────────────────────────────────────────────────
-
-let voteCounts: Record<FestivalCategory, number> | null = null;
-
-const VOTE_KEY = 'hv-vote';
-
-const votedToday = (): FestivalCategory | null => {
-  try {
-    const raw = sessionStorage.getItem(VOTE_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'day' in parsed &&
-      'category' in parsed &&
-      parsed.day === todayUtc()
-    ) {
-      const cat = parsed.category;
-      if (
-        cat === 'coins' ||
-        cat === 'raw' ||
-        cat === 'processed' ||
-        cat === 'decor'
-      ) {
-        return cat;
-      }
-    }
-  } catch {
-    return null;
-  }
-  return null;
-};
-
-const rememberVote = (category: FestivalCategory): void => {
-  try {
-    sessionStorage.setItem(
-      VOTE_KEY,
-      JSON.stringify({ day: todayUtc(), category })
-    );
-  } catch {
-    // Private-mode storage failures are non-fatal — the vote still registered.
-  }
-};
-
-export const openBallotSheet = (): void => {
-  openSheet({
-    title: 'Tomorrow’s festival',
-    render: (body) => {
-      const me = store.data?.me ?? null;
-      const voted = votedToday();
-      const counts = voteCounts;
-      const total = counts
-        ? Math.max(1, CATS.reduce((s, c) => s + counts[c], 0))
-        : 0;
-
-      const stack = el('div', { cls: 'hv-stack' });
-      stack.appendChild(
-        el('p', { cls: 'hv-note', text: 'Cast your vote — the winning category gets ×1.5 production tomorrow.' })
-      );
-
-      const cards = el('div', { cls: 'hv-cat-cards' });
-      for (const cat of CATS) {
-        const meta = CATEGORY_META[cat];
-        const count = voteCounts ? voteCounts[cat] : 0;
-        const frac = total > 0 ? count / total : 0;
-
-        const main = el('div', { cls: 'hv-cat-main' });
-        main.appendChild(el('div', { cls: 'hv-cat-name', text: meta.label }));
-        if (voteCounts) {
-          main.appendChild(
-            el('div', {
-              cls: 'hv-cat-bar',
-              children: [
-                el('i', {
-                  attrs: { style: `width:${pctStr(frac)};background:${meta.color}` },
-                }),
-              ],
-            })
-          );
-        }
-
-        const card = el('button', {
-          cls: `hv-cat${voted === cat ? ' is-picked' : ''}`,
-          attrs: { type: 'button', style: `border-color:${meta.color}` },
-          children: [
-            el('span', { cls: 'hv-cat-emoji', children: [iconEl(meta.icon, 24)] }),
-            main,
-            el('span', {
-              cls: 'hv-cat-count',
-              children: voteCounts
-                ? [el('span', { text: fmtInt(count) })]
-                : voted === cat
-                  ? [iconEl('icon-check', 16)]
-                  : [],
-            }),
-          ],
-        });
-        if (isPending('vote')) card.disabled = true;
-        card.addEventListener('click', () => {
-          if (!me) {
-            promptLogin();
-            return;
-          }
-          void action('vote', async () => {
-            const res = await api.vote(cat);
-            voteCounts = res.counts;
-            rememberVote(cat);
-            toast(`Voted ${meta.label}`, 'gain');
-          });
-        });
-        cards.appendChild(card);
-      }
-      stack.appendChild(cards);
-
-      if (voted) {
-        stack.appendChild(
-          el('p', { cls: 'hv-note hv-muted', text: 'Thanks for voting — tallies update as neighbours weigh in.' })
-        );
-      }
-      body.appendChild(stack);
-    },
-    onClose: () => {
-      voteCounts = null;
-    },
-  });
-};
-
 // ── Leaderboards ─────────────────────────────────────────────────────────────
 
 type Board = { value: LeaderRow[]; earned: LeaderRow[]; contrib: LeaderRow[] };
@@ -920,11 +558,11 @@ export const openLeaderboardsSheet = (): void => {
 // ── How to play ──────────────────────────────────────────────────────────────
 
 const HOW_STEPS: Array<{ icon: SpriteKey; title: string; text: string }> = [
-  { icon: 'icon-home', title: 'Settle', text: 'Tap any open grass tile to claim a plot. Your first claim builds your House; later plots must sit within 2 tiles of it.' },
-  { icon: 'furrow-crop-wheat', title: 'Produce', text: 'Wheat Fields, Groves and Quarries make raw goods. The village always needs grain.' },
-  { icon: 'icon-cart', title: 'Sell or process', text: 'Sell raw goods on the Market when prices rise, or feed them to a Windmill, Sawmill or Kiln.' },
-  { icon: 'icon-trophy', title: 'Raise the Village Hall', text: 'Contribute planks and bricks to the Village Hall. Every level boosts the whole village and unlocks new land.' },
-  { icon: 'icon-scroll', title: 'Trader & weather', text: 'A trader offers one daily swap, and the weather changes what pays best each day.' },
+  { icon: 'icon-home', title: 'Settle', text: 'Tap open grass to claim a plot. Your first claim builds your House.' },
+  { icon: 'furrow-crop-wheat', title: 'Plant', text: 'Build a Wheat Field, Grove or Quarry and let it ripen.' },
+  { icon: 'icon-coin', title: 'Tap to collect', text: 'Tap a ready building — your harvest sells itself and coins pop instantly.' },
+  { icon: 'icon-hammer', title: 'Grow', text: 'Spend coins on more buildings and upgrades. Sawmills and kilns make planks and bricks.' },
+  { icon: 'icon-trophy', title: 'Raise the Village Hall', text: 'Contribute planks and bricks together — every Hall level boosts everyone and unlocks new land.' },
 ];
 
 export const openHowToSheet = (): void => {
@@ -952,7 +590,7 @@ export const openHowToSheet = (): void => {
       how.appendChild(
         el('p', {
           cls: 'hv-note',
-          text: 'Vote each day for tomorrow’s festival (×1.5 output), and check in daily to build a streak for bonus coins.',
+          text: 'Check in daily for a growing coin streak, and boost a neighbour’s building for a little bonus.',
         })
       );
       body.appendChild(how);

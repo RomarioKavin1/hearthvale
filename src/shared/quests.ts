@@ -22,8 +22,6 @@ export type QuestMetric =
   | 'processorBuilt'
   | 'processedUnits'
   | 'boostsGiven'
-  | 'votesCast'
-  | 'tradesDone'
   | 'tier2Owned'
   | 'lifetimeContributed'
   | 'lifetimeEarned';
@@ -38,8 +36,9 @@ export type Quest = {
 };
 
 /**
- * The fixed 18-step ladder. Titles/metrics/targets/rewards follow the design
- * doc's quest table verbatim; each blurb is one warm line of flavour.
+ * The fixed 16-step ladder (S1: the vote + trader quests are gone; two "sell"
+ * quests became "earn/harvest" quests fed by the auto-sell loop). Each blurb is
+ * one warm line of flavour.
  */
 export const QUEST_CHAIN: Quest[] = [
   {
@@ -68,10 +67,10 @@ export const QUEST_CHAIN: Quest[] = [
   },
   {
     id: 'q04',
-    title: 'Sell 10 goods at the Market',
-    blurb: 'Carry your goods to the market and turn them into honest coin.',
-    metric: 'soldUnits',
-    target: 10,
+    title: 'Earn 60 coins from your harvests',
+    blurb: 'Your fields sell themselves — collect until sixty coins are in hand.',
+    metric: 'lifetimeEarned',
+    target: 60,
     reward: { coins: 30 },
   },
   {
@@ -108,10 +107,10 @@ export const QUEST_CHAIN: Quest[] = [
   },
   {
     id: 'q09',
-    title: 'Sell 60 goods',
-    blurb: 'Keep the market bustling by selling sixty goods in all.',
+    title: 'Harvest 150 goods',
+    blurb: 'Keep the fields busy until a hundred and fifty goods have been gathered.',
     metric: 'soldUnits',
-    target: 60,
+    target: 150,
     reward: { coins: 60 },
   },
   {
@@ -140,22 +139,6 @@ export const QUEST_CHAIN: Quest[] = [
   },
   {
     id: 'q13',
-    title: "Vote for tomorrow's festival",
-    blurb: "Have your say at the ballot and shape tomorrow's festival.",
-    metric: 'votesCast',
-    target: 1,
-    reward: { coins: 25 },
-  },
-  {
-    id: 'q14',
-    title: 'Strike a deal with the trader',
-    blurb: 'Meet the wandering trader and strike a favourable deal.',
-    metric: 'tradesDone',
-    target: 1,
-    reward: { coins: 40 },
-  },
-  {
-    id: 'q15',
     title: 'Upgrade any building to tier 2',
     blurb: 'Invest in your village by upgrading a building to tier two.',
     metric: 'tier2Owned',
@@ -163,7 +146,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 75 },
   },
   {
-    id: 'q16',
+    id: 'q14',
     title: 'Contribute 20 planks or bricks to the Village Hall',
     blurb: 'Give twenty planks or bricks toward raising the Village Hall.',
     metric: 'lifetimeContributed',
@@ -171,7 +154,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { coins: 100 },
   },
   {
-    id: 'q17',
+    id: 'q15',
     title: 'Earn 1,000 lifetime coins',
     blurb: 'Grow prosperous by earning a thousand coins from your buildings.',
     metric: 'lifetimeEarned',
@@ -179,7 +162,7 @@ export const QUEST_CHAIN: Quest[] = [
     reward: { xp: 100 },
   },
   {
-    id: 'q18',
+    id: 'q16',
     title: 'Reach level 4',
     blurb: 'Prove your mastery by reaching the fourth level of renown.',
     metric: 'level',
@@ -201,10 +184,10 @@ export const REPEATABLE: Quest[] = [
   },
   {
     id: 'r-sell',
-    title: 'Sell another 250 goods',
-    blurb: 'Keep the market roaring by selling another wagonload of goods.',
+    title: 'Harvest another 400 goods',
+    blurb: 'Keep the fields roaring — gather another four hundred goods.',
     metric: 'soldUnits',
-    target: 250,
+    target: 400,
     reward: { coins: 150 },
   },
   {
@@ -283,10 +266,6 @@ export const questMetricValue = (
       return player.processedUnits;
     case 'boostsGiven':
       return player.boostsGiven;
-    case 'votesCast':
-      return player.votesCast;
-    case 'tradesDone':
-      return player.tradesDone;
     case 'streak':
       return player.streak;
     case 'level':

@@ -13,11 +13,8 @@ import { isVillageTheme } from '../../shared/catalog';
 
 const GRID_KEY = 'city:grid';
 const CITY_KEY = 'city:state';
-/** Exported for optimistic `redis.watch` market transactions in village.ts. */
-export const STOCKPILE_KEY = 'city:stockpile';
-/** Exported for optimistic `redis.watch` market transactions in village.ts. */
-export const playerRedisKey = (userId: string): string => `player:${userId}`;
-const playerKey = playerRedisKey;
+const STOCKPILE_KEY = 'city:stockpile';
+const playerKey = (userId: string): string => `player:${userId}`;
 
 const num = (value: string | undefined, fallback: number): number => {
   if (value === undefined || value === '') return fallback;
@@ -147,8 +144,8 @@ export const getStockpile = async (): Promise<Stockpile> => {
   return stock;
 };
 
-/** Hash serialization of a stockpile — exported for watch transactions. */
-export const stockpileFields = (stock: Stockpile): Record<string, string> => {
+/** Hash serialization of a stockpile. */
+const stockpileFields = (stock: Stockpile): Record<string, string> => {
   const fields: Record<string, string> = {};
   for (const g of GOODS) fields[g] = String(stock[g]);
   return fields;
@@ -190,8 +187,8 @@ const parsePlayer = (
   questBaseline: num(h.questBaseline, 0),
 });
 
-/** Hash serialization of a player — exported for watch transactions. */
-export const playerFields = (p: PlayerState): Record<string, string> => ({
+/** Hash serialization of a player. */
+const playerFields = (p: PlayerState): Record<string, string> => ({
   id: p.id,
   name: p.name,
   coins: String(p.coins),
@@ -320,75 +317,6 @@ export const stageTopContributor = async (
   return top ? top.member : null;
 };
 
-// ---------------------------------------------------------------------------
-// Wandering trader. Offers are deterministic per UTC day (computed, not stored);
-// only the per-player "already traded today" guard is persisted:
-// `traderdone:{date}` is a hash userId -> '1' with a 48h TTL.
-// ---------------------------------------------------------------------------
-
-const TRADER_TTL_SECONDS = 172800;
-const traderDoneKey = (day: string): string => `traderdone:${day}`;
-
-export const hasTradedToday = async (
-  day: string,
-  userId: string
-): Promise<boolean> => {
-  const done = await redis.hGet(traderDoneKey(day), userId);
-  return done !== undefined;
-};
-
-/**
- * Atomically claim the player's one daily trade via `hSetNX`: returns true when
- * this call set the flag (the trade is theirs), false when it was already set —
- * racing duplicate requests cannot both win.
- */
-export const claimDailyTrade = async (
-  day: string,
-  userId: string
-): Promise<boolean> => {
-  const set = await redis.hSetNX(traderDoneKey(day), userId, '1');
-  if (set !== 1) return false;
-  await redis.expire(traderDoneKey(day), TRADER_TTL_SECONDS);
-  return true;
-};
-
-// ---------------------------------------------------------------------------
-// Daily ballot. `ballot:{day}` is a hash category -> vote count;
-// `ballotvoted:{day}` is a hash userId -> '1' guarding one vote per user/day.
-// Both keys carry a 48h TTL so old ballots self-expire.
-// ---------------------------------------------------------------------------
-
-const BALLOT_TTL_SECONDS = 172800;
-const ballotKey = (day: string): string => `ballot:${day}`;
-const ballotVotedKey = (day: string): string => `ballotvoted:${day}`;
-
-export const hasVoted = async (
-  day: string,
-  userId: string
-): Promise<boolean> => {
-  const voted = await redis.hGet(ballotVotedKey(day), userId);
-  return voted !== undefined;
-};
-
-export const recordVote = async (
-  day: string,
-  userId: string,
-  category: FestivalCategory
-): Promise<void> => {
-  await redis.hSet(ballotVotedKey(day), { [userId]: '1' });
-  await redis.hIncrBy(ballotKey(day), category, 1);
-  await redis.expire(ballotVotedKey(day), BALLOT_TTL_SECONDS);
-  await redis.expire(ballotKey(day), BALLOT_TTL_SECONDS);
-};
-
-export const getBallot = async (
-  day: string
-): Promise<Record<FestivalCategory, number>> => {
-  const h = await redis.hGetAll(ballotKey(day));
-  return {
-    coins: num(h.coins, 0),
-    raw: num(h.raw, 0),
-    processed: num(h.processed, 0),
-    decor: num(h.decor, 0),
-  };
-};
+// The wandering-trader (`traderdone:{date}`) and ballot (`ballot:{day}`,
+// `ballotvoted:{day}`) keys are retired with S1 — both carried 48h TTLs, so any
+// remnants from before the simplification expire on their own.
