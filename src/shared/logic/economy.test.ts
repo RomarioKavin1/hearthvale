@@ -292,15 +292,15 @@ describe('adjacencyBonus', () => {
   });
 
   it('adds +0.5 to a river-adjacent raw producer and caps the total at 1.0', () => {
-    // (3,6) neighbours (2,6) which is a river tile.
+    // (2,6) neighbours (1,6) which is a river tile.
     const grid: Record<string, TileState> = {
-      '3,6': tile({ buildingId: 'wheatfield', readyAt: 0 }),
-      '4,6': tile({ buildingId: 'windmill', readyAt: 0 }),
-      '3,5': tile({ buildingId: 'well', tier: 3, readyAt: 0 }),
-      '3,7': tile({ buildingId: 'trees', tier: 1, readyAt: 0 }),
+      '2,6': tile({ buildingId: 'wheatfield', readyAt: 0 }),
+      '3,6': tile({ buildingId: 'windmill', readyAt: 0 }),
+      '2,5': tile({ buildingId: 'well', tier: 3, readyAt: 0 }),
+      '2,7': tile({ buildingId: 'trees', tier: 1, readyAt: 0 }),
     };
     // river 0.5 + chain 0.25 + decor (0.3 + 0.1 = 0.4) = 1.15 -> cap 1.0.
-    expect(adjacencyBonus(grid, 3, 6, 'coins', 1000)).toBeCloseTo(1.0);
+    expect(adjacencyBonus(grid, 2, 6, 'coins', 1000)).toBeCloseTo(1.0);
   });
 
   it('ignores river adjacency for a non-raw building', () => {

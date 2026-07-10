@@ -22,27 +22,36 @@ export const isUnlocked = (
 };
 
 /**
- * A hand-picked serpentine river of 14 tiles down the west edge of the map. All
- * tiles sit outside the `[3,14]` band (x < 3), so they only become visible once
- * the Hall-level-3 ring `[1,16]` opens — giving outer-ring land real location
- * value (raw producers built beside a river get +0.5). None touch the plaza or
- * paths.
+ * A hand-picked L-shaped river of 16 tiles along the map's north-west: a spring
+ * cascade at (6,1) at the foot of the northern rim, a westward run along y=1,
+ * one east+south elbow at (1,1), then a southward run down x=1 ending in a pool
+ * at (1,11). All tiles sit outside the `[3,14]` band (x < 3 or y < 3), so they
+ * only become visible once the Hall-level-3 ring `[1,16]` opens — giving
+ * outer-ring land real location value (raw producers built beside a river get
+ * +0.5). None touch the plaza or paths.
+ *
+ * Layout note (see art/render.ts riverPiece): the Kenney Sketch Town pack draws
+ * river arcs in ONE orientation (joining the two camera-facing tile edges), so
+ * this river uses exactly one such east+south turn — every other tile is a
+ * straight or a terminus, all of which route pixel-exactly.
  */
 export const RIVER_TILES: ReadonlyArray<{ x: number; y: number }> = [
+  { x: 6, y: 1 },
+  { x: 5, y: 1 },
+  { x: 4, y: 1 },
+  { x: 3, y: 1 },
+  { x: 2, y: 1 },
+  { x: 1, y: 1 },
+  { x: 1, y: 2 },
+  { x: 1, y: 3 },
   { x: 1, y: 4 },
-  { x: 2, y: 4 },
-  { x: 2, y: 5 },
-  { x: 2, y: 6 },
+  { x: 1, y: 5 },
   { x: 1, y: 6 },
   { x: 1, y: 7 },
   { x: 1, y: 8 },
-  { x: 2, y: 8 },
-  { x: 2, y: 9 },
-  { x: 2, y: 10 },
+  { x: 1, y: 9 },
   { x: 1, y: 10 },
   { x: 1, y: 11 },
-  { x: 1, y: 12 },
-  { x: 2, y: 12 },
 ];
 
 const RIVER_KEYS: ReadonlySet<string> = new Set(

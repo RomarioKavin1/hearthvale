@@ -6,6 +6,7 @@ import type { SpriteKey } from '../art/manifest';
 import {
   addBlock,
   addSurface,
+  addWell,
   bandBlockFor,
   BASE_DY,
   BG,
@@ -77,7 +78,9 @@ export class ArtDebug extends Scene {
     } else {
       let d = cy + 1;
       for (const k of art.byTier[tier]) {
-        addSurface(this, k, cx, cy).setDepth(d);
+        // The well takes its centred-basin placement (matches the Village scene).
+        const img = k === 'well' ? addWell(this, cx, cy) : addSurface(this, k, cx, cy);
+        img.setDepth(d);
         d += 0.1;
       }
     }
@@ -123,6 +126,37 @@ export class ArtDebug extends Scene {
     });
     y += ROW + 10;
 
+    // Grand Keep stages 0..5 first — the primary tuning surface for the growing
+    // Village Hall (T1) — composed on the 2×2 footprint, offset per cell.
+    this.label(16, y + 20, 'keep stages 0..5', 12);
+    for (let stage = 0; stage <= 5; stage++) {
+      const ox = 140 + stage * (2 * COL + 20);
+      const oy = y + 110;
+      // Four dirt tiles as the plaza footprint.
+      for (const t of [
+        { dx: 0, dy: -TILE_H / 2 },
+        { dx: -TILE_H, dy: 0 },
+        { dx: TILE_H, dy: 0 },
+        { dx: 0, dy: TILE_H / 2 },
+      ]) {
+        addBlock(this, 'dirt-center', ox + t.dx, oy + t.dy).setDepth(oy + t.dy);
+      }
+      for (const part of castleParts(stage)) {
+        // Map keep tile (8..9) to a local offset around (ox,oy).
+        const lx = (part.x - 8) - (part.y - 8);
+        const ly = (part.x - 8) + (part.y - 8);
+        const px = ox + lx * TILE_H;
+        const py = oy + ly * (TILE_H / 2);
+        const dy = (part.roof ? BASE_DY + CASTLE_TOP_DY : BASE_DY) - part.lift;
+        let depthOffset = part.roof ? 2 : 1;
+        if (part.lift > 0) depthOffset += 3;
+        const img = addBlock(this, part.key, px, py, dy).setDepth(py + depthOffset);
+        if (part.tint !== undefined) img.setTint(part.tint);
+      }
+      this.label(ox - 6, y + 190, `${stage}`, 11);
+    }
+    y += ROW + 90;
+
     // Buildings — one row per id, three tiers.
     for (const id of IDS) {
       this.label(16, y + 40, id, 12);
@@ -154,36 +188,6 @@ export class ArtDebug extends Scene {
       .setTint(0xffd700);
     this.label(gx - 30, y + 100, 'golden-roof', 10);
     y += ROW + 45;
-
-    // Grand Keep stages 0..5 — composed on the 2×2 footprint, offset per cell.
-    this.label(16, y + 40, 'keep stages 0..5', 12);
-    for (let stage = 0; stage <= 5; stage++) {
-      const ox = 140 + stage * (COL + 20);
-      const oy = y + 70;
-      // Four dirt tiles as the plaza footprint.
-      for (const t of [
-        { dx: 0, dy: -TILE_H / 2 },
-        { dx: -TILE_H, dy: 0 },
-        { dx: TILE_H, dy: 0 },
-        { dx: 0, dy: TILE_H / 2 },
-      ]) {
-        addBlock(this, 'dirt-center', ox + t.dx, oy + t.dy).setDepth(oy + t.dy);
-      }
-      for (const part of castleParts(stage)) {
-        // Map keep tile (8..9) to a local offset around (ox,oy).
-        const lx = (part.x - 8) - (part.y - 8);
-        const ly = (part.x - 8) + (part.y - 8);
-        const px = ox + lx * TILE_H;
-        const py = oy + ly * (TILE_H / 2);
-        if (part.roof) {
-          addBlock(this, part.key, px, py, BASE_DY + CASTLE_TOP_DY).setDepth(py + 2);
-        } else {
-          addBlock(this, part.key, px, py, BASE_DY).setDepth(py + 1);
-        }
-      }
-      this.label(ox - 6, y + 150, `${stage}`, 11);
-    }
-    y += ROW + 60;
 
     // Seeded terrain: a raised locked-band strip for two different village seeds.
     this.label(16, y + 20 + 190, 'seeded band (two seeds)', 12);

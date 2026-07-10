@@ -28,32 +28,36 @@ import type {
 } from '../../shared/types';
 import { BUILDING_ART, roofKeyFor } from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
+import type { Cluster } from '../art/render';
 import {
   addBlock,
   addSurface,
+  addWell,
   backgroundIslets,
   backgroundStars,
-  bandBlockFor,
   BASE_DY,
   BG,
   BLOCK_ORIGIN_Y,
   castleParts,
   CASTLE_TOP_DY,
-  cropWell,
+  decorAt,
   isKeepPad,
   isPathRing,
   isTreeDecor,
   LOCKED_ALPHA,
   LOCKED_BAND,
+  networkPathPiece,
   PATH_HI,
   PATH_LO,
+  pathNetwork,
   pathPiece,
-  riverPiece,
+  rimPiece,
+  riverPieceAt,
   ROOF_DY,
-  terrainFor,
   THEMES,
   TILE_H,
   TILE_W,
+  treeClusters,
   WELL_TILE,
 } from '../art/render';
 import { store } from '../state';
@@ -467,6 +471,25 @@ export class Village extends Scene {
     return store.data?.city.foundedAt ?? 0;
   }
 
+  /** Seeded composed-landscape features (path network + tree clusters), computed
+   * once per seed and cached — consulted by every ground repaint and by walker
+   * path preference. */
+  private landscapeCache:
+    | { seed: number; network: ReadonlySet<string>; clusters: Cluster[] }
+    | undefined;
+
+  private landscape(): { network: ReadonlySet<string>; clusters: Cluster[] } {
+    const seed = this.seed();
+    if (!this.landscapeCache || this.landscapeCache.seed !== seed) {
+      this.landscapeCache = {
+        seed,
+        network: pathNetwork(seed),
+        clusters: treeClusters(seed),
+      };
+    }
+    return this.landscapeCache;
+  }
+
   // ── Ground ──────────────────────────────────────────────────────────────────
 
   private buildGround(): void {
@@ -514,25 +537,32 @@ export class Village extends Scene {
     const style = THEMES[this.theme()];
     let img: Phaser.GameObjects.Image;
 
+    const { network, clusters } = this.landscape();
+
     if (!this.isUnlockedTile(x, y)) {
-      // Locked land: a soft desaturated band just beyond the ring, raised into
-      // seeded rolling hills so the map edge reads as uneven terrain (safe —
+      // Locked land: a desaturated ELEVATED RIM just beyond the ring — connected
+      // plateau masses with slope transitions behind the playfield and stepped
+      // cliff faces toward the camera, with seeded silhouette breaks (safe —
       // these tiles are never interactive, so the lift can't skew hit-testing).
-      // Deeper locked tiles are not rendered at all (background void).
+      // Deeper locked tiles / dropped corners render as background void.
       const { lo, hi } = this.ringLoHi();
-      const inBand =
-        x >= lo - LOCKED_BAND &&
-        x <= hi + LOCKED_BAND &&
-        y >= lo - LOCKED_BAND &&
-        y <= hi + LOCKED_BAND;
-      if (!inBand) return undefined;
-      const { height } = terrainFor(this.seed(), x, y);
-      img = addBlock(this, bandBlockFor(height), sx, sy, -16 * height)
+      const rim = rimPiece(this.seed(), x, y, lo, hi);
+      if (!rim) return undefined;
+      img = addBlock(this, rim.key, sx, sy, rim.dy)
+        .setFlipX(rim.flipX)
         .setAlpha(LOCKED_ALPHA)
         .setTint(style.lockedTint);
+      if (rim.accent) {
+        const acc = addBlock(this, rim.accent, sx, sy, rim.accentDy)
+          .setAlpha(LOCKED_ALPHA)
+          .setTint(style.lockedTint)
+          .setDepth(GROUND_DEPTH + sy + 0.5);
+        this.decorImgs.set(key, acc);
+      }
     } else if (isRiver(x, y)) {
-      // Rivers untinted — water stays readable across themes.
-      const p = riverPiece(x, y);
+      // Rivers untinted — water stays readable across themes. Bridged where the
+      // path network crosses; a waterfall block at the southern drop.
+      const p = riverPieceAt(network, x, y);
       img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
     } else if (isKeepPad(x, y)) {
       // Dirt only under the keep 2×2 — the rest of the plaza square is grass.
@@ -542,20 +572,19 @@ export class Village extends Scene {
       // Paths untinted — kept readable per the theme spec.
       const p = pathPiece(x, y);
       img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
+    } else if (network.has(key)) {
+      // Seeded path network: winding roads radiating from the plaza ring to the
+      // map edges. Cosmetic — the tile stays claimable and buildings sit on it.
+      const p = networkPathPiece(network, x, y);
+      img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
     } else {
-      // Open grass — seeded per village: an occasional worn-dirt patch breaks up
-      // the flat green, and a density-zoned decor sprinkle adds groves + rocks.
+      // Open grass with COMPOSED decor: dense seeded tree clusters, rocks along
+      // the wild frame, sparse lone trees elsewhere (~4%).
       const open = store.data?.grid[key] === undefined && !isPlaza(x, y);
-      const terr = terrainFor(this.seed(), x, y);
-      if (open && terr.patch === 'dirt') {
-        img = addBlock(this, 'dirt-center', sx, sy);
-        if (style.dirtTint !== undefined) img.setTint(style.dirtTint);
-      } else {
-        img = addBlock(this, 'grass-center', sx, sy);
-        if (style.grassTint !== undefined) img.setTint(style.grassTint);
-      }
+      img = addBlock(this, 'grass-center', sx, sy);
+      if (style.grassTint !== undefined) img.setTint(style.grassTint);
       if (open) {
-        const d = terr.decor;
+        const d = decorAt(this.seed(), clusters, x, y);
         if (d) {
           const sprite = addSurface(this, d, sx, sy).setDepth(sy + 0.5);
           if (style.grassTint !== undefined) sprite.setTint(style.grassTint);
@@ -601,10 +630,14 @@ export class Village extends Scene {
     const stage = store.data?.city.hallLevel ?? 0;
     for (const part of castleParts(stage)) {
       const { sx, sy } = isoToScreen(part.x, part.y, TILE_W, TILE_H);
-      const img = part.roof
-        ? addBlock(this, part.key, sx, sy, BASE_DY + CASTLE_TOP_DY)
-        : addBlock(this, part.key, sx, sy, BASE_DY);
-      img.setDepth(sy + (part.roof ? 2 : 1));
+      const dy = (part.roof ? BASE_DY + CASTLE_TOP_DY : BASE_DY) - part.lift;
+      const img = addBlock(this, part.key, sx, sy, dy);
+      // Elevated keep pieces (lift>0) rise above the surrounding wall ring but
+      // still tuck behind the closer front gate; capped pieces sit above bases.
+      let depthOffset = part.roof ? 2 : 1;
+      if (part.lift > 0) depthOffset += 3;
+      img.setDepth(sy + depthOffset);
+      if (part.tint !== undefined) img.setTint(part.tint);
       this.landmarkParts.push(img);
     }
   }
@@ -620,9 +653,7 @@ export class Village extends Scene {
    * this is built once and never reconciled. */
   private buildDressing(): void {
     const w = isoToScreen(WELL_TILE.x, WELL_TILE.y, TILE_W, TILE_H);
-    this.dressingParts.push(
-      cropWell(addSurface(this, 'well', w.sx, w.sy).setDepth(w.sy + 0.4))
-    );
+    this.dressingParts.push(addWell(this, w.sx, w.sy).setDepth(w.sy + 0.4));
   }
 
   // ── Void background (floating islets + starfield + vignette) ─────────────────
@@ -924,8 +955,9 @@ export class Village extends Scene {
     }
     let d = sy + 1;
     for (const k of keys) {
-      const img = addSurface(this, k, sx, sy);
-      if (k === 'well') cropWell(img); // drop the detached-canopy fragment
+      // The well uses its centred-basin placement (addWell) — the plain surface
+      // lift rendered the cropped basin clipped at the block's front edge.
+      const img = k === 'well' ? addWell(this, sx, sy) : addSurface(this, k, sx, sy);
       img.setDepth(d);
       d += 0.1;
       view.parts.push(img);
@@ -1905,7 +1937,10 @@ export class Village extends Scene {
       w.idle = this.time.delayedCall(1500, () => this.walkerStep(w));
       return;
     }
-    const onPath = neigh.filter((n) => isPathRing(n.x, n.y));
+    const onPath = neigh.filter(
+      (n) =>
+        isPathRing(n.x, n.y) || this.landscape().network.has(tileKey(n.x, n.y))
+    );
     const pool = onPath.length > 0 && Math.random() < 0.7 ? onPath : neigh;
     const target = pool[Math.floor(Math.random() * pool.length)] ?? neigh[0]!;
     const { sx, sy } = isoToScreen(target.x, target.y, TILE_W, TILE_H);
