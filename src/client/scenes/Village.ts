@@ -39,6 +39,7 @@ import {
   BLOCK_ORIGIN_Y,
   castleParts,
   CASTLE_TOP_DY,
+  cropWell,
   isKeepPad,
   isPathRing,
   isTreeDecor,
@@ -620,7 +621,7 @@ export class Village extends Scene {
   private buildDressing(): void {
     const w = isoToScreen(WELL_TILE.x, WELL_TILE.y, TILE_W, TILE_H);
     this.dressingParts.push(
-      addSurface(this, 'well', w.sx, w.sy).setDepth(w.sy + 0.4)
+      cropWell(addSurface(this, 'well', w.sx, w.sy).setDepth(w.sy + 0.4))
     );
   }
 
@@ -924,6 +925,7 @@ export class Village extends Scene {
     let d = sy + 1;
     for (const k of keys) {
       const img = addSurface(this, k, sx, sy);
+      if (k === 'well') cropWell(img); // drop the detached-canopy fragment
       img.setDepth(d);
       d += 0.1;
       view.parts.push(img);
@@ -1023,7 +1025,12 @@ export class Village extends Scene {
       let ready = false;
       if (tile.owner === this.me && tile.buildingId !== undefined && now >= tile.readyAt) {
         const adj = adjacencyBonus(data.grid, x, y, fest, now);
-        const { gained } = accrue(tile, now, fest, adj, data.city.weather, emptyStockpile());
+        // Use the REAL village stockpile (not an empty one) so processor tiles
+        // (windmill/sawmill/kiln/bakery), whose output is capped by available
+        // input goods, are recognised as ready — matching the Collect badge's
+        // readyCount. An emptyStockpile() here made every processor read as 0
+        // output, so its pending-production pip never appeared.
+        const { gained } = accrue(tile, now, fest, adj, data.city.weather, data.stockpile);
         ready = gained.coins + goodsTotal(gained.goods) > 0;
       }
       if (ready && !view.pip) {
@@ -1239,7 +1246,9 @@ export class Village extends Scene {
       const now = this.now();
       if (now >= tile.readyAt) {
         const adj = adjacencyBonus(data.grid, x, y, data.city.festival, now);
-        const { gained } = accrue(tile, now, data.city.festival, adj, data.city.weather, emptyStockpile());
+        // Real stockpile (see updatePips): keeps the fast-tap-collect path in step
+        // with the ready pip so a tapped processor tile actually collects.
+        const { gained } = accrue(tile, now, data.city.festival, adj, data.city.weather, data.stockpile);
         if (gained.coins + goodsTotal(gained.goods) > 0) {
           this.collectTile(x, y);
           return;
@@ -1555,28 +1564,39 @@ export class Village extends Scene {
         strokeThickness: 4,
       })
       .setOrigin(0.5, 1)
-      .setDepth(EFFECT_DEPTH + 1)
-      .setScale(0.5)
-      .setAlpha(0);
-    this.tweens.add({
-      targets: label,
-      scale: 1,
-      alpha: 1,
-      duration: 180,
-      ease: 'Back.out',
-    });
+      .setDepth(EFFECT_DEPTH + 1);
+    // Hard destroy fallback: guarantee the label is torn down regardless of
+    // whether the fade tween runs or completes (see floatText note). Without it,
+    // conflicting alpha tweens could leave the object stranded on the scene.
+    this.floatTextCleanup(label, 1100);
+    if (this.reducedMotion) return; // static hold, destroyed by the fallback timer
+    // A single alpha tween owns the fade (no in/out alpha conflict); scale + y
+    // ride separate properties, so nothing fights over `alpha`.
+    label.setScale(0.5).setAlpha(0);
+    this.tweens.add({ targets: label, scale: 1, duration: 180, ease: 'Back.out' });
+    this.tweens.add({ targets: label, alpha: 1, duration: 140 });
     this.tweens.add({
       targets: label,
       y: sy - TILE_H * 2.3,
       duration: 900,
       ease: 'Quad.out',
     });
-    this.tweens.add({
-      targets: label,
-      alpha: 0,
-      delay: 520,
-      duration: 380,
-      onComplete: () => label.destroy(),
+    this.tweens.add({ targets: label, alpha: 0, delay: 620, duration: 380 });
+  }
+
+  /** Every floating scene label gets a deterministic `delayedCall` destroy so it
+   * can never leak, whatever its fade tween does (playtest: PERFECT text and bot
+   * building labels persisted for minutes when their alpha tweens stalled). The
+   * timer no-ops if the label was already destroyed. */
+  private floatTextCleanup(
+    label: Phaser.GameObjects.Text,
+    ms: number
+  ): void {
+    this.time.delayedCall(ms, () => {
+      if (label.active) {
+        this.tweens.killTweensOf(label);
+        label.destroy();
+      }
     });
   }
 
@@ -1640,13 +1660,15 @@ export class Village extends Scene {
       })
       .setOrigin(0.5, 1)
       .setDepth(EFFECT_DEPTH);
+    // Deterministic teardown regardless of the tween (see floatTextCleanup).
+    this.floatTextCleanup(label, 1800);
+    if (this.reducedMotion) return; // static hold, destroyed by the fallback timer
     this.tweens.add({
       targets: label,
       y: sy - TILE_H - 22,
       alpha: 0,
       duration: 1600,
       ease: 'Quad.out',
-      onComplete: () => label.destroy(),
     });
   }
 

@@ -1075,7 +1075,10 @@ const CSS = `
   gap: 8px;
   width: min(260px, calc(100vw - 20px));
   pointer-events: none;
-  transition: width 180ms ease-out;
+  /* No width transition: the column snaps to full width on expand so its hit-box
+   * is never mid-animation narrower than the banner under the finger (a tap aimed
+   * at the just-expanded banner must not land on the canvas behind it and collapse
+   * the column). The children still fade in via hv-obj-in. */
 }
 /* Collapsed: the banner + pill give way to two compact chips. */
 .hv-topleft.is-collapsed { width: 44px; }

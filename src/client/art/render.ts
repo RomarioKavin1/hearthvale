@@ -145,6 +145,17 @@ export const addSurface = (
   sy: number
 ): GameObjects.Image => addBlock(scene, key, sx, sy, BASE_DY);
 
+/** Image row the well sprite's clean stone/water basin begins at. Everything above
+ * it in well.png is a tall wooden canopy perched on near-invisible posts, which at
+ * map scale reads as a DETACHED brown roof fragment hovering over the tile
+ * (playtest-confirmed). Cropping to the basin band leaves a single grounded plaza
+ * feature that reads clean. Applied wherever a `well` sprite is placed. */
+export const WELL_CROP_TOP = 138;
+
+/** Crop a placed `well` image to its basin band (see WELL_CROP_TOP). */
+export const cropWell = (img: GameObjects.Image): GameObjects.Image =>
+  img.setCrop(0, WELL_CROP_TOP, IMG_W, IMG_H - WELL_CROP_TOP);
+
 // ── Ground routing ──────────────────────────────────────────────────────────
 
 /** True for the one-tile path ring bordering the plaza block. */

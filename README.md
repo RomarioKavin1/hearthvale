@@ -70,6 +70,8 @@ A floating **dev panel** (top-right) gives you:
 - **+ bot villager** — drop a neighbouring house + producer to grow the population (and trigger Village-Hall level-ups).
 - **Reset world** and an **FPS meter**.
 
+**Known quirk — use one focused tab.** Phaser drives its asset loader from the browser's `requestAnimationFrame`, which browsers pause in background/unfocused tabs. So a **second** harness tab (or one you `cmd`/`ctrl`-click open in the background) can appear frozen at the preloader bar around ~10% — every asset request still returns `200`, there is no console error, the tab is simply throttled. Focus that tab (click into it) and the loader resumes and finishes; keep a single focused tab while playing. This is browser tab-throttling, not a game bug, and does not affect the published Devvit post (which renders in a single, always-foreground webview).
+
 **What it does and does not test.** The harness exercises **client behaviour and game feel** — rendering, the HUD, the tile sheets, the realtime live-update paths (tile/city/market/festival/ring broadcasts are emitted from the mock's mutations), and the shared economy math. It does **not** run the real server code in `src/server/` (Redis transactions, Reddit side effects, the scheduler, leaderboards): the mock re-implements those endpoint contracts locally. See the divergences list at the top of `dev/harness/mock-api.ts`. None of the harness is part of the production Devvit build — `npm run build` (via `vite.config.ts`) never sees `dev/harness/` or the harness config.
 
 ## Credits

@@ -377,10 +377,22 @@ const initObjectivesCollapse = (): void => {
   armObjTimer(OBJ_IDLE_MS);
   // The HUD root is pointer-events:none, so a map drag's pointerdown targets the
   // canvas — any press whose target is outside the column collapses it at once,
-  // while presses inside it just restart the idle window.
+  // while presses inside it just restart the idle window. A press is "inside" if
+  // its target is a DOM descendant OR its coordinates fall within the column's
+  // box: the geometry check catches the case where the banner is being
+  // re-rendered under the finger (its reward chips are rebuilt on every store
+  // change), which would otherwise leave e.target detached — read as "outside" —
+  // and collapse the column out from under the very tap meant to claim/open it.
   window.addEventListener('pointerdown', (e: PointerEvent) => {
     const t = e.target;
-    if (t instanceof Node && topLeft.contains(t)) {
+    const insideNode = t instanceof Node && topLeft.contains(t);
+    const r = topLeft.getBoundingClientRect();
+    const insideBox =
+      e.clientX >= r.left &&
+      e.clientX <= r.right &&
+      e.clientY >= r.top &&
+      e.clientY <= r.bottom;
+    if (insideNode || insideBox) {
       armObjTimer(OBJ_IDLE_MS);
       return;
     }
