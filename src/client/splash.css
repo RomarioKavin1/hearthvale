@@ -39,6 +39,10 @@ body {
   flex-direction: column;
   cursor: pointer;
   overflow: hidden;
+  /* Inline feed splash must never hijack the redditor's feed scroll: we install
+   * no touchmove/preventDefault handlers, and pan-y keeps vertical swipes free
+   * so a swipe over the post keeps scrolling the feed. */
+  touch-action: pan-y;
   font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;

@@ -848,8 +848,14 @@ const CSS = `
 .hv-modal-close:active { transform: translateY(2px); }
 .hv-modal-body {
   flex: 1 1 auto;
+  /* min-height:0 lets this flex child shrink below its content height so its own
+   * overflow-y engages — without it the body grows to content height and the
+   * whole modal spills (unscrollable) on short/mobile viewports. */
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Allow vertical touch-panning inside the sheet; nothing horizontal here. */
+  touch-action: pan-y;
   padding: 16px;
 }
 
@@ -1541,6 +1547,7 @@ const CSS = `
   max-height: 168px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   display: flex;
   flex-direction: column;
   gap: 4px;
