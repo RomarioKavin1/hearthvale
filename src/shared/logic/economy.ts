@@ -337,6 +337,25 @@ export const houseTile = (
 };
 
 /**
+ * The count of a player's PLOTS — every tile they own EXCEPT their house. The
+ * house is the homestead anchor placed free on the first claim, not a build
+ * plot, so it must never count against the plot allowance (otherwise a fresh
+ * level-1 player, whose only tile is that auto-built house, would already be at
+ * their limit and could never settle a field). Claimed-but-empty tiles DO count
+ * — they occupy a plot. Pure.
+ */
+export const ownedPlots = (
+  grid: Record<string, TileState>,
+  userId: string
+): number => {
+  let n = 0;
+  for (const tile of Object.values(grid)) {
+    if (tile.owner === userId && tile.buildingId !== 'house') n += 1;
+  }
+  return n;
+};
+
+/**
  * True if `(x, y)` is within Chebyshev radius 2 of the player's house tile —
  * the rule every claim after the first must satisfy so homesteads cluster.
  * A player with no house yet (should not happen past the first claim) is
@@ -353,6 +372,13 @@ export const nearHouse = (
   return Math.max(Math.abs(home.x - x), Math.abs(home.y - y)) <= 2;
 };
 
+/**
+ * Validate a claim. `owned` is the caller's PLOT count — non-house tiles only
+ * (see `ownedPlots`) — so the house never eats into the plot allowance. The
+ * homestead-radius rule is gated on whether the player has already SETTLED (owns
+ * a house), not on the plot count, so the very first field must still hug the
+ * house even though that field is plot #1 (owned 0 at the time). Pure.
+ */
 export const canClaim = (
   grid: Record<string, TileState>,
   x: number,
@@ -368,8 +394,10 @@ export const canClaim = (
   if (owned >= plotsAllowed(player.level, hallLevel)) {
     return 'You have reached your plot limit. Level up to claim more.';
   }
-  // Every claim after the first must hug your homestead so villages stay tight.
-  if (owned > 0 && !nearHouse(grid, player.id, x, y)) {
+  // Once settled, every further claim must hug the homestead so villages stay
+  // tight. The first claim ever (no house yet) founds the homestead anywhere.
+  const settled = houseTile(grid, player.id) !== null;
+  if (settled && !nearHouse(grid, player.id, x, y)) {
     return 'Build closer to your house (within 2 tiles).';
   }
   return null;

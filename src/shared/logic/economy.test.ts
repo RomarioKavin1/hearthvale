@@ -17,6 +17,7 @@ import {
   isGoldenWindowLenient,
   levelForXp,
   nearHouse,
+  ownedPlots,
   plotsAllowed,
   plotsForLevel,
   streakReward,
@@ -352,6 +353,26 @@ describe('houseTile / nearHouse', () => {
   });
 });
 
+describe('ownedPlots', () => {
+  it('counts non-house tiles, excluding the house and other owners', () => {
+    const grid: Record<string, TileState> = {
+      '5,5': tile({ owner: 'p1', buildingId: 'house' }),
+      '6,6': tile({ owner: 'p1', buildingId: 'wheatfield' }),
+      '6,5': tile({ owner: 'p1' }), // claimed but empty — still a plot
+      '9,9': tile({ owner: 'p2', buildingId: 'house' }),
+    };
+    expect(ownedPlots(grid, 'p1')).toBe(2);
+    expect(ownedPlots(grid, 'p2')).toBe(0);
+    expect(ownedPlots(grid, 'nobody')).toBe(0);
+  });
+  it('is 0 for a fresh player whose only tile is the auto-built house', () => {
+    const grid: Record<string, TileState> = {
+      '5,5': tile({ owner: 'p1', buildingId: 'house' }),
+    };
+    expect(ownedPlots(grid, 'p1')).toBe(0);
+  });
+});
+
 describe('canClaim', () => {
   it('rejects a plaza tile', () => {
     expect(canClaim({}, 8, 8, player(), 0, 0)).not.toBeNull();
@@ -379,6 +400,30 @@ describe('canClaim', () => {
       'Build closer to your house (within 2 tiles).'
     );
     expect(canClaim(grid, 6, 6, p, 1, 0)).toBeNull();
+  });
+  it('lets a fresh level-1 player settle a plot beside their auto-built house', () => {
+    // Regression: the house must not consume the single level-1 plot slot.
+    // ownedPlots is 0 (house excluded) so the plot limit (1) is not yet hit,
+    // and the homestead-radius rule still applies because the house exists.
+    const grid: Record<string, TileState> = {
+      '5,5': tile({ owner: 'p1', buildingId: 'house' }),
+    };
+    const p = player({ level: 1 });
+    expect(canClaim(grid, 6, 6, p, ownedPlots(grid, 'p1'), 0)).toBeNull();
+    // Far from the house is still refused, not blocked by the plot limit.
+    expect(canClaim(grid, 5, 11, p, ownedPlots(grid, 'p1'), 0)).toBe(
+      'Build closer to your house (within 2 tiles).'
+    );
+  });
+  it('refuses the second plot for a level-1 player already holding one field', () => {
+    const grid: Record<string, TileState> = {
+      '5,5': tile({ owner: 'p1', buildingId: 'house' }),
+      '6,6': tile({ owner: 'p1', buildingId: 'wheatfield' }),
+    };
+    const p = player({ level: 1 });
+    expect(canClaim(grid, 6, 5, p, ownedPlots(grid, 'p1'), 0)).toBe(
+      'You have reached your plot limit. Level up to claim more.'
+    );
   });
 });
 

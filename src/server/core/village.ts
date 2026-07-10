@@ -50,6 +50,7 @@ import {
   isGoldenWindowLenient,
   mergeGoods,
   levelForXp,
+  ownedPlots,
   plotsForLevel,
   prevDay,
   streakReward,
@@ -969,8 +970,11 @@ export const doClaim = async (
     ensurePlayer(userId),
     getCity(),
   ]);
-  const owned = ownedCount(grid, userId);
-  const wasOwner = owned > 0;
+  // `ownedPlots` excludes the house so it never consumes a plot slot; `wasOwner`
+  // (total tiles) still decides whether this is the first claim that founds the
+  // house, so a settled player never gets a second house.
+  const owned = ownedPlots(grid, userId);
+  const wasOwner = ownedCount(grid, userId) > 0;
 
   const err = canClaim(grid, x, y, player, owned, city.hallLevel);
   if (err) throw new OpError(400, err);

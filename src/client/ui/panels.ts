@@ -25,6 +25,7 @@ import {
   CHAIN_PAIRS,
   goodsTotal,
   isAutoSold,
+  ownedPlots,
   plotsAllowed,
   roleToFestival,
 } from '../../shared/logic/economy';
@@ -44,7 +45,6 @@ import {
   goodIcon,
   iconEl,
   isPending,
-  ownedCount,
   pctStr,
   promptLogin,
   soldSummary,
@@ -152,7 +152,7 @@ const renderClaim = (
   key: string
 ): void => {
   setSheetTitle('Open plot');
-  const owned = ownedCount(data, me.id);
+  const owned = ownedPlots(data.grid, me.id);
   const max = plotsAllowed(me.level, data.city.hallLevel);
   const reason = canClaim(data.grid, x, y, me, owned, data.city.hallLevel);
 
