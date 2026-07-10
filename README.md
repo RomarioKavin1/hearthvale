@@ -51,6 +51,27 @@ The daily post puts that change right in the feed — a market report and the da
 - **Realtime channels** — live tile, market, and city updates across everyone viewing the post.
 - **Scheduler** — a daily cron rolls the weather, rotates the festival, and posts the day's village update.
 
+## Local dev harness (play without Devvit)
+
+You can play the real game in a normal browser — no Devvit login, no `devvit playtest` — against an in-browser mock server:
+
+```bash
+npm run harness      # serves http://localhost:5199 (fixed port)
+```
+
+This runs the **real client** — the Phaser village scene and the DOM HUD, unchanged — and swaps the `@devvit/web/client` import for a browser stub (`dev/harness/mock-devvit-client.ts`). A patched `window.fetch` answers every `/api/*` call from an in-memory world (`dev/harness/mock-api.ts`) that **reuses the real shared game logic** (`src/shared/*` — accrual, adjacency, market pricing, quests, expansion, the Village-Hall and house buffs), so a collect, build, or contribution scores exactly as it does in production. The world is persisted to `localStorage`, so reloads keep your progress.
+
+A floating **dev panel** (top-right) gives you:
+
+- **Time warp** — jump the clock forward +1m / +10m / +1h / +1d so timers ripen instantly (the client's clock skew is re-synced, so countdowns and the golden-window sparkle stay honest).
+- **Resource cheats** — +500 coins, +20 planks / bricks / wheat.
+- **Weather** and **festival** cycling.
+- **Golden now** — force every collect into the Perfect-Harvest doubling window.
+- **+ bot villager** — drop a neighbouring house + producer to grow the population (and trigger Village-Hall level-ups).
+- **Reset world** and an **FPS meter**.
+
+**What it does and does not test.** The harness exercises **client behaviour and game feel** — rendering, the HUD, the tile sheets, the realtime live-update paths (tile/city/market/festival/ring broadcasts are emitted from the mock's mutations), and the shared economy math. It does **not** run the real server code in `src/server/` (Redis transactions, Reddit side effects, the scheduler, leaderboards): the mock re-implements those endpoint contracts locally. See the divergences list at the top of `dev/harness/mock-api.ts`. None of the harness is part of the production Devvit build — `npm run build` (via `vite.config.ts`) never sees `dev/harness/` or the harness config.
+
 ## Credits
 
 - **Art:** Kenney (kenney.nl) — CC0.
