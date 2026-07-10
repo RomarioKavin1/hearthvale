@@ -230,7 +230,7 @@ const renderBuildGrid = (
 
     const card = el('button', {
       cls: `hv-card${locked ? ' is-locked' : ''}`,
-      attrs: { type: 'button' },
+      attrs: { type: 'button', 'data-build-id': spec.id },
       children: [
         img,
         el('div', { cls: 'hv-card-name', text: spec.name }),

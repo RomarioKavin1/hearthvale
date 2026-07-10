@@ -76,7 +76,11 @@ A floating **dev panel** (top-right) gives you:
 
 ## Credits
 
-- **Art:** Kenney (kenney.nl) — CC0.
+- **Art:** Kenney (kenney.nl) — CC0. Diorama sprites, plus the
+  [UI Pack Adventure](https://kenney.nl/assets/ui-pack-adventure) (parchment
+  panels, wooden buttons, banners and progress art that skin every HUD surface)
+  and the [Cursor Pack](https://kenney.nl/assets/cursor-pack) (the adventure
+  pointer, hover hand and map-drag fist).
 - **Font:** Fredoka (OFL).
 
 ## Playing / installing

@@ -32,4 +32,14 @@ body {
   width: 100%;
   height: 100%;
   touch-action: none;
+  /* Kenney Cursor Pack (CC0): the adventure arrow over the map, hotspot at
+   * the arrow tip. A closed fist replaces it while the map is being dragged. */
+  cursor: url('/cursors/pointer_a.png') 10 8, auto;
+}
+#game-container.is-grabbing {
+  cursor: url('/cursors/hand_closed.png') 16 16, grabbing;
+}
+
+body {
+  cursor: url('/cursors/pointer_a.png') 10 8, auto;
 }

@@ -1598,4 +1598,295 @@ const CSS = `
   .hv-topleft:not(.is-collapsed) .hv-jr,
   .hv-topleft:not(.is-collapsed) .hv-keep-pill { animation: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Adventure UI-pack skin — Kenney "UI Pack Adventure" (CC0).
+ * Warm wood/parchment 9-slice plates layered over the existing palette CSS.
+ * Source PNGs ship at 2× (public/ui/*); slice values are the 2× pixel insets
+ * measured off each art: buttons 8, panels 16, banner 12 (top 23).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ui-brown: url('/ui/button_brown.png');
+  --ui-grey: url('/ui/button_grey.png');
+  --ui-red: url('/ui/button_red.png');
+  --shadow-drop: 0 3px 0 rgba(46,40,55,0.32);
+  --shadow-drop-lo: 0 1px 0 rgba(46,40,55,0.32);
+}
+
+/* ── Wooden button plates (primary/secondary/danger/accent) ── */
+.hv-btn {
+  background: transparent;
+  border: 9px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
+  box-shadow: var(--shadow-drop);
+  color: var(--ink);
+}
+.hv-btn:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
+.hv-btn[disabled] { box-shadow: var(--shadow-drop); transform: none; }
+.hv-btn.hv-btn-ghost { border-image-source: var(--ui-grey); box-shadow: var(--shadow-drop); }
+.hv-btn.hv-btn-ghost:active { box-shadow: var(--shadow-drop-lo); }
+.hv-btn.hv-btn-accent { border-image-source: var(--ui-brown); color: var(--ink); }
+.hv-btn.hv-btn-danger { color: var(--red); }
+.hv-btn.hv-btn-danger.is-armed { border-image-source: var(--ui-red); color: var(--cream); }
+
+/* ── Steppers / tabs / menu / picker: same wood plates ── */
+.hv-step, .hv-tab, .hv-picker-opt {
+  background: transparent;
+  border: 8px solid transparent;
+  border-image: var(--ui-grey) 8 fill stretch;
+  border-radius: 0;
+}
+.hv-step.is-picked, .hv-tab.is-active, .hv-picker-opt.is-picked {
+  border-image-source: var(--ui-brown);
+}
+.hv-menu-btn {
+  background: transparent;
+  border: 10px solid transparent;
+  border-image: var(--ui-grey) 8 fill stretch;
+  border-radius: 0;
+  box-shadow: var(--shadow-drop);
+}
+.hv-menu-btn:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
+
+/* ── Build cards + list rows: framed parchment slots ── */
+.hv-card, .hv-lb-row, .hv-mkt, .hv-held-chip, .hv-jrs-row, .hv-jrs-unlock,
+.hv-plaque-row, .hv-picker-col {
+  background: transparent;
+  border: 8px solid transparent;
+  border-image: var(--ui-grey) 8 fill stretch;
+  border-radius: 0;
+}
+.hv-lb-row.is-me { border-image-source: var(--ui-brown); box-shadow: none; }
+.hv-jrs-row.is-next { border-image-source: var(--ui-grey); opacity: 0.7; }
+.hv-jrs-active {
+  background: transparent;
+  border: 12px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* ── Top-bar chips: cream wooden chips ── */
+.hv-chip {
+  background: transparent;
+  border: 7px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
+  box-shadow: var(--shadow-drop);
+}
+.hv-chip:active { transform: translateY(1px); }
+.hv-signin-pill {
+  background: transparent;
+  border: 8px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
+  box-shadow: var(--shadow-drop);
+}
+.hv-signin-pill:active { transform: translateY(2px); box-shadow: var(--shadow-drop-lo); }
+
+/* ── Callout: golden parchment plate ── */
+.hv-callout {
+  background: transparent;
+  border: 9px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
+  color: var(--ink);
+}
+
+/* ── FABs + circular objective chips: round wooden medallions ── */
+.hv-fab {
+  background: url('/ui/round_brown.png') center / 100% 100% no-repeat;
+  border: 0;
+  border-radius: 50%;
+  box-shadow: var(--shadow-drop);
+}
+.hv-fab:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
+.hv-fab[disabled] { box-shadow: var(--shadow-drop); transform: none; }
+.hv-fab.hv-primary { box-shadow: var(--shadow-drop), 0 0 0 3px var(--glow); }
+.hv-fab.is-checked { background: url('/ui/round_brown.png') center / 100% 100% no-repeat; filter: grayscale(0.4) brightness(0.92); }
+.hv-obj-chip {
+  background: url('/ui/round_brown.png') center / 100% 100% no-repeat;
+  border: 0;
+  box-shadow: var(--shadow-drop);
+}
+.hv-obj-chip.is-claimable { background: url('/ui/round_brown.png') center / 100% 100% no-repeat; box-shadow: var(--shadow-drop), 0 0 0 3px var(--glow); }
+.hv-obj-hall { background: url('/ui/round_brown.png') center / 100% 100% no-repeat; color: var(--wood-dark); }
+.hv-obj-hall .hv-icon-mask { color: var(--wood-dark); }
+.hv-obj-hall .hv-obj-lvl { color: var(--wood-dark); }
+.hv-ring { background: transparent; }
+
+/* ── Journal banner + Hall pill: parchment / wood plates ── */
+.hv-jr {
+  background: transparent;
+  border: 10px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
+  box-shadow: var(--shadow-drop);
+}
+.hv-jr:active { transform: translateY(2px); box-shadow: var(--shadow-drop-lo); }
+.hv-jr.is-done { border-image-source: var(--ui-brown); box-shadow: var(--shadow-drop), 0 0 0 3px var(--glow); }
+.hv-keep-pill {
+  background: transparent;
+  border: 9px solid transparent;
+  border-image: var(--ui-grey) 8 fill stretch;
+  border-radius: 0;
+  box-shadow: var(--shadow-drop);
+  color: var(--ink);
+}
+.hv-keep-pill .hv-icon-mask { color: var(--wood-dark); }
+.hv-keep-label { color: var(--ink); }
+.hv-keep-bar { background: rgba(46,40,55,0.22); }
+
+/* ── Modal: a parchment scroll with a red banner title ── */
+.hv-modal {
+  background: transparent;
+  border: 16px solid transparent;
+  border-image: url('/ui/panel_brown.png') 16 fill stretch;
+  border-radius: 0;
+  box-shadow: 0 10px 26px rgba(46,40,55,0.45);
+  overflow: visible;
+}
+.hv-modal-head {
+  border-bottom: 0;
+  padding: 2px 2px 10px;
+  align-items: center;
+}
+.hv-modal-title {
+  padding: 7px 14px;
+  background: url('/ui/banner_hanging.png') center / 100% 100% no-repeat;
+  color: var(--cream);
+  text-shadow: 0 1px 0 rgba(46,40,55,0.5);
+  text-align: center;
+  line-height: 1.2;
+}
+.hv-modal-close {
+  background: transparent;
+  border: 8px solid transparent;
+  border-image: var(--ui-red) 8 fill stretch;
+  border-radius: 0;
+  color: var(--cream);
+}
+.hv-modal-close .hv-icon-mask { color: var(--cream); }
+.hv-modal-body { padding: 2px 4px 4px; overflow-y: auto; }
+
+/* ── Toasts: parchment notes ── */
+.hv-toast {
+  background: transparent;
+  border: 10px solid transparent;
+  border-image: url('/ui/panel_brown.png') 16 fill stretch;
+  border-radius: 0;
+  color: var(--ink);
+  box-shadow: 0 4px 10px rgba(46,40,55,0.35);
+}
+.hv-toast-celebrate { background: transparent; }
+.hv-toast-celebrate, .hv-toast-gain { border-image-source: url('/ui/panel_brown.png'); }
+.hv-toast-btn {
+  background: transparent;
+  border: 7px solid transparent;
+  border-image: var(--ui-brown) 8 fill stretch;
+  border-radius: 0;
+  color: var(--ink);
+}
+
+/* ── Progress fills: sunken wood tracks, gold/green fills ── */
+.hv-fill { background: rgba(46,40,55,0.28); border-color: var(--wood-dark); border-radius: 0; }
+.hv-jr-bar, .hv-jrs-bar { background: rgba(46,40,55,0.28); border-color: var(--wood-dark); }
+
+/* ── Cursor pack (Kenney "Cursor Pack", CC0) ──
+ * hand pointer over every interactive HUD control; hotspot at the fingertip. */
+#hv-hud button,
+#hv-hud [role='button'],
+.hv-chip, .hv-fab, .hv-card, .hv-tab, .hv-step, .hv-swatch, .hv-jr,
+.hv-keep-pill, .hv-obj-chip, .hv-ring, .hv-signin-pill, .hv-menu-btn,
+.hv-picker-opt, .hv-modal-close, .hv-toast-btn, .hv-backdrop {
+  cursor: url('/cursors/hand_point.png') 12 4, pointer;
+}
+#hv-hud button[disabled], .hv-card.is-locked, .hv-card[disabled] {
+  cursor: url('/cursors/pointer_a.png') 10 8, not-allowed;
+}
+
+/* ══ Guided walkthrough (coach marks) ══ */
+.hv-wt-root {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
+}
+.hv-wt-root.is-hidden { display: none; }
+/* Dim veil with a bright cut-out over the target (drawn as an SVG mask). */
+.hv-wt-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+.hv-wt-spot {
+  position: absolute;
+  border-radius: 12px;
+  box-shadow: 0 0 0 3px var(--glow), 0 0 0 9999px rgba(30,26,38,0.62);
+  transition: left 180ms ease-out, top 180ms ease-out,
+    width 180ms ease-out, height 180ms ease-out;
+  pointer-events: none;
+}
+.hv-wt-arrow {
+  position: absolute;
+  width: 40px; height: 40px;
+  background: url('/ui/minimap_arrow_a.png') center / contain no-repeat;
+  filter: drop-shadow(0 2px 3px rgba(30,26,38,0.55));
+  pointer-events: none;
+  transition: left 180ms ease-out, top 180ms ease-out;
+  will-change: transform;
+  animation: hv-wt-bounce 1.1s ease-in-out infinite;
+}
+@keyframes hv-wt-bounce {
+  0%, 100% { transform: translate(-50%, -50%) rotate(var(--rot)) translateY(0); }
+  50% { transform: translate(-50%, -50%) rotate(var(--rot)) translateY(9px); }
+}
+.hv-wt-card {
+  position: absolute;
+  pointer-events: auto;
+  width: min(280px, calc(100vw - 28px));
+  padding: 14px 14px 12px;
+  background: transparent;
+  border: 16px solid transparent;
+  border-image: url('/ui/panel_brown.png') 16 fill stretch;
+  color: var(--ink);
+  box-shadow: 0 8px 22px rgba(46,40,55,0.45);
+  transition: left 180ms ease-out, top 180ms ease-out;
+}
+.hv-wt-step {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  opacity: 0.6;
+  margin: 0 0 4px;
+}
+.hv-wt-title { font-size: 15px; font-weight: 800; line-height: 1.25; margin: 0 0 5px; letter-spacing: 0.2px; }
+.hv-wt-body { font-size: 12.5px; line-height: 1.45; margin: 0 0 11px; }
+.hv-wt-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hv-wt-skip {
+  pointer-events: auto;
+  padding: 5px 10px;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink);
+  opacity: 0.7;
+  cursor: url('/cursors/hand_point.png') 12 4, pointer;
+}
+.hv-wt-skip:hover { opacity: 1; }
+.hv-wt-dots { display: inline-flex; gap: 5px; }
+.hv-wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wood-dark); opacity: 0.28; }
+.hv-wt-dot.is-on { opacity: 1; background: var(--glow); }
+
+@media (prefers-reduced-motion: reduce) {
+  .hv-wt-arrow { animation: none; }
+  .hv-wt-spot, .hv-wt-arrow, .hv-wt-card { transition: none; }
+}
 `;

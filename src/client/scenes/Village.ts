@@ -69,6 +69,7 @@ import {
   HV_CLEAR_SELECTION,
   HV_FOCUS_TILE,
   HV_TILE_SELECTED,
+  setTileToScreen,
 } from '../events';
 
 // ── Small helpers ───────────────────────────────────────────────────────────
@@ -1217,6 +1218,13 @@ export class Village extends Scene {
   private setupInput(): void {
     this.input.addPointer(1); // allow a second touch for pinch
 
+    // The map container — a `is-grabbing` class swaps the cursor to a closed
+    // fist while a pan is actually in progress (see game.css).
+    const container = document.getElementById('game-container');
+    const setGrabbing = (on: boolean): void => {
+      container?.classList.toggle('is-grabbing', on);
+    };
+
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.dragging = true;
       this.startX = p.x;
@@ -1242,6 +1250,7 @@ export class Village extends Scene {
       }
       this.pinchDist = 0;
       if (!p.isDown || !this.dragging) return;
+      setGrabbing(true);
       const cam = this.cameras.main;
       cam.scrollX -= (p.x - this.lastX) / cam.zoom;
       cam.scrollY -= (p.y - this.lastY) / cam.zoom;
@@ -1250,6 +1259,7 @@ export class Village extends Scene {
     });
 
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      setGrabbing(false);
       const wasPinch = this.pinchDist > 0;
       const wasDrag = this.dragging;
       this.pinchDist = 0;
@@ -1379,6 +1389,32 @@ export class Village extends Scene {
     };
     window.addEventListener(HV_FOCUS_TILE, this.onFocusTile);
     window.addEventListener(HV_CLEAR_SELECTION, this.onClearSelection);
+
+    // Walkthrough bridge: map a tile's grid coords to a live viewport pixel
+    // point (camera scroll + zoom + the canvas's page offset), so a coach mark
+    // can track the tile as the map pans. Returns null when the point falls
+    // outside the canvas so the overlay can hide rather than point off-screen.
+    setTileToScreen((tx, ty) => {
+      const cam = this.cameras.main;
+      if (!cam) return null;
+      const { sx, sy } = isoToScreen(tx, ty, TILE_W, TILE_H);
+      const view = cam.worldView;
+      const canvas = this.game.canvas;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = cam.width > 0 ? rect.width / cam.width : 1;
+      const scaleY = cam.height > 0 ? rect.height / cam.height : 1;
+      const px = (sx - view.x) * cam.zoom * scaleX + rect.left;
+      const py = (sy - view.y) * cam.zoom * scaleY + rect.top;
+      if (
+        px < rect.left ||
+        px > rect.right ||
+        py < rect.top ||
+        py > rect.bottom
+      ) {
+        return null;
+      }
+      return { x: px, y: py };
+    });
 
     this.onVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -2266,5 +2302,6 @@ export class Village extends Scene {
     window.removeEventListener(HV_FOCUS_TILE, this.onFocusTile);
     window.removeEventListener(HV_CLEAR_SELECTION, this.onClearSelection);
     document.removeEventListener('visibilitychange', this.onVisibility);
+    setTileToScreen(null);
   }
 }

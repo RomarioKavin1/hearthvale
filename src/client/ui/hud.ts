@@ -39,6 +39,7 @@ import { mountSheetRoot } from './sheet';
 import { openMenuSheet, openTileSheet } from './panels';
 import { openKeepSheet, openLevelSheet, openMarketSheet } from './sheets';
 import { mountJournal } from './journal';
+import { initWalkthrough } from './walkthrough';
 
 /**
  * The persistent HUD chrome: the top resource bar (coins, Hall-material chips,
@@ -128,6 +129,9 @@ export const initHud = (game: Game): void => {
 
   mountSheetRoot(hud);
   mountToasts(hud);
+  // The guided walkthrough overlay (coach marks) sits above the chrome and points
+  // new players at the next action; it self-hides for veterans / once completed.
+  initWalkthrough(hud);
 
   window.addEventListener(HV_TILE_SELECTED, (e: Event) => {
     if (e instanceof CustomEvent) {
@@ -271,6 +275,7 @@ const buildFabs = (): HTMLElement => {
     'Collect every ready building at once',
     true
   );
+  collectFab.setAttribute('data-fab', 'collect');
   collectBadge = el('span', { cls: 'hv-fab-badge' });
   collectFab.appendChild(collectBadge);
   collectFab.addEventListener('click', doCollectAll);
@@ -281,6 +286,7 @@ const buildFabs = (): HTMLElement => {
     'See village prices and what the village needs',
     false
   );
+  marketFab.setAttribute('data-fab', 'market');
   marketFab.addEventListener('click', () => openMarketSheet());
 
   checkinFab = buildFab(
@@ -289,6 +295,7 @@ const buildFabs = (): HTMLElement => {
     'Daily check-in — coins and a growing streak',
     false
   );
+  checkinFab.setAttribute('data-fab', 'checkin');
   checkinStreak = el('span', { cls: 'hv-streak' });
   checkinFab.appendChild(checkinStreak);
   checkinFab.addEventListener('click', doCheckin);
@@ -299,6 +306,7 @@ const buildFabs = (): HTMLElement => {
     'Market, hall, leaderboards and help',
     false
   );
+  menuFab.setAttribute('data-fab', 'menu');
   menuFab.addEventListener('click', () => openMenuSheet());
 
   return el('div', {

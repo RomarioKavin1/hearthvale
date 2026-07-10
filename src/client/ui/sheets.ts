@@ -32,6 +32,7 @@ import {
   withTip,
 } from './dom';
 import { action, openSheet, refreshSheet, setSheetTitle, toast } from './sheet';
+import { noteHallOpened, noteMarketOpened } from './walkthrough';
 
 /**
  * The "menu" sheets: the read-only Village Market info panel (prices, trends,
@@ -108,6 +109,7 @@ const renderMarketRow = (good: Good): HTMLElement => {
 };
 
 export const openMarketSheet = (): void => {
+  noteMarketOpened();
   openSheet({
     title: 'Village Market',
     render: (body) => {
@@ -298,6 +300,7 @@ const heldGoodsRow = (planks: number, bricks: number): HTMLElement =>
   });
 
 export const openKeepSheet = (): void => {
+  noteHallOpened();
   openSheet({
     title: 'Village Hall',
     render: (body) => {

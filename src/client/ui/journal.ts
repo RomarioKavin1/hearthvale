@@ -72,11 +72,13 @@ const rewardChildren = (reward: QuestView['reward']): Node[] => {
   return out;
 };
 
-/** A short human summary of a reward, e.g. "+40 coins" / "+50 XP". */
+/** A short human summary of a reward, e.g. "+40 coins" / "+50 XP". Zero-valued
+ * legs are dropped so a coin-only quest never reads "+40 coins & +0 XP" (the
+ * claim response carries an always-present `xp: 0` for coin-only rewards). */
 const rewardSummary = (reward: QuestView['reward']): string => {
   const parts: string[] = [];
-  if (reward.coins !== undefined) parts.push(`+${fmtInt(reward.coins)} coins`);
-  if (reward.xp !== undefined) parts.push(`+${fmtInt(reward.xp)} XP`);
+  if (reward.coins) parts.push(`+${fmtInt(reward.coins)} coins`);
+  if (reward.xp) parts.push(`+${fmtInt(reward.xp)} XP`);
   return parts.join(' & ');
 };
 
