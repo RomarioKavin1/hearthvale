@@ -79,3 +79,25 @@ export const highlightTiles = (keys: string[] | null): void => {
   pendingHighlightKeys = keys;
   highlightTilesProvider?.(keys);
 };
+
+/**
+ * Scene→HUD bridge for the collapsible top-left objectives column. The HUD owns
+ * the column and registers a collapse callback here; the Village scene calls
+ * `requestCollapseObjectives()` from its canvas `pointerdown` handler (a genuine
+ * map drag/tap), so the column collapses ONLY on a real canvas press — never via
+ * a window-level listener that could race a chip/banner/pill click. Idle-timeout
+ * collapse is handled entirely inside the HUD.
+ */
+type CollapseFn = () => void;
+
+let collapseObjectivesFn: CollapseFn | null = null;
+
+/** The HUD registers its collapse handler once (null on teardown). */
+export const setCollapseObjectives = (fn: CollapseFn | null): void => {
+  collapseObjectivesFn = fn;
+};
+
+/** The scene calls this on a canvas pointerdown to collapse the objectives column. */
+export const requestCollapseObjectives = (): void => {
+  collapseObjectivesFn?.();
+};

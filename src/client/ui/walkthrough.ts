@@ -5,7 +5,7 @@ import { isClaimable, isPlaza, neighbors, tileKey } from '../../shared/logic/gri
 import { isRiver } from '../../shared/logic/expansion';
 import { highlightTiles, tileToScreen } from '../events';
 import { store } from '../state';
-import { el, todayUtc } from './dom';
+import { el, setToastLift, todayUtc } from './dom';
 
 /**
  * The guided walkthrough (U1) — an active coach-mark overlay that points new
@@ -301,6 +301,7 @@ const hide = (): void => {
     highlightTiles(null);
   }
   lastHighlightSig = '';
+  setToastLift(0);
 };
 
 const complete = (): void => {
@@ -355,7 +356,21 @@ const targetRect = (
   return { x: pt.x - w / 2, y: pt.y - h / 2, w, h };
 };
 
-/** Place the spotlight, arrow and tip card around the current target rect. */
+/** Keep a bottom-docked tip card clear of the bottom-right FAB rail (≈2 FABs wide
+ * plus margins) so it never overlaps — nor blocks — a FAB it points at. */
+const FAB_RAIL_CLEARANCE = 84;
+
+/**
+ * Place the spotlight ring, arrow and tip card each frame.
+ *
+ * The ring is a purely visual OUTLINE (no dim veil, no fill — see dom.ts): it is
+ * never an input gate, and it re-anchors or hides every frame as its target moves
+ * or disappears (a collapsed pill leaves no hollow box). The tip card docks to a
+ * fixed slot that never covers HUD controls: when any modal is open it sits at the
+ * modal's TOP (above the header banner, clear of the body/steppers); otherwise it
+ * parks in the vertical half opposite the target and, when low, left-aligned and
+ * width-capped so the bottom-right FABs stay fully tappable.
+ */
 const position = (): void => {
   const data = store.data;
   if (!root || !spot || !arrow || !card || activeIndex < 0 || !data) return;
@@ -363,51 +378,62 @@ const position = (): void => {
   if (!step) return;
   const target = step.target(data);
   const rect = target ? targetRect(target, data) : null;
-  if (!target || !rect) {
-    // No single target (e.g. the "found"/"field" steps pulse candidate tiles in
-    // the scene instead) — drop the spotlight + arrow and rest the tip card at a
-    // stable bottom-centre spot so it never floats at 0,0.
-    spot.style.opacity = '0';
-    arrow.style.opacity = '0';
-    const cw = card.offsetWidth || 280;
-    const ch = card.offsetHeight || 150;
-    card.style.left = `${Math.max(12, (window.innerWidth - cw) / 2)}px`;
-    card.style.top = `${window.innerHeight - ch - 24}px`;
-    return;
-  }
-  // A scene tile whose sheet is now open is hidden behind the modal — drop the
-  // spotlight so the (skinned) modal shows at full brightness. DOM targets such
-  // as the Wheat Field card live inside the modal and stay spotlit.
-  const modalOpen = document.querySelector('.hv-backdrop.is-open') !== null;
-  const hideMark = target.kind === 'tile' && modalOpen;
-  spot.style.opacity = hideMark ? '0' : '1';
-  arrow.style.opacity = hideMark ? '0' : '1';
 
-  const pad = target.kind === 'dom' ? 8 : 4;
-  spot.style.left = `${rect.x - pad}px`;
-  spot.style.top = `${rect.y - pad}px`;
-  spot.style.width = `${rect.w + pad * 2}px`;
-  spot.style.height = `${rect.h + pad * 2}px`;
+  const modalNode = document.querySelector('.hv-backdrop.is-open .hv-modal');
+  const modal = modalNode instanceof HTMLElement ? modalNode : null;
 
-  const cx = rect.x + rect.w / 2;
-  const cy = rect.y + rect.h / 2;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
-  // Arrow above the target pointing down; flip below (pointing up) near the top.
-  const above = rect.y > 96;
-  arrow.style.setProperty('--rot', above ? '180deg' : '0deg');
-  arrow.style.left = `${cx}px`;
-  arrow.style.top = `${above ? rect.y - 26 : rect.y + rect.h + 26}px`;
+  // ── Spotlight ring + arrow ──────────────────────────────────────────────
+  // A scene tile whose sheet is now open is hidden behind the modal — drop the
+  // ring. DOM targets (the Wheat Field card, the Sell button) live inside the
+  // modal and stay outlined. A null rect (target collapsed / off-canvas) hides
+  // the ring outright, so no hollow outline is ever left around nothing.
+  const hideMark = !target || !rect || (target.kind === 'tile' && modal !== null);
+  spot.style.opacity = hideMark ? '0' : '1';
+  arrow.style.opacity = hideMark ? '0' : '1';
+  if (!hideMark && rect && target) {
+    const pad = target.kind === 'dom' ? 8 : 4;
+    spot.style.left = `${rect.x - pad}px`;
+    spot.style.top = `${rect.y - pad}px`;
+    spot.style.width = `${rect.w + pad * 2}px`;
+    spot.style.height = `${rect.h + pad * 2}px`;
+    const cx = rect.x + rect.w / 2;
+    const above = rect.y > 96;
+    arrow.style.setProperty('--rot', above ? '180deg' : '0deg');
+    arrow.style.left = `${cx}px`;
+    arrow.style.top = `${above ? rect.y - 26 : rect.y + rect.h + 26}px`;
+  }
 
-  // Tip card horizontally centred (stable, never hugs a screen edge) and in the
-  // vertical half opposite the target so it never covers the spotlight.
-  const cw = card.offsetWidth || 280;
-  const ch = card.offsetHeight || 150;
-  const left = Math.max(12, Math.min((vw - cw) / 2, vw - cw - 12));
-  const top = cy < vh * 0.5 ? vh - ch - 24 : 96;
-  card.style.left = `${left}px`;
-  card.style.top = `${top}px`;
+  // ── Tip card slot ───────────────────────────────────────────────────────
+  let atBottom = false;
+  if (modal !== null) {
+    // Docked to the modal's top — a fixed slot above the header banner, never
+    // over the modal body (so it can't land on the sell steppers after a row
+    // expands). Clamped below the top bar so it can't clip off-screen.
+    card.style.maxWidth = '';
+    const cw = card.offsetWidth || 280;
+    const ch = card.offsetHeight || 150;
+    const mr = modal.getBoundingClientRect();
+    const left = Math.max(12, Math.min(mr.left + (mr.width - cw) / 2, vw - cw - 12));
+    const top = Math.max(56, mr.top - ch - 8);
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+  } else {
+    // No modal: park in the half opposite the target (a null rect ⇒ bottom).
+    atBottom = rect ? rect.y + rect.h / 2 < vh * 0.5 : true;
+    card.style.maxWidth = atBottom
+      ? `${Math.max(160, vw - 12 - FAB_RAIL_CLEARANCE)}px`
+      : '';
+    const ch = card.offsetHeight || 150;
+    card.style.left = '12px';
+    card.style.top = atBottom ? `${vh - ch - 24}px` : '96px';
+  }
+
+  // Raise the toast stack above a bottom-docked card so gain toasts never clip
+  // behind it; reset otherwise.
+  setToastLift(atBottom ? (card.offsetHeight || 150) + 36 : 0);
 };
 
 /** Reposition every frame while a step is active (cheap: a few reads + writes),

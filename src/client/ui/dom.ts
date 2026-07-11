@@ -448,6 +448,17 @@ export const mountToasts = (parent: HTMLElement): void => {
   parent.appendChild(toastHost);
 };
 
+/**
+ * Raise (or reset) the bottom of the toast stack by `px`. The walkthrough calls
+ * this so a bottom-docked tip card never clips the gain toasts behind it; 0
+ * restores the resting position. The `.hv-toast-host` transitions `bottom`, so
+ * the shift is smooth.
+ */
+export const setToastLift = (px: number): void => {
+  if (!toastHost) return;
+  toastHost.style.bottom = px > 0 ? `calc(var(--sab) + ${px}px)` : '';
+};
+
 export const toast = (text: string, kind: ToastKind = 'info'): void => {
   if (!toastHost) return;
   const t = el('div', { cls: `hv-toast hv-toast-${kind}`, text });
@@ -1892,19 +1903,15 @@ const CSS = `
   font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
 }
 .hv-wt-root.is-hidden { display: none; }
-/* Dim veil with a bright cut-out over the target (drawn as an SVG mask). */
-.hv-wt-veil {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  transition: opacity 200ms ease-out;
-}
+/* Spotlight: a purely visual OUTLINE ring around the target — no dim veil and no
+ * translucent fill, so it can never obscure the text under it (e.g. the Market's
+ * wheat row) nor act as an input gate. Recomputed every frame by position(). */
 .hv-wt-spot {
   position: absolute;
   border-radius: 12px;
-  box-shadow: 0 0 0 3px var(--glow), 0 0 0 9999px rgba(30,26,38,0.62);
-  transition: left 180ms ease-out, top 180ms ease-out,
-    width 180ms ease-out, height 180ms ease-out;
+  box-shadow: 0 0 0 3px var(--glow), 0 0 0 6px rgba(46,40,55,0.35);
+  transition: left 120ms ease-out, top 120ms ease-out,
+    width 120ms ease-out, height 120ms ease-out, opacity 120ms ease-out;
   pointer-events: none;
 }
 .hv-wt-arrow {

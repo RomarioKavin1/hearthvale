@@ -50,7 +50,7 @@ import {
   withTip,
 } from './dom';
 import type { SpriteKey } from '../art/manifest';
-import { action, openSheet, setSheetTitle, toast } from './sheet';
+import { action, closeSheet, openSheet, setSheetTitle, toast } from './sheet';
 import {
   openHowToSheet,
   openKeepSheet,
@@ -183,7 +183,12 @@ const renderClaim = (
     void action('claim', async () => {
       const res = await api.claim(x, y);
       store.applyMutation({ key, tile: res.tile, me: res.me });
+      // Close the sheet and toast — do NOT auto-open the build grid, which would
+      // hide the map mid-tour. A refresh keeps the Hall pill's villager count
+      // honest (a first claim raises the House, bumping population).
+      closeSheet();
       toast('Settled a new plot!', 'celebrate');
+      void store.refresh().catch(() => {});
     });
   });
   stack.appendChild(btn);
@@ -247,7 +252,10 @@ const renderBuildGrid = (
         void action(`build:${spec.id}`, async () => {
           const res = await api.build(x, y, spec.id);
           store.applyMutation({ key, tile: res.tile, me: res.me });
-          toast(`Built ${spec.name}!`, 'gain');
+          // Close the sheet and toast the build ETA rather than leaving the tile
+          // modal open over the map — the modal reopens only on a direct tap.
+          closeSheet();
+          toast(`${spec.name} started — ready in ${fmtBuildTime(spec.buildSeconds)}`, 'gain');
         });
       });
     }
@@ -292,8 +300,8 @@ const renderMineBuilding = (
     stack.appendChild(
       el('div', { cls: 'hv-fill hv-fill-glow', children: [el('i', { attrs: { style: `width:${pctStr(frac)}` } })] })
     );
-    // Demolish is available mid-build too (refund is 50% of the invested cost).
-    renderDemolish(stack, spec, tile, x, y, key);
+    // No Demolish while under construction — the server rejects it, so the button
+    // would be dead. It returns once the building is complete (below).
     body.appendChild(stack);
     return;
   }
@@ -619,6 +627,9 @@ const renderDemolish = (
   y: number,
   key: string
 ): void => {
+  // The House can't be demolished (the server rejects it — it's your homestead),
+  // so never offer the button on it.
+  if (spec.special === 'house') return;
   const refund = Math.floor(DEMOLISH_REFUND * investedCost(spec, tile.tier));
   const armedLabel = `Tap again to confirm — refund ${fmtInt(refund)} coins`;
   const isArmed = (): boolean =>

@@ -69,6 +69,7 @@ import {
   HV_CLEAR_SELECTION,
   HV_FOCUS_TILE,
   HV_TILE_SELECTED,
+  requestCollapseObjectives,
   setHighlightTiles,
   setTileToScreen,
 } from '../events';
@@ -647,11 +648,16 @@ export class Village extends Scene {
       const { sx, sy } = isoToScreen(part.x, part.y, TILE_W, TILE_H);
       const dy = (part.roof ? BASE_DY + CASTLE_TOP_DY : BASE_DY) - part.lift;
       const img = addBlock(this, part.key, sx, sy, dy);
-      // Elevated keep pieces (lift>0) rise above the surrounding wall ring but
-      // still tuck behind the closer front gate; capped pieces sit above bases.
-      let depthOffset = part.roof ? 2 : 1;
-      if (part.lift > 0) depthOffset += 3;
-      img.setDepth(sy + depthOffset);
+      // Depth: a constant CASTLE_DEPTH_BOOST (≈1.5 iso rows) plus the part's own
+      // pixel lift, added to sy. The constant is uniform across every castle
+      // part, so the keep's internal stacking (base<cap<elevated) is preserved,
+      // while the boost lifts the whole monument above ambient villagers standing
+      // on the plaza ring that hugs it — a walker on an adjacent path tile can no
+      // longer draw over the castle wall (Task F8). Genuine buildings sit ≥2
+      // tiles out (rows the boost can't reach) so they still occlude correctly.
+      const CASTLE_DEPTH_BOOST = TILE_H * 0.75;
+      const depthOffset = (part.roof ? 2 : 1) + part.lift;
+      img.setDepth(sy + CASTLE_DEPTH_BOOST + depthOffset);
       if (part.tint !== undefined) img.setTint(part.tint);
       this.landmarkParts.push(img);
     }
@@ -1243,6 +1249,10 @@ export class Village extends Scene {
       this.startY = p.y;
       this.lastX = p.x;
       this.lastY = p.y;
+      // A genuine press on the game canvas (map drag/tap) collapses the top-left
+      // objectives column. This is the ONLY press-driven collapse trigger — the
+      // HUD carries no window-level listener that could race a chip click.
+      requestCollapseObjectives();
     });
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {

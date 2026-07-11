@@ -341,7 +341,7 @@ const renderPlaque = (stageDone: number, stageNames: string[]): HTMLElement => {
     row.appendChild(
       el('div', {
         cls: `hv-plaque-name${name ? '' : ' is-unnamed'}`,
-        text: name || `Stage ${i + 1} — unnamed`,
+        text: name || `Level ${i + 1} — unnamed`,
       })
     );
     row.appendChild(el('div', { cls: 'hv-plaque-top', text: 'Raised by the village' }));
@@ -511,11 +511,11 @@ const openNameStageSheet = (stageIndex: number): void => {
   pickAdj = null;
   pickNoun = null;
   openSheet({
-    title: 'Name the stage',
+    title: 'Name this level',
     render: (body) => {
       const stack = el('div', { cls: 'hv-stack' });
       stack.appendChild(
-        el('p', { cls: 'hv-note', text: 'Top contributors name a completed stage. Pick a word from each column.' })
+        el('p', { cls: 'hv-note', text: 'Top contributors name a completed level. Pick a word from each column.' })
       );
 
       const picker = el('div', { cls: 'hv-picker' });
@@ -558,7 +558,7 @@ const openNameStageSheet = (stageIndex: number): void => {
 
       const submit = el('button', {
         cls: 'hv-btn',
-        text: 'Name this stage',
+        text: 'Name this level',
         attrs: { type: 'button' },
       });
       if (pickAdj === null || pickNoun === null || isPending('nameStage')) {
@@ -571,7 +571,7 @@ const openNameStageSheet = (stageIndex: number): void => {
         void action('nameStage', async () => {
           const res = await api.nameStage(a, n);
           store.applyMutation({ city: res.city });
-          toast(`Stage named ${res.city.stageNames[stageIndex] ?? ''}!`, 'celebrate');
+          toast(`Level named ${res.city.stageNames[stageIndex] ?? ''}!`, 'celebrate');
           openKeepSheet();
         });
       });

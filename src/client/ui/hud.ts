@@ -7,7 +7,7 @@ import {
 import type { Good, PlayerState, StateResponse } from '../../shared/types';
 import { GOODS, xpFor } from '../../shared/logic/economy';
 import type { HvTileSelected } from '../events';
-import { HV_TILE_SELECTED } from '../events';
+import { HV_TILE_SELECTED, setCollapseObjectives } from '../events';
 import { api } from '../net';
 import { store } from '../state';
 import {
@@ -374,6 +374,15 @@ const armObjTimer = (ms: number): void => {
   }, ms);
 };
 
+/** Collapse the column immediately, cancelling any pending idle timer. */
+const collapseObjectivesNow = (): void => {
+  if (objTimer !== undefined) {
+    window.clearTimeout(objTimer);
+    objTimer = undefined;
+  }
+  setObjCollapsed(true);
+};
+
 /** Expand the column now and collapse again after `ms` of no interaction. */
 const expandObjectives = (ms: number): void => {
   setObjCollapsed(false);
@@ -382,33 +391,18 @@ const expandObjectives = (ms: number): void => {
 
 const initObjectivesCollapse = (): void => {
   armObjTimer(OBJ_IDLE_MS);
-  // The HUD root is pointer-events:none, so a map drag's pointerdown targets the
-  // canvas — any press whose target is outside the column collapses it at once,
-  // while presses inside it just restart the idle window. A press is "inside" if
-  // its target is a DOM descendant OR its coordinates fall within the column's
-  // box: the geometry check catches the case where the banner is being
-  // re-rendered under the finger (its reward chips are rebuilt on every store
-  // change), which would otherwise leave e.target detached — read as "outside" —
-  // and collapse the column out from under the very tap meant to claim/open it.
-  window.addEventListener('pointerdown', (e: PointerEvent) => {
-    const t = e.target;
-    const insideNode = t instanceof Node && topLeft.contains(t);
-    const r = topLeft.getBoundingClientRect();
-    const insideBox =
-      e.clientX >= r.left &&
-      e.clientX <= r.right &&
-      e.clientY >= r.top &&
-      e.clientY <= r.bottom;
-    if (insideNode || insideBox) {
-      armObjTimer(OBJ_IDLE_MS);
-      return;
-    }
-    if (objTimer !== undefined) {
-      window.clearTimeout(objTimer);
-      objTimer = undefined;
-    }
-    setObjCollapsed(true);
-  });
+  // The column collapses on exactly two triggers, and NOTHING else:
+  //   1. A genuine pointerdown on the game canvas (a map drag/tap) — the Village
+  //      scene calls requestCollapseObjectives() from its canvas handler. There
+  //      is deliberately NO window-level pointerdown listener here: such a
+  //      listener races chip/banner/pill clicks and can collapse the column out
+  //      from under the very tap meant to claim/open it (playtest softlock).
+  //   2. OBJ_IDLE_MS of no interaction with the column (the armObjTimer above).
+  setCollapseObjectives(collapseObjectivesNow);
+  // Any press INSIDE the column just restarts its idle window — never collapses.
+  // Bound to the column element itself (not the window), so it can't interfere
+  // with the chips'/banner's own click handlers.
+  topLeft.addEventListener('pointerdown', () => armObjTimer(OBJ_IDLE_MS));
 };
 
 /** The journal chip: a small rounded-square parchment card with the scroll icon

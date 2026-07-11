@@ -178,16 +178,18 @@ export const mountDevPanel = (): void => {
     clock.style.color = devControls.offsetMs() === 0 ? '#9fe0a0' : '#e0c060';
   }, 1000);
 
-  // FPS meter
-  let frames = 0;
-  let last = performance.now();
+  // FPS meter — a true 1s rolling average: the count of frames whose timestamps
+  // fall within the last 1000ms. A fixed per-second window (reset-and-divide)
+  // read erratically (0/1/75) when a window boundary landed on an rAF stall;
+  // rolling over a sliding 1s span smooths that out.
+  const stamps: number[] = [];
+  const start = performance.now();
   const tick = (t: number): void => {
-    frames += 1;
-    if (t - last >= 1000) {
-      fps.textContent = `${Math.round((frames * 1000) / (t - last))} fps`;
-      frames = 0;
-      last = t;
-    }
+    stamps.push(t);
+    while (stamps.length > 0 && (stamps[0] ?? t) <= t - 1000) stamps.shift();
+    // Only report once a full second of samples has accumulated, so the meter
+    // doesn't flash a low ramp-up count in its first second.
+    fps.textContent = t - start >= 1000 ? `${stamps.length} fps` : '– fps';
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
