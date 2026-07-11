@@ -1931,6 +1931,9 @@ const CSS = `
 .hv-wt-card {
   position: absolute;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   width: min(280px, calc(100vw - 28px));
   padding: 14px 14px 12px;
   background: transparent;
@@ -1940,6 +1943,9 @@ const CSS = `
   box-shadow: 0 8px 22px rgba(46,40,55,0.45);
   transition: left 180ms ease-out, top 180ms ease-out;
 }
+.hv-wt-main { display: flex; flex-direction: column; min-width: 0; }
+/* Step glyph — shown only in the compact strip. */
+.hv-wt-ico { display: none; flex: 0 0 auto; align-items: center; justify-content: center; color: var(--wood-dark); }
 .hv-wt-step {
   font-size: 10.5px;
   font-weight: 800;
@@ -1949,10 +1955,29 @@ const CSS = `
   margin: 0 0 4px;
 }
 .hv-wt-title { font-size: 15px; font-weight: 800; line-height: 1.25; margin: 0 0 5px; letter-spacing: 0.2px; }
-.hv-wt-body { font-size: 12.5px; line-height: 1.45; margin: 0 0 11px; }
-.hv-wt-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hv-wt-body { font-size: 12.5px; line-height: 1.45; margin: 0 0 4px; }
+.hv-wt-foot { display: flex; align-items: center; gap: 8px; }
+.hv-wt-dots { display: inline-flex; gap: 5px; margin-right: auto; }
+.hv-wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wood-dark); opacity: 0.28; }
+.hv-wt-dot.is-on { opacity: 1; background: var(--glow); }
+.hv-wt-min {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 0 2px;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 20px; font-weight: 800; line-height: 1;
+  color: var(--ink);
+  opacity: 0.7;
+  cursor: url('/cursors/hand_point.png') 12 4, pointer;
+}
+.hv-wt-min:hover { opacity: 1; }
 .hv-wt-skip {
   pointer-events: auto;
+  flex: 0 0 auto;
   padding: 5px 10px;
   background: transparent;
   border: 0;
@@ -1964,12 +1989,57 @@ const CSS = `
   cursor: url('/cursors/hand_point.png') 12 4, pointer;
 }
 .hv-wt-skip:hover { opacity: 1; }
-.hv-wt-dots { display: inline-flex; gap: 5px; }
-.hv-wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wood-dark); opacity: 0.28; }
-.hv-wt-dot.is-on { opacity: 1; background: var(--glow); }
+
+/* Compact strip (phones): a slim single line — icon + imperative title + dots +
+ * minimize + Skip, no blurb. Tapping the strip reveals the blurb (is-expanded). */
+.hv-wt-compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: min(460px, calc(100vw - 16px));
+  max-height: 44px;
+  border-width: 8px;
+  padding: 2px 8px;
+  cursor: url('/cursors/hand_point.png') 12 4, pointer;
+}
+.hv-wt-compact.is-expanded { max-height: none; }
+.hv-wt-compact .hv-wt-ico { display: inline-flex; }
+.hv-wt-compact .hv-wt-step { display: none; }
+.hv-wt-compact .hv-wt-body { display: none; }
+.hv-wt-compact .hv-wt-main { flex: 1 1 auto; }
+.hv-wt-compact .hv-wt-title {
+  font-size: 13px; margin: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hv-wt-compact .hv-wt-foot { flex: 0 0 auto; }
+.hv-wt-compact.is-expanded { align-items: flex-start; }
+.hv-wt-compact.is-expanded .hv-wt-main { padding-top: 2px; }
+.hv-wt-compact.is-expanded .hv-wt-title { white-space: normal; }
+.hv-wt-compact.is-expanded .hv-wt-body { display: block; margin: 4px 0 0; }
+
+/* Minimized: the card collapses to a small scroll chip at its docked edge. */
+.hv-wt-card.is-hidden, .hv-wt-chip.is-hidden { display: none; }
+.hv-wt-chip {
+  position: absolute;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px; height: 46px;
+  padding: 0;
+  background: var(--cream);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 3px 0 var(--wood-dark);
+  color: var(--wood-dark);
+  cursor: url('/cursors/hand_point.png') 12 4, pointer;
+  transition: left 180ms ease-out, top 180ms ease-out;
+}
+.hv-wt-chip:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark); }
+.hv-wt-chip .hv-icon-mask { color: var(--wood-dark); }
 
 @media (prefers-reduced-motion: reduce) {
   .hv-wt-arrow { animation: none; }
-  .hv-wt-spot, .hv-wt-arrow, .hv-wt-card { transition: none; }
+  .hv-wt-spot, .hv-wt-arrow, .hv-wt-card, .hv-wt-chip { transition: none; }
 }
 `;
