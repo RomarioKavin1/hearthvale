@@ -2,12 +2,12 @@
 
 A cozy village your whole subreddit builds together — and it only works if you build it together.
 
-Hearthvale is a shared, persistent village that lives inside a single Reddit post. Everyone in the subreddit settles plots on the same island, and the loop is one gesture: tap a ripe building and coins pop instantly — your harvest sells itself into the village stockpile at whatever the market pays right now. Underneath, a real economy hums: prices move with supply, workshops pull inputs out of the shared stockpile, and the Village Hall only rises when people craft planks and bricks together. Part village-builder, part town square.
+Hearthvale is a shared, persistent village that lives inside a single Reddit post. Everyone in the subreddit settles plots on the same island, and the loop is simple: tap a ripe building to harvest it, then sell at the village market — where prices rise when the village runs short and fall when it is well stocked. Underneath, a real economy hums: prices move with supply, workshops pull inputs out of the shared stockpile, and the Village Hall only rises when people craft planks and bricks together. Part village-builder, part town square.
 
 ## What it is
 
 - **A shared village.** One island, one economy, everyone plays on the same map in real time.
-- **Tap → coins.** Fields, groves and quarries ripen on timers; tapping them sells the harvest automatically at the current village price.
+- **Tap → harvest → sell.** Fields, groves and quarries ripen on timers; tap to gather, then sell at the market when the price is right.
 - **A living market underneath.** Every good has a price that moves with supply — the market panel shows at a glance what the village needs next.
 - **The Village Hall.** A five-level hall the community raises together with planks and bricks — the shared goal no single player can finish.
 
@@ -15,14 +15,16 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 
 1. **Settle.** Tap open grass to claim a plot — your first claim builds your House.
 2. **Plant.** Build a wheat field, a forester's grove, or a quarry and let it ripen.
-3. **Tap to collect.** Your harvest sells itself into the village stockpile — coins pop instantly, and scarce goods pay more.
+3. **Tap to collect, then sell.** Gather your harvest and sell it at the Village Market — scarce goods pay more, and your sales fill the stockpile that powers everyone's workshops. A guided tour walks you through your first sale.
 4. **Grow.** Spend coins on more buildings and upgrades. Sawmills and kilns craft planks and bricks, the Hall-building material; a windmill and bakery turn the village's wheat into bread money.
 5. **Raise the Village Hall together.** Contribute planks and bricks. Every level pays a pot split by contribution, buffs the whole village, and unlocks new land.
 
 ## Features
 
 - **12 buildings across three production chains** — grain, wood, and stone — plus a bakery, houses, a manor, and decor pieces.
-- **Auto-selling harvests** — no inventory to manage; the market prices every tap, rising when the village runs short and falling when it is well stocked.
+- **A living market** — sell your goods when the price is right; prices rise when the village runs short and fall when it is well stocked, and workshops buy their inputs from the stockpile your sales fill.
+- **Golden Perfect Harvests** — ripe buildings sparkle gold now and then; tap during the sparkle for a double harvest.
+- **A guided tour and quest journal** — a spotlight walkthrough covers your first session, and an 17-goal journal hands you the next objective (with rewards) for weeks.
 - **The Village Hall** — five levels built from planks and bricks, with pro-rata coin payouts, a village-wide production buff per level, land-ring unlocks, and naming rights for top contributors.
 - **Placement strategy** — a windmill by a wheat field earns more, so does a sawmill by a grove; river-side raw producers do best of all, and decor spreads a smaller bonus.
 - **Daily weather and rotating festivals** — one "Today" chip tells you what pays best; the festival category auto-rotates every day.
