@@ -1,51 +1,73 @@
-# Devpost Submission Draft — Hearthvale
+# Devpost Submission — FINAL copy-paste pack
 
-**Submission form fields** (https://redditgameswithahook.devpost.com — deadline July 16, 6:30am IST)
+Form: https://redditgameswithahook.devpost.com → "Enter a Submission"
+Deadline: **July 15, 2026, 6:00pm Pacific = July 16, 6:30am IST**
 
-- **App listing:** https://developers.reddit.com/apps/hearthvale
-- **Demo post:** [newest post on r/hearthvale_dev — grab the direct post URL] (make subreddit PUBLIC first: Mod Tools → Settings → Community type → Public)
-- **Video:** [YouTube link, ≤ 1 min]
-- **Repo (optional):** flip github.com/RomarioKavin1/hearthvale to public if desired
-- **Categories:** Best App with a Hook · Best Use of Retention Mechanisms · Best Use of User Contributions
+## Form fields
 
----
+| Field | Value |
+|---|---|
+| Project name | Hearthvale |
+| Tagline | A cozy village your whole subreddit builds together. |
+| App listing | https://developers.reddit.com/apps/hearthvale |
+| Demo post | https://www.reddit.com/r/hearthvale_dev/comments/1ut69an/hearthvale_build_our_village_together/ |
+| Test subreddit | https://www.reddit.com/r/hearthvale_dev (⚠️ make PUBLIC before submitting) |
+| Video | [YOUR YOUTUBE LINK — ≤1 min, public] |
+| Repo (optional) | https://github.com/RomarioKavin1/hearthvale (⚠️ only if flipped public) |
+| Categories | Best App with a Hook · Best Use of Retention Mechanisms · Best Use of User Contributions (+ Phaser if the form allows) |
 
-## Inspiration
+## Text description (paste as the main description)
 
-Every subreddit is already a village — people show up daily, tend their corner, and build something none of them could alone. We wanted a game where that's literal: one persistent world per subreddit that only grows if the community grows.
+### Inspiration
 
-## What it does
+Every subreddit is already a village — people show up daily, tend their corner, and build something none of them could alone. Hearthvale makes that literal: one persistent world per subreddit that only grows if the community grows.
 
-Hearthvale gives every subreddit its own floating-island village. You found a homestead, farm and craft on real-time timers, and sell into a village market where prices move with scarcity — your wheat literally feeds your neighbor's windmill. Everyone contributes planks and bricks to raise the Village Hall: each level needs both resources AND population, and pays back with land expansions, village-wide perks, and a castle that visibly grows at the center of the map. A guided tour walks new players from first tap to first sale; a quest journal hands you the next goal for your first two weeks; streaks, daily weather, festivals, and golden "perfect harvest" windows give every day a reason to come back.
+### What it does
 
-## The hook
+Hearthvale is a shared, persistent village living inside a Reddit post. Every member settles a homestead on the *same* map, farms and crafts on real-time timers, and trades in a village market where prices move with scarcity — sell your wheat and it fills the stockpile that your neighbor's windmill grinds into flour. Nobody can do it alone by design: the Village Hall — a castle at the center of the map — needs both pooled resources AND population to level, and each level unlocks new land, village-wide perks, and a visibly bigger castle for everyone.
 
-Four things change while you're away: your timers finish, market prices move, the Hall inches forward, and the weather/festival roll over — and the daily auto-post puts that delta in the feed. The deeper hook is social: land only unlocks when more villagers join, so every player becomes a recruiter, and every subreddit's village (terrain, economy, hall progress, even its name and theme — mods customize both) is unmistakably theirs.
+This is a game about interaction, not solo play. Your prices are set by what others sell. Your windmill starves unless someone farms. Your boosts help neighbors' plots. New land arrives only when new villagers do — so every player becomes a recruiter. And the game talks back into the subreddit: milestones post as comments, level-ups and Hall stages offer one-tap share-to-comments, top contributors win naming rights over Hall levels, level titles become user flair, and a daily auto-post drops the market report and weather into the feed so the comment section becomes the village's town square ("we need two more villagers!", "bricks are paying triple, someone build a kiln").
 
-## How we built it
+A spotlight-guided tour walks brand-new players from first tap to first sale; a 17-goal quest journal hands you the next objective for weeks; streaks, daily weather, rotating festivals, and golden "Perfect Harvest" windows (tap during the sparkle for double) give every single day a reason to come back.
 
-Devvit Web + Phaser 4 for the isometric world (Kenney's CC0 Sketch Town art, seeded terrain generation so every village's map is unique), a Hono serverless backend with all state in per-installation Redis, realtime channels for live neighbor activity, and the scheduler for daily weather/festival posts. All production math is lazy (computed from timestamps — no ticking), the market uses marginal pricing (structurally arbitrage-proof), and 249 unit tests cover the economy. We also built a local mock-server harness so the whole game is playable outside Reddit for fast iteration.
+Every subreddit's village is unmistakably its own: seeded terrain generation makes each map unique, moderators set the village's name and color theme from a mod menu, and players paint their roofs.
 
-## Challenges
+### The hook
 
-Making a co-op economy legible in 30 feed-seconds. We cut two full systems (a trader, festival voting) after playtests showed they added complexity without joy, rebuilt onboarding three times (tutorial → journal → guided spotlight tour), and redesigned the collective goal into a single Clash-of-Clans-style Village Hall when players couldn't see what the village was working toward.
+Four things change while you're away: your timers finish, market prices move, the Hall inches forward, and the weather/festival roll over — and the daily post puts that delta directly in the feed. The deeper hook is collective: land, perks, and the castle itself are gated on the village acting together.
 
-## Accomplishments
+### How we built it
 
-A real interdependent economy (specialize, trade through the stockpile, chase shortages) that a first-timer can enjoy without understanding; a world that visibly grows with its community; and a game that looks hand-crafted — no two villages alike.
+Devvit Web + Phaser 4 for the isometric world (Kenney's CC0 Sketch Town art, per-village seeded terrain), a Hono serverless backend with all state in per-installation Redis, realtime channels for live neighbor activity, and the scheduler for daily weather/festival posts. All production math is lazy (computed from timestamps — no ticking); the market uses marginal pricing (structurally arbitrage-proof — verified by a 210-case property test); ~250 unit tests cover the economy. We also built a local mock-server harness so the full game is playable outside Reddit for fast iteration.
 
-## What's next
+### Challenges we ran into
 
-Village orders board (Hay-Day-style co-op requests), seasonal events, cross-village visiting, and more Hall levels with mod-configurable perks.
+Making a co-op economy legible in 30 feed-seconds. We cut two complete systems (a wandering trader, festival voting) after playtests showed complexity without joy, rebuilt onboarding three times (tutorial → quest journal → spotlight tour), and redesigned the collective goal into a single Clash-of-Clans-style Village Hall when players couldn't see what the village was working toward.
 
-## Built during the hackathon
+### Accomplishments we're proud of
 
-Everything — first commit June 17-equivalent [adjust: repo history starts July 7], ~60 commits, all systems, art integration, and onboarding built within the submission window.
+A genuinely interdependent economy (specialize, trade through the stockpile, chase shortages) that a first-timer can enjoy without understanding it; a world that visibly grows with its community; and a hand-crafted look where no two villages are alike.
 
----
+### What's next
 
-### Category pitches (if the form asks)
+A village orders board (co-op requests), seasonal events, cross-village visiting, and mod-configurable Hall perks.
 
-- **Hook:** timers + moving prices + collective Hall + population-gated land = anticipation between every session.
-- **Retention:** daily weather/festival/streak/quests + auto-posted daily thread with the market report.
-- **User contributions:** the village IS user-generated — every building, sale, contribution, Hall level name, roof color, and the map's growth come from players; milestones post back into the thread as comments.
+### Built during the hackathon
+
+Everything — the project was started and completed entirely inside the submission window (~80 commits: economy, multiplayer server, renderer, onboarding, art integration, and a local dev harness).
+
+## Category pitches (if asked per category)
+
+- **Best App with a Hook:** timers + moving prices + a collective castle + population-gated land = anticipation baked into every session, and a daily post that surfaces the overnight delta in the feed.
+- **Best Use of Retention Mechanisms:** daily weather/festival rotation, check-in streaks, quest journal, leaderboards, flair titles, and a scheduler-driven daily post with the market report.
+- **Best Use of User Contributions:** the village IS user-generated — every building, sale, contribution, Hall-level name, roof color, and the map's own growth come from players, and their milestones flow back into the thread as comments.
+- **Best Use of Phaser:** a full isometric diorama renderer in Phaser 4 — seeded terrain composition, depth-sorted building stacking, ambient life (villagers with walk cycles, smoke, butterflies), camera fit, and a golden-window timing mechanic — all inside a Reddit webview.
+
+## Pre-submit checklist
+
+- [ ] r/hearthvale_dev set to PUBLIC (Mod Tools → Settings → Community type) — REQUIRED
+- [ ] Video recorded (script: docs/submission/video-script.md), uploaded to YouTube, link pasted
+- [ ] (Optional) GitHub repo → public, link pasted
+- [ ] (Optional) Developer feedback survey filled (qualifies for the $200 Feedback prize; one per entrant)
+- [ ] Form submitted before July 15, 6:00pm Pacific
+- [ ] (Nice-to-have) If the app review email arrives before the deadline and time permits: upload 0.0.19 so the listing shows the corrected README, re-publish (streamlined minor-update review)
