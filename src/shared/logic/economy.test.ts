@@ -129,10 +129,10 @@ describe('streakReward', () => {
 describe('accrue — coins buildings', () => {
   it('yields 1 coin for a fresh tier-1 house after 60s', () => {
     const t = tile({ buildingId: 'house' });
-    const { gained, consumed } = accrue(t, 60_000, 'raw', 0, 'clear', emptyStockpile());
+    const { gained, consumedStockpile } = accrue(t, 60_000, 'raw', 0, 'clear', emptyStockpile());
     // house rate 1/min: 1 coin, xp = ceil(1/10) = 1.
     expect(gained).toEqual({ coins: 1, xp: 1, goods: {} });
-    expect(consumed).toEqual({});
+    expect(consumedStockpile).toEqual({});
   });
 
   it('clamps to the tier cap after a long absence', () => {
@@ -173,10 +173,10 @@ describe('accrue — coins buildings', () => {
 describe('accrue — raw producers', () => {
   it('produces its good into gained.goods with matching xp', () => {
     const t = tile({ buildingId: 'wheatfield' });
-    const { gained, consumed } = accrue(t, 60_000, 'coins', 0, 'clear', emptyStockpile());
+    const { gained, consumedStockpile } = accrue(t, 60_000, 'coins', 0, 'clear', emptyStockpile());
     // 3 wheat/min * 1 min = 3.
     expect(gained).toEqual({ coins: 0, xp: 3, goods: { wheat: 3 } });
-    expect(consumed).toEqual({});
+    expect(consumedStockpile).toEqual({});
   });
 });
 
@@ -185,31 +185,118 @@ describe('accrue — processors (stockpile-limited)', () => {
     // windmill 1.5 flour/min; 200s -> potential 5 runs.
     const t = tile({ buildingId: 'windmill' });
     const now = 200_000;
-    const { gained, consumed } = accrue(t, now, 'coins', 0, 'clear', stocked({ wheat: 6 }));
+    const { gained, consumedStockpile } = accrue(t, now, 'coins', 0, 'clear', stocked({ wheat: 6 }));
     expect(gained).toEqual({ coins: 0, xp: 3, goods: { flour: 3 } });
-    expect(consumed).toEqual({ wheat: 6 });
+    expect(consumedStockpile).toEqual({ wheat: 6 });
   });
 
   it('runs to potential when the stockpile is ample', () => {
     const t = tile({ buildingId: 'windmill' });
-    const { gained, consumed } = accrue(t, 200_000, 'coins', 0, 'clear', stocked({ wheat: 100 }));
+    const { gained, consumedStockpile } = accrue(t, 200_000, 'coins', 0, 'clear', stocked({ wheat: 100 }));
     expect(gained.goods).toEqual({ flour: 5 });
-    expect(consumed).toEqual({ wheat: 10 });
+    expect(consumedStockpile).toEqual({ wheat: 10 });
   });
 
   it('bakery mints 12 coins per flour consumed', () => {
     // bakery 1 run/min; 120s -> 2 runs; 10 flour available.
     const t = tile({ buildingId: 'bakery' });
-    const { gained, consumed } = accrue(t, 120_000, 'coins', 0, 'clear', stocked({ flour: 10 }));
+    const { gained, consumedStockpile } = accrue(t, 120_000, 'coins', 0, 'clear', stocked({ flour: 10 }));
     expect(gained).toEqual({ coins: 24, xp: 3, goods: {} });
-    expect(consumed).toEqual({ flour: 2 });
+    expect(consumedStockpile).toEqual({ flour: 2 });
   });
 
   it('bakery caps output at 480 coins (40 flour) on a long absence', () => {
     const t = tile({ buildingId: 'bakery' });
-    const { gained, consumed } = accrue(t, 1_000_000_000, 'coins', 0, 'clear', stocked({ flour: 1000 }));
+    const { gained, consumedStockpile } = accrue(t, 1_000_000_000, 'coins', 0, 'clear', stocked({ flour: 1000 }));
     expect(gained.coins).toBe(480);
-    expect(consumed).toEqual({ flour: 40 });
+    expect(consumedStockpile).toEqual({ flour: 40 });
+  });
+});
+
+describe('accrue — processors (wallet-first)', () => {
+  it('grinds the owner wallet first, free, before the stockpile', () => {
+    // windmill 1.5/min; 200s → potential 5 runs → 10 wheat needed.
+    const t = tile({ buildingId: 'windmill' });
+    const { gained, consumedWallet, consumedStockpile } = accrue(
+      t,
+      200_000,
+      'coins',
+      0,
+      'clear',
+      emptyStockpile(),
+      stocked({ wheat: 100 })
+    );
+    expect(gained.goods).toEqual({ flour: 5 });
+    // All 10 wheat came from the wallet — nothing bought from the stockpile.
+    expect(consumedWallet).toEqual({ wheat: 10 });
+    expect(consumedStockpile).toEqual({});
+  });
+
+  it('splits wallet-first then stockpile: 3 of 8 from wallet, 5 from stock', () => {
+    // 160s → potential exactly 4 runs → 8 wheat needed; wallet holds only 3.
+    const t = tile({ buildingId: 'windmill' });
+    const { gained, consumedWallet, consumedStockpile } = accrue(
+      t,
+      160_000,
+      'coins',
+      0,
+      'clear',
+      stocked({ wheat: 100 }),
+      stocked({ wheat: 3 })
+    );
+    expect(gained.goods).toEqual({ flour: 4 });
+    expect(consumedWallet).toEqual({ wheat: 3 });
+    expect(consumedStockpile).toEqual({ wheat: 5 });
+  });
+
+  it('runs on the combined wallet+stockpile total when each alone is short', () => {
+    // per 2; wallet 3 + stock 3 = 6 → 3 runs (potential 5 is not the limit here).
+    const t = tile({ buildingId: 'windmill' });
+    const { gained, consumedWallet, consumedStockpile } = accrue(
+      t,
+      200_000,
+      'coins',
+      0,
+      'clear',
+      stocked({ wheat: 3 }),
+      stocked({ wheat: 3 })
+    );
+    expect(gained.goods).toEqual({ flour: 3 });
+    expect(consumedWallet).toEqual({ wheat: 3 });
+    expect(consumedStockpile).toEqual({ wheat: 3 });
+  });
+
+  it('starves only when BOTH the wallet and stockpile lack the input', () => {
+    const t = tile({ buildingId: 'windmill' });
+    const { gained, consumedWallet, consumedStockpile } = accrue(
+      t,
+      200_000,
+      'coins',
+      0,
+      'clear',
+      emptyStockpile(),
+      emptyStockpile()
+    );
+    expect(gained).toEqual({ coins: 0, xp: 0, goods: {} });
+    expect(consumedWallet).toEqual({});
+    expect(consumedStockpile).toEqual({});
+  });
+
+  it('bakery mints coins from its own wallet flour, buying nothing', () => {
+    // bakery 1/min; 120s → 2 runs; wallet holds 10 flour, stockpile empty.
+    const t = tile({ buildingId: 'bakery' });
+    const { gained, consumedWallet, consumedStockpile } = accrue(
+      t,
+      120_000,
+      'coins',
+      0,
+      'clear',
+      emptyStockpile(),
+      stocked({ flour: 10 })
+    );
+    expect(gained.coins).toBe(24);
+    expect(consumedWallet).toEqual({ flour: 2 });
+    expect(consumedStockpile).toEqual({});
   });
 });
 

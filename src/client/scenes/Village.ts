@@ -37,6 +37,7 @@ import type {
   VillageTheme,
 } from '../../shared/types';
 import { BUILDING_ART, roofKeyFor } from '../art/manifest';
+import { buildBuildingAccents } from '../art/accents';
 import type { SpriteKey } from '../art/manifest';
 import type { Cluster } from '../art/render';
 import {
@@ -221,6 +222,11 @@ type TileView = {
    * this tile's building and torn down in clearStructural when the tile changes. */
   smokeTimer: Phaser.Time.TimerEvent | undefined;
   pulseTween: Phaser.Tweens.Tween | undefined;
+  /** E3: the building's distinct drawn accents (windmill sails, kiln ember, saw
+   * blade, awning, balcony/hedges, quarry pit, house tier trim) + their motion
+   * tweens (blade/saw spin, ember pulse). Destroyed together in clearStructural. */
+  accents: Phaser.GameObjects.GameObject[];
+  accentTweens: Phaser.Tweens.Tween[];
   sig: string;
   constructing: boolean;
 };
@@ -1067,6 +1073,8 @@ export class Village extends Scene {
       cropBase: undefined,
       smokeTimer: undefined,
       pulseTween: undefined,
+      accents: [],
+      accentTweens: [],
       sig: '',
       constructing: false,
     };
@@ -1196,6 +1204,7 @@ export class Village extends Scene {
       }
       view.primary = base;
       view.parts.push(base, roof);
+      this.addBuildingAccents(view, tile, sx, sy);
       return;
     }
 
@@ -1219,6 +1228,29 @@ export class Village extends Scene {
       view.parts.push(img);
       if (!view.primary) view.primary = img;
     }
+    this.addBuildingAccents(view, tile, sx, sy);
+  }
+
+  /** Compose the building's distinct drawn accents (E3) and record them on the
+   * view so they tear down with the rest of the structure. Motion (blade/saw spin,
+   * ember pulse) is suppressed under reduced motion — the accents freeze legibly. */
+  private addBuildingAccents(
+    view: TileView,
+    tile: TileState,
+    sx: number,
+    sy: number
+  ): void {
+    if (tile.buildingId === undefined) return;
+    const { objects, tweens } = buildBuildingAccents(
+      this,
+      tile.buildingId,
+      tile.tier,
+      sx,
+      sy,
+      !this.reducedMotion
+    );
+    for (const o of objects) view.accents.push(o);
+    for (const t of tweens) view.accentTweens.push(t);
   }
 
   /** The wheatfield's current growth sprite + fraction (0..1 of the tier cap):
@@ -1340,6 +1372,11 @@ export class Village extends Scene {
       view.pulseTween.remove();
       view.pulseTween = undefined;
     }
+    // E3 building accents (drawn sails/ember/saw/awning/pit + their motion tweens).
+    for (const t of view.accentTweens) t.remove();
+    view.accentTweens = [];
+    for (const a of view.accents) a.destroy();
+    view.accents = [];
     view.growthKey = undefined;
     view.cropBase?.destroy();
     view.cropBase = undefined;
@@ -1397,7 +1434,7 @@ export class Village extends Scene {
         // input goods, are recognised as ready — matching the Collect badge's
         // readyCount. An emptyStockpile() here made every processor read as 0
         // output, so its pending-production pip never appeared.
-        const { gained } = accrue(tile, now, fest, adj, data.city.weather, data.stockpile);
+        const { gained } = accrue(tile, now, fest, adj, data.city.weather, data.stockpile, data.me?.wallet);
         ready = gained.coins + goodsTotal(gained.goods) > 0;
       }
       if (ready && !view.pip) {
@@ -1661,7 +1698,7 @@ export class Village extends Scene {
         const adj = adjacencyBonus(data.grid, x, y, data.city.festival, now);
         // Real stockpile (see updatePips): keeps the fast-tap-collect path in step
         // with the ready pip so a tapped processor tile actually collects.
-        const { gained } = accrue(tile, now, data.city.festival, adj, data.city.weather, data.stockpile);
+        const { gained } = accrue(tile, now, data.city.festival, adj, data.city.weather, data.stockpile, data.me?.wallet);
         if (gained.coins + goodsTotal(gained.goods) > 0) {
           this.collectTile(x, y);
           return;

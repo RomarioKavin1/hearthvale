@@ -496,31 +496,58 @@ const renderProducerStats = (
     stack.appendChild(el('div', { cls: 'hv-note hv-muted', text: `Village Hall +${3 * data.city.hallLevel}%` }));
   }
 
-  // Processor starvation: no input in the village stockpile.
-  if (spec.role === 'processor' && spec.input && data.stockpile[spec.input.good] < spec.input.per) {
-    const input = spec.input.good;
-    const warn = el('div', {
-      cls: 'hv-warn',
+  // Processor input source (wallet-first): the workshop grinds the OWNER'S own
+  // wallet input for free, then buys the remainder from the village stockpile.
+  const inputSpec = spec.role === 'processor' ? spec.input : undefined;
+  if (inputSpec) {
+    const g = inputSpec.good;
+    const walletInput = data.me?.wallet[g] ?? 0;
+    const stockInput = data.stockpile[g];
+    const price = priceFor(stockInput, g);
+    const info = el('div', {
+      cls: 'hv-note hv-muted',
       children: [
-        goodIcon(input, 18),
-        el('span', { text: `The stockpile has no ${GOOD_LABEL[input]} — harvest some or build fields.` }),
+        goodIcon(g, 16),
+        el('span', {
+          text: `Grinds your ${GOOD_LABEL[g]} first (you hold ${fmtInt(walletInput)}), then buys from the village stockpile (${fmtInt(stockInput)} in stock at ${fmtInt(price)} coins).`,
+        }),
       ],
     });
     withTip(
-      warn,
-      'Workshops draw their inputs from the shared village stockpile — an empty stockpile means no output.'
+      info,
+      'Processors use your own wallet goods first (free — it’s your own grain), then buy any remainder from the shared village stockpile at the market price.'
     );
-    stack.appendChild(warn);
-    const openMkt = el('button', {
-      cls: 'hv-btn hv-btn-ghost',
-      text: 'Open market',
-      attrs: { type: 'button' },
-      on: { click: () => openMarketSheet() },
-    });
-    stack.appendChild(openMkt);
+    stack.appendChild(info);
+
+    // Starvation warning ONLY when BOTH the wallet and the stockpile are empty.
+    if (walletInput + stockInput < inputSpec.per) {
+      const warn = el('div', {
+        cls: 'hv-warn',
+        children: [
+          goodIcon(g, 18),
+          el('span', { text: `No ${GOOD_LABEL[g]} anywhere — grow some or wait for the market.` }),
+        ],
+      });
+      stack.appendChild(warn);
+      const openMkt = el('button', {
+        cls: 'hv-btn hv-btn-ghost',
+        text: 'Open market',
+        attrs: { type: 'button' },
+        on: { click: () => openMarketSheet() },
+      });
+      stack.appendChild(openMkt);
+    }
   }
 
-  const { gained, consumed } = accrue(tile, now, fest, adj, data.weather, data.stockpile);
+  const { gained, consumedWallet, consumedStockpile } = accrue(
+    tile,
+    now,
+    fest,
+    adj,
+    data.weather,
+    data.stockpile,
+    data.me?.wallet
+  );
   const accrued = gained.coins + goodsTotal(gained.goods);
   const frac = statsT.cap > 0 ? accrued / statsT.cap : 0;
   stack.appendChild(
@@ -528,9 +555,8 @@ const renderProducerStats = (
   );
   stack.appendChild(el('div', { cls: 'hv-fill-cap', text: `Storage ${fmtInt(accrued)} / ${fmtInt(statsT.cap)}` }));
 
-  // Collect preview: goods now go to the OWNER'S wallet (manual selling later),
-  // so raw/processed producers show the units they will bank; the bakery shows
-  // its net coins. Server has authority on the exact buffed figure, hence '≈'.
+  // Collect preview: goods go to the OWNER'S wallet; the bakery shows net coins.
+  // Only the STOCKPILE-bought portion costs coins — the wallet-first part is free.
   let estCoins = gained.coins;
   if (spec.role === 'raw' && spec.good) {
     const units = gained.goods[spec.good] ?? 0;
@@ -544,27 +570,26 @@ const renderProducerStats = (
     }
   } else if (spec.role === 'processor' && spec.input && spec.output) {
     const inputGood = spec.input.good;
-    const units = consumed[inputGood] ?? 0;
-    const cost = units > 0 ? priceFor(data.stockpile[inputGood], inputGood) * units : 0;
+    const freeUnits = consumedWallet[inputGood] ?? 0;
+    const paidUnits = consumedStockpile[inputGood] ?? 0;
+    const cost = paidUnits > 0 ? priceFor(data.stockpile[inputGood], inputGood) * paidUnits : 0;
     if (spec.output === 'coins') {
-      // Bakery: net-coins preview after buying its flour from the stockpile.
+      // Bakery: net coins after buying only its stockpile flour (wallet flour free).
       estCoins = Math.max(0, gained.coins - cost);
-      if (units > 0) {
-        stack.appendChild(
-          el('div', {
-            cls: 'hv-note hv-muted',
-            text: `≈${fmtInt(estCoins)} coins after buying ${GOOD_LABEL[inputGood]}`,
-          })
-        );
+      if (freeUnits + paidUnits > 0) {
+        const text =
+          cost > 0
+            ? `≈${fmtInt(estCoins)} coins — ${fmtInt(freeUnits)} ${GOOD_LABEL[inputGood]} free, ${fmtInt(paidUnits)} bought (≈${fmtInt(cost)} coins)`
+            : `≈${fmtInt(estCoins)} coins from your own ${GOOD_LABEL[inputGood]}`;
+        stack.appendChild(el('div', { cls: 'hv-note hv-muted', text }));
       }
-    } else if (units > 0) {
-      // Windmill/sawmill/kiln: output goes to your wallet; inputs cost coins.
-      stack.appendChild(
-        el('div', {
-          cls: 'hv-note hv-muted',
-          text: `Inputs: ~${fmtInt(units)} ${GOOD_LABEL[inputGood]} (≈${fmtInt(cost)} coins from your balance) → ${GOOD_LABEL[spec.output]} to your wallet`,
-        })
-      );
+    } else if (freeUnits + paidUnits > 0) {
+      // Windmill/sawmill/kiln: output → wallet; only the stockpile part costs coins.
+      const text =
+        paidUnits > 0
+          ? `${fmtInt(freeUnits)} of your ${GOOD_LABEL[inputGood]} free + ${fmtInt(paidUnits)} bought (≈${fmtInt(cost)} coins) → ${GOOD_LABEL[spec.output]} to your wallet`
+          : `${fmtInt(freeUnits)} of your own ${GOOD_LABEL[inputGood]} (free) → ${GOOD_LABEL[spec.output]} to your wallet`;
+      stack.appendChild(el('div', { cls: 'hv-note hv-muted', text }));
     }
   }
 

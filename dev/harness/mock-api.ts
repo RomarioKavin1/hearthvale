@@ -270,11 +270,12 @@ const affordableRuns = (
   balance: number,
   price: number,
   per: number,
-  runs: number
+  runs: number,
+  freeUnits = 0
 ): number => {
-  const costPerRun = price * per;
-  if (costPerRun <= 0) return runs;
-  return Math.min(runs, Math.floor(balance / costPerRun));
+  if (price <= 0 || per <= 0) return runs;
+  const paidUnits = Math.floor(balance / price);
+  return Math.min(runs, Math.floor((freeUnits + paidUnits) / per));
 };
 
 const applyHallBuff = (
@@ -312,7 +313,8 @@ type CollectResult = {
   tile: TileState;
   player: PlayerState;
   gained: Gained;
-  consumed: Partial<Record<Good, number>>;
+  consumedWallet: Partial<Record<Good, number>>;
+  consumedStockpile: Partial<Record<Good, number>>;
   stocked: Partial<Record<Good, number>>;
   golden: boolean;
 };
@@ -327,9 +329,10 @@ const applyCollect = (
   houseTier: number,
   golden = false
 ): CollectResult => {
-  const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile);
+  const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile, player.wallet);
   let gained: Gained = raw.gained;
-  let consumed = raw.consumed;
+  let consumedWallet = raw.consumedWallet;
+  let consumedStockpile = raw.consumedStockpile;
 
   const spec = tile.buildingId ? CATALOG[tile.buildingId] : undefined;
   const isHouse = spec?.special === 'house';
@@ -337,18 +340,24 @@ const applyCollect = (
   const outputGood = spec?.output;
   const netsFromRevenue = outputGood === 'coins';
 
+  // Wallet-first: only the stockpile-bought portion is paid for.
   let inputCost = 0;
   if (spec && spec.role === 'processor' && spec.input && spec.output) {
     const input = spec.input;
     const price = priceFor(stockpile[input.good], input.good);
-    const consumedUnits = consumed[input.good] ?? 0;
-    const runs = input.per > 0 ? Math.floor(consumedUnits / input.per) : 0;
+    const walletHave = player.wallet[input.good] ?? 0;
+    const totalUnits = (consumedWallet[input.good] ?? 0) + (consumedStockpile[input.good] ?? 0);
+    const runs = input.per > 0 ? Math.floor(totalUnits / input.per) : 0;
 
     if (!netsFromRevenue && spec.output !== 'coins') {
-      const affordable = affordableRuns(player.coins, price, input.per, runs);
+      const affordable = affordableRuns(player.coins, price, input.per, runs, walletHave);
       if (affordable < runs) {
         const outGood = spec.output;
-        consumed = { [input.good]: affordable * input.per };
+        const units = affordable * input.per;
+        const fromWallet = Math.min(walletHave, units);
+        const fromStock = units - fromWallet;
+        consumedWallet = fromWallet > 0 ? { [input.good]: fromWallet } : {};
+        consumedStockpile = fromStock > 0 ? { [input.good]: fromStock } : {};
         gained = {
           coins: 0,
           xp: affordable,
@@ -356,7 +365,7 @@ const applyCollect = (
         };
       }
     }
-    inputCost = price * (consumed[input.good] ?? 0);
+    inputCost = price * (consumedStockpile[input.good] ?? 0);
   }
 
   gained = applyHallBuff(gained, city.hallLevel, houseTier, isHouse);
@@ -393,13 +402,19 @@ const applyCollect = (
   const produced =
     netCoins + goodsOut > 0 ||
     paidFromBalance > 0 ||
-    goodsTotal(consumed) > 0;
+    goodsTotal(consumedStockpile) > 0 ||
+    goodsTotal(consumedWallet) > 0;
 
   let nextTile: TileState = { ...tile };
   let nextPlayer = player;
 
   if (produced) {
     const wallet = { ...player.wallet };
+    // Wallet-first inputs consumed FREE leave the owner's wallet.
+    for (const g of GOODS) {
+      const v = consumedWallet[g];
+      if (v) wallet[g] = (wallet[g] ?? 0) - v;
+    }
     for (const g of GOODS) {
       const v = gained.goods[g];
       if (v) wallet[g] = (wallet[g] ?? 0) + v;
@@ -424,7 +439,8 @@ const applyCollect = (
     tile: nextTile,
     player: nextPlayer,
     gained,
-    consumed,
+    consumedWallet,
+    consumedStockpile,
     stocked,
     golden: golden && produced,
   };
@@ -781,8 +797,8 @@ const doUpgrade = (userId: string, x: number, y: number): { tile: TileState; me:
   );
 
   let stockChanged = false;
-  if (goodsTotal(collected.consumed) > 0 || goodsTotal(collected.stocked) > 0) {
-    for (const g of GOODS) world.stockpile[g] += (collected.stocked[g] ?? 0) - (collected.consumed[g] ?? 0);
+  if (goodsTotal(collected.consumedStockpile) > 0 || goodsTotal(collected.stocked) > 0) {
+    for (const g of GOODS) world.stockpile[g] += (collected.stocked[g] ?? 0) - (collected.consumedStockpile[g] ?? 0);
     stockChanged = true;
   }
   world.grid[key] = upgraded;
@@ -901,10 +917,14 @@ const doCollect = (
   const result = applyCollect(tile, player, world.city, now, adj, world.stockpile, houseTier, golden);
   const gained = result.gained;
   const banked = gained.coins + goodsTotal(gained.goods);
-  const stockChanged = goodsTotal(result.consumed) > 0 || goodsTotal(result.stocked) > 0;
-  const produced = banked > 0 || stockChanged;
+  const stockChanged = goodsTotal(result.consumedStockpile) > 0 || goodsTotal(result.stocked) > 0;
+  const produced = banked > 0 || stockChanged || goodsTotal(result.consumedWallet) > 0;
 
-  const proc = processedUnits(tile.buildingId, gained, result.consumed);
+  const proc = processedUnits(
+    tile.buildingId,
+    gained,
+    mergeGoods(result.consumedWallet, result.consumedStockpile)
+  );
   const me: PlayerState = {
     ...result.player,
     collects: result.player.collects + (banked > 0 ? 1 : 0),
@@ -917,7 +937,7 @@ const doCollect = (
     world.city = { ...world.city, totalCollected: world.city.totalCollected + banked };
   }
   if (stockChanged) {
-    for (const g of GOODS) world.stockpile[g] += (result.stocked[g] ?? 0) - (result.consumed[g] ?? 0);
+    for (const g of GOODS) world.stockpile[g] += (result.stocked[g] ?? 0) - (result.consumedStockpile[g] ?? 0);
   }
   bTile(key, result.tile);
   if (stockChanged && anyPriceChanged(before, world.stockpile)) bMarket(world.stockpile);
@@ -948,17 +968,22 @@ const doCollectAll = (
     total.coins += result.gained.coins;
     total.goods = mergeGoods(total.goods, result.gained.goods);
     total.xp += result.gained.xp;
-    const consumedUnits = goodsTotal(result.consumed);
+    const stockUnits = goodsTotal(result.consumedStockpile);
+    const walletUnits = goodsTotal(result.consumedWallet);
     const stockedUnits = goodsTotal(result.stocked);
-    if (consumedUnits > 0 || stockedUnits > 0) {
-      for (const g of GOODS) world.stockpile[g] += (result.stocked[g] ?? 0) - (result.consumed[g] ?? 0);
+    if (stockUnits > 0 || stockedUnits > 0) {
+      for (const g of GOODS) world.stockpile[g] += (result.stocked[g] ?? 0) - (result.consumedStockpile[g] ?? 0);
       stockChanged = true;
     }
     const banked = result.gained.coins + goodsTotal(result.gained.goods);
     if (banked > 0) collectsBump += 1;
-    processedBump += processedUnits(tile.buildingId, result.gained, result.consumed);
+    processedBump += processedUnits(
+      tile.buildingId,
+      result.gained,
+      mergeGoods(result.consumedWallet, result.consumedStockpile)
+    );
     const boostChanged = result.tile.boostUntil !== tile.boostUntil;
-    if (banked > 0 || boostChanged || consumedUnits > 0 || stockedUnits > 0) {
+    if (banked > 0 || boostChanged || stockUnits > 0 || walletUnits > 0 || stockedUnits > 0) {
       changed.push({ key, tile: result.tile });
     }
   }
@@ -1180,7 +1205,7 @@ const loadSummary = (): Summary => {
     if (tile.owner !== DEV_USER || !tile.buildingId) continue;
     const { x, y } = parseKey(key);
     const adj = adjacencyBonus(world.grid, x, y, world.city.festival, now);
-    const { gained } = accrue(tile, now, world.city.festival, adj, world.city.weather, world.stockpile);
+    const { gained } = accrue(tile, now, world.city.festival, adj, world.city.weather, world.stockpile, world.players[DEV_USER]?.wallet);
     if (gained.coins + goodsTotal(gained.goods) > 0) readyForMe += 1;
   }
   let hot: Good = 'wheat';

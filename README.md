@@ -16,13 +16,13 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 1. **Settle.** Tap open grass to claim a plot — your first claim builds your House.
 2. **Plant.** Build a wheat field, a forester's grove, or a quarry and let it ripen.
 3. **Tap to collect, then sell.** Gather your harvest and sell it at the Village Market — scarce goods pay more, and your sales fill the stockpile that powers everyone's workshops. A guided tour walks you through your first sale.
-4. **Grow.** Spend coins on more buildings and upgrades. Sawmills and kilns craft planks and bricks, the Hall-building material; a windmill and bakery turn the village's wheat into bread money.
+4. **Grow.** Spend coins on more buildings and upgrades. Sawmills and kilns craft planks and bricks, the Hall-building material; a windmill and bakery turn wheat into bread money. Workshops grind your own wallet goods first, for free, and only buy any shortfall from the shared stockpile.
 5. **Raise the Village Hall together.** Contribute planks and bricks. Every level pays a pot split by contribution, buffs the whole village, and unlocks new land.
 
 ## Features
 
 - **12 buildings across three production chains** — grain, wood, and stone — plus a bakery, houses, a manor, and decor pieces.
-- **A living market** — sell your goods when the price is right; prices rise when the village runs short and fall when it is well stocked, and workshops buy their inputs from the stockpile your sales fill.
+- **A living market** — sell your goods when the price is right; prices rise when the village runs short and fall when it is well stocked. Workshops process your own held goods first (free), then buy any remainder from the stockpile your sales fill.
 - **Golden Perfect Harvests** — ripe buildings sparkle gold now and then; tap during the sparkle for a double harvest.
 - **A Village Mural** — a mini r/place in every village: a shared 24×16 canvas anyone can paint, 12 pixels a day, from a wooden board on the plaza. Every subreddit's village ends up looking different at a glance.
 - **Villager outfits** — pick one of eight colours for your walker so "the little one in red is me"; the villagers strolling the plaza wear their owners' chosen outfits.

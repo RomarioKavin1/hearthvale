@@ -3,6 +3,7 @@ import { PAL } from '../../shared/palette';
 import type { BuildingId, Tier } from '../../shared/types';
 import { BUILDING_ART, SPRITES } from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
+import { buildBuildingAccents } from '../art/accents';
 import {
   addBlock,
   addSurface,
@@ -87,6 +88,9 @@ export class ArtDebug extends Scene {
         d += 0.1;
       }
     }
+    // E3: the distinct per-building accents, frozen in a static pose here so the
+    // reviewer can read every silhouette (sails, ember, saw, awning, pit, trim).
+    buildBuildingAccents(this, id, tier, cx, cy, false);
   }
 
   private tile(key: SpriteKey, cx: number, cy: number, flipX = false): void {

@@ -376,7 +376,8 @@ export const readyCount = (data: StateResponse, id: string, now: number): number
     if (now < tile.readyAt) continue;
     const { x, y } = parseKey(key);
     const adj = adjacencyBonus(data.grid, x, y, fest, now);
-    const { gained } = accrue(tile, now, fest, adj, data.city.weather, stockpile);
+    // Wallet-first: the owner's own wallet can feed a processor, so count it too.
+    const { gained } = accrue(tile, now, fest, adj, data.city.weather, stockpile, data.me?.wallet);
     if (gained.coins + goodsTotal(gained.goods) > 0) n += 1;
   }
   return n;

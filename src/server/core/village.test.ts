@@ -464,7 +464,7 @@ describe('applyCollect — processors', () => {
     );
     // cap 45 flour; priceFor(100, wheat) === 3, per 2 → wheat cost 3×90 = 270,
     // paid from the owner's balance. Flour lands in the wallet like planks.
-    expect(res.consumed).toEqual({ wheat: 90 });
+    expect(res.consumedStockpile).toEqual({ wheat: 90 });
     expect(res.stocked).toEqual({});
     expect(res.gained.goods.flour).toBe(45);
     expect(res.player.wallet.flour).toBe(45);
@@ -489,7 +489,7 @@ describe('applyCollect — processors', () => {
     // cap 36 planks; priceFor(100, logs) === 4, per 2 → cost 4×72 = 288.
     expect(res.gained.goods.planks).toBe(36);
     expect(res.player.wallet.planks).toBe(36);
-    expect(res.consumed).toEqual({ logs: 72 });
+    expect(res.consumedStockpile).toEqual({ logs: 72 });
     expect(res.stocked).toEqual({});
     expect(res.player.coins).toBe(1000 - 288);
     expect(res.player.lifetimeEarned).toBe(0);
@@ -509,7 +509,7 @@ describe('applyCollect — processors', () => {
     );
     // cost/run = price 4 × per 2 = 8; floor(10/8) = 1 run only.
     expect(res.gained.goods.planks).toBe(1);
-    expect(res.consumed).toEqual({ logs: 2 });
+    expect(res.consumedStockpile).toEqual({ logs: 2 });
     expect(res.player.coins).toBe(10 - 8);
   });
 
@@ -524,9 +524,10 @@ describe('applyCollect — processors', () => {
       stock({ logs: 100 }),
       0
     );
-    // floor(5/8) = 0 runs.
+    // floor(5/8) = 0 runs. Nothing bought, wallet empty → both splits empty.
     expect(res.gained.goods.planks).toBeUndefined();
-    expect(res.consumed).toEqual({ logs: 0 });
+    expect(res.consumedStockpile).toEqual({});
+    expect(res.consumedWallet).toEqual({});
     expect(res.tile.lastCollect).toBe(0);
   });
 
@@ -542,13 +543,83 @@ describe('applyCollect — processors', () => {
       0
     );
     // cap 480 → 40 runs × 12 = 480 coins; priceFor(100, flour) === 5, cost 5×40 = 200.
-    expect(res.consumed).toEqual({ flour: 40 });
+    expect(res.consumedStockpile).toEqual({ flour: 40 });
     expect(res.stocked).toEqual({});
     expect(res.gained.coins).toBe(280);
     expect(res.player.coins).toBe(280);
     expect(res.player.lifetimeEarned).toBe(280);
     // The bakery sells nothing into the stockpile — no harvest units counted.
     expect(res.player.soldUnits).toBe(0);
+  });
+
+  it('grinds the owner wallet wheat FREE, charging no coins (the reported bug fix)', () => {
+    const t = tile({ buildingId: 'windmill', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(
+      t,
+      player({
+        coins: 500,
+        wallet: { wheat: 100, logs: 0, stone: 0, flour: 0, planks: 0, bricks: 0 },
+      }),
+      city({ festival: 'coins' }),
+      1_000_000_000,
+      0,
+      emptyStockpile(), // stockpile EMPTY — only the owner's wallet feeds the mill
+      0
+    );
+    // cap 45 flour → 90 wheat, all pulled FREE from the wallet.
+    expect(res.gained.goods.flour).toBe(45);
+    expect(res.consumedWallet).toEqual({ wheat: 90 });
+    expect(res.consumedStockpile).toEqual({});
+    expect(res.player.wallet.wheat).toBe(10);
+    expect(res.player.wallet.flour).toBe(45);
+    // No coins charged — the grain was the owner's own.
+    expect(res.player.coins).toBe(500);
+  });
+
+  it('splits wallet-first then buys the rest, charging only the stockpile part', () => {
+    const t = tile({ buildingId: 'windmill', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(
+      t,
+      player({
+        coins: 1000,
+        wallet: { wheat: 10, logs: 0, stone: 0, flour: 0, planks: 0, bricks: 0 },
+      }),
+      city({ festival: 'coins' }),
+      1_000_000_000,
+      0,
+      stock({ wheat: 100 }),
+      0
+    );
+    // 45 runs → 90 wheat: 10 free from wallet, 80 bought from the stockpile.
+    expect(res.gained.goods.flour).toBe(45);
+    expect(res.consumedWallet).toEqual({ wheat: 10 });
+    expect(res.consumedStockpile).toEqual({ wheat: 80 });
+    // priceFor(100, wheat) === 3; only the 80 stockpile units cost coins: 3×80 = 240.
+    expect(res.player.coins).toBe(1000 - 240);
+    expect(res.player.wallet.wheat).toBe(0);
+  });
+
+  it('bakery mints the full 12c/flour when the flour comes free from the wallet', () => {
+    const t = tile({ buildingId: 'bakery', lastCollect: 0, readyAt: 0 });
+    const res = applyCollect(
+      t,
+      player({
+        coins: 0,
+        wallet: { wheat: 0, logs: 0, stone: 0, flour: 100, planks: 0, bricks: 0 },
+      }),
+      city({ festival: 'coins' }),
+      1_000_000_000,
+      0,
+      emptyStockpile(),
+      0
+    );
+    // cap 480 → 40 runs × 12 = 480 coins; flour all from the wallet → nothing bought.
+    expect(res.consumedWallet).toEqual({ flour: 40 });
+    expect(res.consumedStockpile).toEqual({});
+    expect(res.gained.coins).toBe(480);
+    expect(res.player.coins).toBe(480);
+    expect(res.player.wallet.flour).toBe(60);
+    expect(res.player.lifetimeEarned).toBe(480);
   });
 });
 
@@ -601,7 +672,7 @@ describe('manual selling loop (P1) — collect to wallet, sell to refill stockpi
       0
     );
     // 50 wheat / 2 per run = 25 flour runs (capped below the tier cap of 45).
-    expect(milled.consumed).toEqual({ wheat: 50 });
+    expect(milled.consumedStockpile).toEqual({ wheat: 50 });
     expect(milled.gained.goods.flour).toBe(25);
     expect(milled.player.wallet.flour).toBe(25);
   });
@@ -654,6 +725,14 @@ describe('affordableRuns', () => {
   it('allows all runs for a free recipe', () => {
     expect(affordableRuns(0, 0, 2, 9)).toBe(9);
     expect(affordableRuns(0, 3, 0, 9)).toBe(9);
+  });
+
+  it('keeps wallet-funded runs affordable even with zero coins (wallet-first)', () => {
+    // 6 free wallet units, per 2, 0 coins → 3 free runs are still affordable.
+    expect(affordableRuns(0, 3, 2, 45, 6)).toBe(3);
+    // Coins extend beyond the free runs: 6 free units + floor(10/3)=3 paid units
+    // → floor(9/2)=4 runs affordable.
+    expect(affordableRuns(10, 3, 2, 45, 6)).toBe(4);
   });
 });
 

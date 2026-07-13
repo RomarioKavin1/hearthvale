@@ -671,7 +671,7 @@ const HOW_STEPS: Array<{ icon: SpriteKey; title: string; text: string }> = [
   { icon: 'icon-coin', title: 'Tap to collect', text: 'Tap a ready building to gather its goods — they go straight into your wallet.' },
   { icon: 'icon-cart', title: 'Sell at the Market', text: 'Sell your goods at the Market — prices rise when the village runs short, and processors buy from the stockpile your sales fill.' },
   { icon: 'icon-star', title: 'Perfect Harvest', text: 'Ripe buildings sparkle gold now and then — tap during the sparkle for a double harvest.' },
-  { icon: 'icon-hammer', title: 'Grow', text: 'Spend coins on more buildings and upgrades. Sawmills and kilns make planks and bricks.' },
+  { icon: 'icon-hammer', title: 'Grow', text: 'Spend coins on more buildings and upgrades. Workshops like the windmill grind YOUR OWN goods first (free), then buy any extra from the village stockpile. Sawmills and kilns make planks and bricks.' },
   { icon: 'icon-trophy', title: 'Raise the Village Hall', text: 'Contribute planks and bricks together — every Hall level boosts everyone and unlocks new land.' },
 ];
 

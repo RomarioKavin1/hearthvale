@@ -432,18 +432,23 @@ export const proRataPayout = (
 /**
  * How many processor recipe runs the owner can afford, given a coin `balance`,
  * the input `price`, the recipe input `per` (units consumed per run), and the
- * `runs` the stockpile could otherwise support. Each run costs `price × per`
- * coins; a free recipe (price or per 0) allows all runs.
+ * `runs` the available input could otherwise support. Each run's input is drawn
+ * WALLET-FIRST: `freeUnits` units come free from the owner's own wallet, and only
+ * the remaining input is bought from the stockpile at `price`. So the paid units
+ * for `n` runs are `max(0, n×per − freeUnits)`, and the affordable run count is
+ * `floor((freeUnits + floor(balance / price)) / per)` — the wallet-funded runs
+ * are always affordable. A free recipe (price or per 0) allows all runs.
  */
 export const affordableRuns = (
   balance: number,
   price: number,
   per: number,
-  runs: number
+  runs: number,
+  freeUnits = 0
 ): number => {
-  const costPerRun = price * per;
-  if (costPerRun <= 0) return runs;
-  return Math.min(runs, Math.floor(balance / costPerRun));
+  if (price <= 0 || per <= 0) return runs;
+  const paidUnits = Math.floor(balance / price);
+  return Math.min(runs, Math.floor((freeUnits + paidUnits) / per));
 };
 
 /**
@@ -535,8 +540,12 @@ export type CollectResult = {
   tile: TileState;
   player: PlayerState;
   gained: Gained;
-  /** Inputs pulled from the village stockpile (the caller writes these back). */
-  consumed: Partial<Record<Good, number>>;
+  /** Processor inputs pulled FREE from the owner's own wallet (wallet-first).
+   * ALREADY deducted from `player.wallet` — the caller just persists the player. */
+  consumedWallet: Partial<Record<Good, number>>;
+  /** Processor inputs bought from the village stockpile for the remainder (paid at
+   * market price); the caller decrements the stockpile by exactly these units. */
+  consumedStockpile: Partial<Record<Good, number>>;
   /** Units ADDED to the village stockpile on collect. Manual selling is the only
    * way goods enter the stockpile now, so a collect never stocks anything — this
    * stays empty and is retained purely for the caller's consume/stock write-back
@@ -560,10 +569,14 @@ export type CollectResult = {
  *   straight into the OWNER'S wallet on collect. Nothing is auto-sold and the
  *   collect never moves a market price; the player later sells goods at the
  *   Market (`doSell`), which is the ONLY way the shared stockpile refills.
- * - Goods-output processors (windmill/sawmill/kiln) pay their input cost from
- *   the owner's coin balance; unaffordable runs are trimmed (`affordableRuns`).
- *   Only the bakery (output === 'coins') nets its input cost out of the coins it
- *   mints.
+ * - WALLET-FIRST INPUTS: a processor consumes the owner's OWN wallet input first
+ *   (free — their own grain), then buys any remainder from the shared stockpile
+ *   at the market price. Goods-output processors (windmill/sawmill/kiln) pay only
+ *   for the stockpile part from the owner's coin balance; the free wallet part is
+ *   never charged (and `affordableRuns` only trims the PAID stockpile portion).
+ *   The bakery (output === 'coins') nets only its stockpile-bought flour cost out
+ *   of the coins it mints — self-supplied wallet flour mints the full 12c/flour.
+ *   Starvation (no output) only when BOTH wallet and stockpile lack the input.
  * - The Village Hall production buff (+3%/level) and the owner's house aura
  *   (+2%/house tier, excluding the house itself) scale the OUTPUT after accrual.
  * - PERFECT HARVEST (S2): when `golden` is true the buffed production is doubled
@@ -585,31 +598,40 @@ export const applyCollect = (
   houseTier: number,
   golden = false
 ): CollectResult => {
-  const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile);
+  const raw = accrue(tile, now, city.festival, adjBonus, city.weather, stockpile, player.wallet);
   let gained: Gained = raw.gained;
-  let consumed = raw.consumed;
+  let consumedWallet = raw.consumedWallet;
+  let consumedStockpile = raw.consumedStockpile;
 
   const spec = tile.buildingId ? CATALOG[tile.buildingId] : undefined;
   const isHouse = spec?.special === 'house';
 
   // Only the bakery's revenue arrives as coins at collect time, so only it nets
   // its input cost out of that revenue. Goods-output processors (windmill/
-  // sawmill/kiln) pay their input cost from the owner's coin balance.
+  // sawmill/kiln) pay their stockpile input cost from the owner's coin balance.
   const outputGood = spec?.output;
   const netsFromRevenue = outputGood === 'coins';
 
+  // Only the STOCKPILE-bought input is paid for; the wallet-first portion is free.
   let inputCost = 0;
   if (spec && spec.role === 'processor' && spec.input && spec.output) {
     const input = spec.input;
     const price = priceFor(stockpile[input.good], input.good);
-    const consumedUnits = consumed[input.good] ?? 0;
-    const runs = input.per > 0 ? Math.floor(consumedUnits / input.per) : 0;
+    const walletHave = player.wallet[input.good] ?? 0;
+    const totalUnits = (consumedWallet[input.good] ?? 0) + (consumedStockpile[input.good] ?? 0);
+    const runs = input.per > 0 ? Math.floor(totalUnits / input.per) : 0;
 
     if (!netsFromRevenue && spec.output !== 'coins') {
-      const affordable = affordableRuns(player.coins, price, input.per, runs);
+      // Trim only the PAID (stockpile) runs to what the owner can afford — the
+      // free wallet-funded runs are always kept — then re-split wallet-first.
+      const affordable = affordableRuns(player.coins, price, input.per, runs, walletHave);
       if (affordable < runs) {
         const outGood = spec.output;
-        consumed = { [input.good]: affordable * input.per };
+        const units = affordable * input.per;
+        const fromWallet = Math.min(walletHave, units);
+        const fromStock = units - fromWallet;
+        consumedWallet = fromWallet > 0 ? { [input.good]: fromWallet } : {};
+        consumedStockpile = fromStock > 0 ? { [input.good]: fromStock } : {};
         gained = {
           coins: 0,
           xp: affordable,
@@ -617,7 +639,7 @@ export const applyCollect = (
         };
       }
     }
-    inputCost = price * (consumed[input.good] ?? 0);
+    inputCost = price * (consumedStockpile[input.good] ?? 0);
   }
 
   // Hall + house buffs scale the output only (never the consumed inputs).
@@ -661,13 +683,20 @@ export const applyCollect = (
   const produced =
     netCoins + goodsOut > 0 ||
     paidFromBalance > 0 ||
-    goodsTotal(consumed) > 0;
+    goodsTotal(consumedStockpile) > 0 ||
+    goodsTotal(consumedWallet) > 0;
 
   let nextTile: TileState = { ...tile };
   let nextPlayer = player;
 
   if (produced) {
     const wallet = { ...player.wallet };
+    // Wallet-first inputs leave the owner's wallet FREE (their own grain).
+    for (const g of GOODS) {
+      const v = consumedWallet[g];
+      if (v) wallet[g] = (wallet[g] ?? 0) - v;
+    }
+    // Produced output goods land in the owner's wallet.
     for (const g of GOODS) {
       const v = gained.goods[g];
       if (v) wallet[g] = (wallet[g] ?? 0) + v;
@@ -699,7 +728,8 @@ export const applyCollect = (
     tile: nextTile,
     player: nextPlayer,
     gained,
-    consumed,
+    consumedWallet,
+    consumedStockpile,
     stocked,
     golden: golden && produced,
   };
@@ -1210,11 +1240,11 @@ export const doUpgrade = async (
   );
 
   const stockChanged =
-    goodsTotal(collected.consumed) > 0 || goodsTotal(collected.stocked) > 0;
+    goodsTotal(collected.consumedStockpile) > 0 || goodsTotal(collected.stocked) > 0;
   const pricesBefore = pricesFor(stockpile);
   if (stockChanged) {
     for (const g of GOODS) {
-      stockpile[g] += (collected.stocked[g] ?? 0) - (collected.consumed[g] ?? 0);
+      stockpile[g] += (collected.stocked[g] ?? 0) - (collected.consumedStockpile[g] ?? 0);
     }
     await putStockpile(stockpile);
   }
@@ -1319,12 +1349,15 @@ export const doCollect = async (
   const gained = result.gained;
   const banked = gained.coins + goodsTotal(gained.goods);
   const stockChanged =
-    goodsTotal(result.consumed) > 0 || goodsTotal(result.stocked) > 0;
-  const produced = banked > 0 || stockChanged;
+    goodsTotal(result.consumedStockpile) > 0 || goodsTotal(result.stocked) > 0;
+  // Wallet-first free inputs count as work too, so a wallet-only run still persists.
+  const produced = banked > 0 || stockChanged || goodsTotal(result.consumedWallet) > 0;
 
   // Quest counters: one collect (banked > 0), any processed output produced, and
-  // a Perfect Harvest when the golden window applied.
-  const proc = processedUnits(tile.buildingId, gained, result.consumed);
+  // a Perfect Harvest when the golden window applied. Processed output counts the
+  // TOTAL input consumed (wallet + stockpile).
+  const totalConsumed = mergeGoods(result.consumedWallet, result.consumedStockpile);
+  const proc = processedUnits(tile.buildingId, gained, totalConsumed);
   const me: PlayerState = {
     ...result.player,
     collects: result.player.collects + (banked > 0 ? 1 : 0),
@@ -1348,7 +1381,7 @@ export const doCollect = async (
   }
   if (stockChanged) {
     for (const g of GOODS) {
-      stockpile[g] += (result.stocked[g] ?? 0) - (result.consumed[g] ?? 0);
+      stockpile[g] += (result.stocked[g] ?? 0) - (result.consumedStockpile[g] ?? 0);
     }
     await putStockpile(stockpile);
   }
@@ -1394,19 +1427,24 @@ export const doCollectAll = async (
     total.coins += result.gained.coins;
     total.goods = mergeGoods(total.goods, result.gained.goods);
     total.xp += result.gained.xp;
-    const consumedUnits = goodsTotal(result.consumed);
+    const stockUnits = goodsTotal(result.consumedStockpile);
+    const walletUnits = goodsTotal(result.consumedWallet);
     const stockedUnits = goodsTotal(result.stocked);
-    if (consumedUnits > 0 || stockedUnits > 0) {
+    if (stockUnits > 0 || stockedUnits > 0) {
       for (const g of GOODS) {
-        stockpile[g] += (result.stocked[g] ?? 0) - (result.consumed[g] ?? 0);
+        stockpile[g] += (result.stocked[g] ?? 0) - (result.consumedStockpile[g] ?? 0);
       }
       stockChanged = true;
     }
     const banked = result.gained.coins + goodsTotal(result.gained.goods);
     if (banked > 0) collectsBump += 1;
-    processedBump += processedUnits(tile.buildingId, result.gained, result.consumed);
+    processedBump += processedUnits(
+      tile.buildingId,
+      result.gained,
+      mergeGoods(result.consumedWallet, result.consumedStockpile)
+    );
     const boostChanged = result.tile.boostUntil !== tile.boostUntil;
-    if (banked > 0 || boostChanged || consumedUnits > 0 || stockedUnits > 0) {
+    if (banked > 0 || boostChanged || stockUnits > 0 || walletUnits > 0 || stockedUnits > 0) {
       changed.push({ key, tile: result.tile });
     }
   }
@@ -1492,6 +1530,10 @@ export const loadSummary = async (
 
   let readyForMe = 0;
   if (userId) {
+    // Wallet-first: a processor is "ready" if the owner's wallet OR the stockpile
+    // can feed it, so the readiness count uses the owner's real wallet.
+    const me = await getPlayer(userId);
+    const wallet = me?.wallet;
     for (const [key, tile] of Object.entries(grid)) {
       if (tile.owner !== userId || !tile.buildingId) continue;
       const { x, y } = parseKey(key);
@@ -1502,7 +1544,8 @@ export const loadSummary = async (
         city.festival,
         adj,
         city.weather,
-        stockpile
+        stockpile,
+        wallet
       );
       if (gained.coins + goodsTotal(gained.goods) > 0) readyForMe += 1;
     }

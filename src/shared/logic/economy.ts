@@ -152,11 +152,20 @@ export const isGoldenWindowLenient = (key: string, now: number): boolean => {
 // Accrual.
 // ---------------------------------------------------------------------------
 
-type Accrual = { gained: Gained; consumed: Partial<Record<Good, number>> };
+type Accrual = {
+  gained: Gained;
+  /** Processor inputs pulled FREE from the OWNER'S own wallet (wallet-first): the
+   * grain they already grew costs no coins. Empty for non-processors. */
+  consumedWallet: Partial<Record<Good, number>>;
+  /** Processor inputs bought from the shared village stockpile for the remainder,
+   * paid at the market price. Empty for non-processors. */
+  consumedStockpile: Partial<Record<Good, number>>;
+};
 
 const NO_GAIN = (): Accrual => ({
   gained: { coins: 0, xp: 0, goods: {} },
-  consumed: {},
+  consumedWallet: {},
+  consumedStockpile: {},
 });
 
 /** Weather multiplier applied to a building's potential output. */
@@ -175,11 +184,15 @@ const weatherMultiplier = (weather: Weather, spec: BuildingSpec): number => {
  *
  * - Coins buildings mint coins directly.
  * - Raw producers output their good into `gained.goods`.
- * - Processors turn stockpile inputs into output units: potential output is the
- *   rate over elapsed time (boost/festival/adjacency/weather all scale the
- *   potential), then the actual output is capped by the tier cap AND the
- *   available stockpile input (`floor(stock / inputPer)`); `consumed` reports
- *   the inputs used. The bakery's output is coins (12 per flour).
+ * - Processors turn inputs into output units: potential output is the rate over
+ *   elapsed time (boost/festival/adjacency/weather all scale the potential),
+ *   then the actual output is capped by the tier cap AND the available input.
+ *   WALLET-FIRST: a processor draws its input from the OWNER'S own `wallet` first
+ *   (free — it's their own grain) and only buys the remainder from the shared
+ *   village `stockpile`. The available runs are therefore `floor((wallet+stock) /
+ *   inputPer)`, and the consumption is split into `consumedWallet` (free) +
+ *   `consumedStockpile` (paid), wallet units taken first. The bakery's output is
+ *   coins (12 per flour).
  */
 export const accrue = (
   tile: TileState,
@@ -187,7 +200,11 @@ export const accrue = (
   festival: FestivalCategory,
   adjBonus: number,
   weather: Weather,
-  stockpile: Stockpile
+  stockpile: Stockpile,
+  /** The owner's wallet — its input goods are consumed FREE before the stockpile
+   * (wallet-first). Defaults to empty, giving the legacy stockpile-only behaviour
+   * for callers that have no owner wallet in hand (e.g. cross-player previews). */
+  wallet: Stockpile = emptyStockpile()
 ): Accrual => {
   if (!tile.buildingId) return NO_GAIN();
   const spec = CATALOG[tile.buildingId];
@@ -219,20 +236,34 @@ export const accrue = (
     if (!input || !output) return NO_GAIN();
     const outputPerRun = output === 'coins' ? spec.coinsPerFlour ?? 0 : 1;
     const capRuns = outputPerRun > 0 ? stats.cap / outputPerRun : stats.cap;
-    const availableRuns = Math.floor(stockpile[input.good] / input.per);
+    // Wallet-first: the owner's own grain funds runs before the stockpile does.
+    const walletHave = wallet[input.good] ?? 0;
+    const availableRuns = Math.floor((walletHave + stockpile[input.good]) / input.per);
     const runs = Math.max(
       0,
       Math.min(Math.floor(potential), Math.floor(capRuns), availableRuns)
     );
     if (runs <= 0) return NO_GAIN();
-    const consumed: Partial<Record<Good, number>> = {
-      [input.good]: runs * input.per,
-    };
+    const totalUnits = runs * input.per;
+    const fromWallet = Math.min(walletHave, totalUnits);
+    const fromStock = totalUnits - fromWallet;
+    const consumedWallet: Partial<Record<Good, number>> =
+      fromWallet > 0 ? { [input.good]: fromWallet } : {};
+    const consumedStockpile: Partial<Record<Good, number>> =
+      fromStock > 0 ? { [input.good]: fromStock } : {};
     if (output === 'coins') {
       const coins = runs * outputPerRun;
-      return { gained: { coins, xp: Math.ceil(coins / 10), goods: {} }, consumed };
+      return {
+        gained: { coins, xp: Math.ceil(coins / 10), goods: {} },
+        consumedWallet,
+        consumedStockpile,
+      };
     }
-    return { gained: { coins: 0, xp: runs, goods: { [output]: runs } }, consumed };
+    return {
+      gained: { coins: 0, xp: runs, goods: { [output]: runs } },
+      consumedWallet,
+      consumedStockpile,
+    };
   }
 
   const amount = Math.min(Math.floor(potential), stats.cap);
@@ -241,13 +272,18 @@ export const accrue = (
   if (spec.role === 'raw') {
     const good = spec.good;
     if (!good) return NO_GAIN();
-    return { gained: { coins: 0, xp: amount, goods: { [good]: amount } }, consumed: {} };
+    return {
+      gained: { coins: 0, xp: amount, goods: { [good]: amount } },
+      consumedWallet: {},
+      consumedStockpile: {},
+    };
   }
 
   // Coins building (house, manor).
   return {
     gained: { coins: amount, xp: Math.ceil(amount / 10), goods: {} },
-    consumed: {},
+    consumedWallet: {},
+    consumedStockpile: {},
   };
 };
 
