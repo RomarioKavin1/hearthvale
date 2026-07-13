@@ -168,6 +168,17 @@ export const mountDevPanel = (): void => {
   });
   bodyWrap.append(row(crestBtn, crestColBtn));
 
+  // Biome / theme — cycles the whole-world re-skin (meadow…desert).
+  bodyWrap.append(label('biome / theme'));
+  const themeBtn = button('theme ▸', () => {});
+  themeBtn.textContent = `theme ▸ ${devControls.theme()}`;
+  themeBtn.addEventListener('click', () => {
+    const t = devControls.cycleTheme();
+    themeBtn.textContent = `theme ▸ ${t}`;
+    refresh();
+  });
+  bodyWrap.append(row(themeBtn));
+
   // World
   bodyWrap.append(label('world'));
   bodyWrap.append(

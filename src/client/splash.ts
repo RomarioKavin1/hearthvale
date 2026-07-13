@@ -19,7 +19,7 @@ import type { SpriteKey } from './art/manifest';
 
 type Weather = 'sunny' | 'rain' | 'clear' | 'harvestmoon';
 
-type Theme = 'meadow' | 'autumn' | 'twilight' | 'pale';
+type Theme = 'meadow' | 'autumn' | 'twilight' | 'pale' | 'desert';
 
 type Summary = {
   villageName: string;
@@ -208,7 +208,8 @@ const isTheme = (value: unknown): value is Theme =>
   value === 'meadow' ||
   value === 'autumn' ||
   value === 'twilight' ||
-  value === 'pale';
+  value === 'pale' ||
+  value === 'desert';
 
 const isSummary = (body: unknown): body is Summary =>
   typeof body === 'object' &&
@@ -255,6 +256,7 @@ const THEME_CLASSES: Record<Theme, string> = {
   autumn: 'hv-theme-autumn',
   twilight: 'hv-theme-twilight',
   pale: 'hv-theme-pale',
+  desert: 'hv-theme-desert',
 };
 
 const fillStats = (

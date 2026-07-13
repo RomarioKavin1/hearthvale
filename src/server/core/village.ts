@@ -1013,7 +1013,7 @@ export const doClaim = async (
   const owned = ownedPlots(grid, userId);
   const wasOwner = ownedCount(grid, userId) > 0;
 
-  const err = canClaim(grid, x, y, player, owned, city.hallLevel);
+  const err = canClaim(grid, x, y, player, owned, city.hallLevel, city.foundedAt);
   if (err) throw new OpError(400, err);
 
   // Land expansion is gated by the Village Hall level: locked outer tiles reject

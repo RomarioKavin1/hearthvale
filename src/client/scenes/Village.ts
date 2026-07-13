@@ -57,6 +57,7 @@ import {
   isPathRing,
   isTreeDecor,
   LOCKED_BAND,
+  MONUMENT_ART,
   networkPathPiece,
   PATH_HI,
   PATH_LO,
@@ -66,11 +67,15 @@ import {
   riverPieceAt,
   ROOF_DY,
   THEMES,
+  themedKey,
+  themeFamily,
   TILE_H,
   TILE_W,
   treeClusters,
   WELL_TILE,
 } from '../art/render';
+import { monuments } from '../../shared/logic/monuments';
+import type { PlacedMonument } from '../../shared/logic/monuments';
 import { store } from '../state';
 import { api } from '../net';
 import { toast } from '../ui/dom';
@@ -207,6 +212,11 @@ type TileView = {
   sparkle: Phaser.GameObjects.Image | undefined;
   boostPip: Phaser.GameObjects.Image | undefined;
   growthKey: SpriteKey | undefined;
+  /** Wheatfield growth-stage base plate (E2): a drawn top-face progress ring under
+   * the furrow that fills as the crop ripens (dirt → half-grown → ready). Drawn
+   * rather than sprited — the Kenney Isometric Miniature Bases pack shipped with
+   * no PNGs, so per deliverable 4's documented fallback this is a vector plate. */
+  cropBase: Phaser.GameObjects.Graphics | undefined;
   /** Ambient (C2): chimney-smoke timer + "alive" work-pulse tween, both bound to
    * this tile's building and torn down in clearStructural when the tile changes. */
   smokeTimer: Phaser.Time.TimerEvent | undefined;
@@ -529,20 +539,39 @@ export class Village extends Scene {
    * once per seed and cached — consulted by every ground repaint and by walker
    * path preference. */
   private landscapeCache:
-    | { seed: number; network: ReadonlySet<string>; clusters: Cluster[] }
+    | {
+        seed: number;
+        network: ReadonlySet<string>;
+        clusters: Cluster[];
+        monuments: PlacedMonument[];
+        monumentTiles: ReadonlySet<string>;
+      }
     | undefined;
 
-  private landscape(): { network: ReadonlySet<string>; clusters: Cluster[] } {
+  private landscape(): {
+    network: ReadonlySet<string>;
+    clusters: Cluster[];
+    monuments: PlacedMonument[];
+    monumentTiles: ReadonlySet<string>;
+  } {
     const seed = this.seed();
     if (!this.landscapeCache || this.landscapeCache.seed !== seed) {
+      const placed = monuments(seed);
       this.landscapeCache = {
         seed,
         network: pathNetwork(seed),
         clusters: treeClusters(seed),
+        monuments: placed,
+        monumentTiles: new Set(
+          placed.flatMap((m) => m.tiles.map((t) => tileKey(t.x, t.y)))
+        ),
       };
     }
     return this.landscapeCache;
   }
+
+  /** Sprites making up the seeded monuments, destroyed + rebuilt on a biome swap. */
+  private monumentImgs: Phaser.GameObjects.Image[] = [];
 
   // ── Ground ──────────────────────────────────────────────────────────────────
 
@@ -553,6 +582,34 @@ export class Village extends Scene {
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         this.paintGround(x, y);
+      }
+    }
+    this.buildMonuments();
+  }
+
+  /**
+   * (Re)draw the seeded monuments — pre-built set pieces (ruined towers, stone
+   * circles, homesteads, gates, orchards, camps) scattered on non-claimable
+   * clusters. Their tiles + placement come from shared logic (so claim
+   * validation matches); the sprite composition per biome comes from
+   * MONUMENT_ART. Rebuilt on a theme change so the desert swaps to its sand
+   * variants. Each piece depth-sorts by its own tile row like any structure.
+   */
+  private buildMonuments(): void {
+    for (const img of this.monumentImgs) img.destroy();
+    this.monumentImgs = [];
+    const family = themeFamily(this.theme());
+    const { monuments: placed } = this.landscape();
+    for (const m of placed) {
+      for (const piece of MONUMENT_ART[m.template.id][family]) {
+        const { sx, sy } = isoToScreen(m.x + piece.dx, m.y + piece.dy, TILE_W, TILE_H);
+        const dy = piece.layer === 'cap' ? BASE_DY + ROOF_DY : BASE_DY;
+        const depthBoost = piece.layer === 'cap' ? 2 : piece.layer === 'base' ? 1 : 0.5;
+        const img = addBlock(this, piece.key, sx, sy, dy).setFlipX(piece.flipX ?? false);
+        img.setDepth(sy + depthBoost);
+        if (piece.angle !== undefined) img.setAngle(piece.angle);
+        if (piece.tint !== undefined) img.setTint(piece.tint);
+        this.monumentImgs.push(img);
       }
     }
   }
@@ -572,6 +629,9 @@ export class Village extends Scene {
         this.paintGround(x, y);
       }
     }
+    // The biome family may have changed (e.g. meadow → desert) — re-skin the
+    // monuments to match so the world re-paints coherently, not just the ground.
+    this.buildMonuments();
   }
 
   /** Paint (or repaint) one ground tile per the current ring + routing rules.
@@ -588,10 +648,15 @@ export class Village extends Scene {
     }
 
     const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
-    const style = THEMES[this.theme()];
+    const theme = this.theme();
+    const style = THEMES[theme];
+    const family = themeFamily(theme);
+    // In the desert biome the whole terrain/decor family swaps to the sand set;
+    // grass themes keep their sprites (recoloured by the per-theme tints below).
+    const sk = (key: SpriteKey): SpriteKey => themedKey(family, key);
     let img: Phaser.GameObjects.Image;
 
-    const { network, clusters } = this.landscape();
+    const { network, clusters, monumentTiles } = this.landscape();
 
     if (!this.isUnlockedTile(x, y)) {
       // Locked land: a desaturated frontier band, the SAME grass block as the
@@ -603,12 +668,12 @@ export class Village extends Scene {
       const { lo, hi } = this.ringLoHi();
       const rim = rimPiece(this.seed(), x, y, lo, hi);
       if (!rim) return undefined;
-      img = addBlock(this, rim.key, sx, sy, rim.dy)
+      img = addBlock(this, sk(rim.key), sx, sy, rim.dy)
         .setFlipX(rim.flipX)
         .setAlpha(rim.alpha)
         .setTint(style.lockedTint);
       if (rim.accent) {
-        const acc = addBlock(this, rim.accent, sx, sy, rim.accentDy)
+        const acc = addBlock(this, sk(rim.accent), sx, sy, rim.accentDy)
           .setAlpha(rim.alpha)
           .setTint(style.lockedTint)
           .setDepth(GROUND_DEPTH + sy + 0.5);
@@ -618,30 +683,35 @@ export class Village extends Scene {
       // Rivers untinted — water stays readable across themes. Bridged where the
       // path network crosses; a waterfall block at the southern drop.
       const p = riverPieceAt(network, x, y);
-      img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
+      img = addBlock(this, sk(p.key), sx, sy).setFlipX(p.flipX);
     } else if (isKeepPad(x, y)) {
       // Dirt only under the keep 2×2 — the rest of the plaza square is grass.
-      img = addBlock(this, 'dirt-center', sx, sy);
+      img = addBlock(this, sk('dirt-center'), sx, sy);
       if (style.dirtTint !== undefined) img.setTint(style.dirtTint);
     } else if (isPathRing(x, y)) {
       // Paths untinted — kept readable per the theme spec.
       const p = pathPiece(x, y);
-      img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
+      img = addBlock(this, sk(p.key), sx, sy).setFlipX(p.flipX);
     } else if (network.has(key)) {
       // Seeded path network: winding roads radiating from the plaza ring to the
       // map edges. Cosmetic — the tile stays claimable and buildings sit on it.
       const p = networkPathPiece(network, x, y);
-      img = addBlock(this, p.key, sx, sy).setFlipX(p.flipX);
+      img = addBlock(this, sk(p.key), sx, sy).setFlipX(p.flipX);
     } else {
       // Open grass with COMPOSED decor: dense seeded tree clusters, rocks along
-      // the wild frame, sparse lone trees elsewhere (~4%).
-      const open = store.data?.grid[key] === undefined && !isPlaza(x, y);
-      img = addBlock(this, 'grass-center', sx, sy);
+      // the wild frame, sparse lone trees elsewhere (~4%). Monument tiles paint
+      // bare ground here — their set-piece sprites are drawn separately (and the
+      // loose decor sprinkle is suppressed so nothing overlaps them).
+      const open =
+        store.data?.grid[key] === undefined &&
+        !isPlaza(x, y) &&
+        !monumentTiles.has(key);
+      img = addBlock(this, sk('grass-center'), sx, sy);
       if (style.grassTint !== undefined) img.setTint(style.grassTint);
       if (open) {
         const d = decorAt(this.seed(), clusters, x, y);
         if (d) {
-          const sprite = addSurface(this, d, sx, sy).setDepth(sy + 0.5);
+          const sprite = addSurface(this, sk(d), sx, sy).setDepth(sy + 0.5);
           if (style.grassTint !== undefined) sprite.setTint(style.grassTint);
           this.decorImgs.set(key, sprite);
           if (isTreeDecor(d) && !this.reducedMotion) {
@@ -994,6 +1064,7 @@ export class Village extends Scene {
       sparkle: undefined,
       boostPip: undefined,
       growthKey: undefined,
+      cropBase: undefined,
       smokeTimer: undefined,
       pulseTween: undefined,
       sig: '',
@@ -1129,12 +1200,14 @@ export class Village extends Scene {
     }
 
     // Flat composition (crops / trees / rocks / decor). Wheatfields use a growth
-    // state chosen from accrual instead of the static tier sprite.
+    // state chosen from accrual instead of the static tier sprite, and get a
+    // drawn growth-stage base plate beneath the furrow (E2).
     let keys: SpriteKey[];
     if (tile.buildingId === 'wheatfield') {
-      const gk = this.wheatGrowthKey(tile, x, y);
-      view.growthKey = gk;
-      keys = [gk];
+      const g = this.wheatGrowth(tile, x, y);
+      view.growthKey = g.key;
+      keys = [g.key];
+      this.drawCropBase(view, sx, sy, g.frac);
     } else {
       keys = art.byTier[tile.tier];
     }
@@ -1148,10 +1221,15 @@ export class Village extends Scene {
     }
   }
 
-  /** furrow-crop while under half the tier cap, furrow-crop-wheat once ripening. */
-  private wheatGrowthKey(tile: TileState, x: number, y: number): SpriteKey {
+  /** The wheatfield's current growth sprite + fraction (0..1 of the tier cap):
+   * furrow-crop while under half the cap, furrow-crop-wheat once ripening. */
+  private wheatGrowth(
+    tile: TileState,
+    x: number,
+    y: number
+  ): { key: SpriteKey; frac: number } {
     const data = store.data;
-    if (!data) return 'furrow-crop';
+    if (!data) return { key: 'furrow-crop', frac: 0 };
     const now = this.now();
     const adj = adjacencyBonus(data.grid, x, y, data.city.festival, now);
     const { gained } = accrue(
@@ -1164,7 +1242,77 @@ export class Village extends Scene {
     );
     const cap = tierStats(CATALOG.wheatfield, tile.tier).cap;
     const wheat = gained.goods.wheat ?? 0;
-    return wheat >= cap * 0.5 ? 'furrow-crop-wheat' : 'furrow-crop';
+    const frac = cap > 0 ? Math.min(1, wheat / cap) : 0;
+    return { key: wheat >= cap * 0.5 ? 'furrow-crop-wheat' : 'furrow-crop', frac };
+  }
+
+  /**
+   * The wheatfield growth-stage base plate: a top-face diamond drawn under the
+   * furrow whose fill tracks the crop's progress toward its cap — a bare soil
+   * plate under ~33%, a half-grown soil/green plate through ~99%, and a full
+   * grass plate once ready — with a small progress wedge that sweeps around the
+   * diamond as it ripens.
+   *
+   * Deliverable 4 asked for the Kenney Isometric Miniature Bases pack here, but
+   * that download shipped as empty directories (no PNGs) — so, per the task's
+   * own "fall back to a drawn progress ring and document the call" clause, the
+   * plate is drawn vector art. It reads cleanly beside the Sketch Town furrow and
+   * never risks an art-style clash, since it uses the game's own palette.
+   */
+  private drawCropBase(
+    view: TileView,
+    sx: number,
+    sy: number,
+    frac: number
+  ): void {
+    view.cropBase?.destroy();
+    // Full tile top-face so the plate reads as a coloured plot AROUND the furrow
+    // sprite (which covers the tile centre) rather than hiding beneath it.
+    const hw = TILE_W / 2 - 3;
+    const hh = TILE_H / 2 - 2;
+    // Stage colours: bare soil under a third grown, a soil→grass blend through
+    // ripening, a full grass plate once ready.
+    const dirt = hexNum(PAL.soil);
+    const grass = hexNum(PAL.grass);
+    const ready = frac >= 1;
+    const fill = frac < 0.33 ? dirt : ready ? grass : this.lerpColor(dirt, grass, frac);
+    const g = this.add.graphics();
+    g.fillStyle(fill, ready ? 0.85 : 0.7);
+    g.beginPath();
+    g.moveTo(sx, sy - hh);
+    g.lineTo(sx + hw, sy);
+    g.lineTo(sx, sy + hh);
+    g.lineTo(sx - hw, sy);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(2, hexNum(PAL.soilDark), 0.6);
+    g.strokePath();
+    // A progress rim along the two front edges that fills as the crop ripens —
+    // the "ring" that reads the growth stage at a glance.
+    if (frac > 0 && !ready) {
+      g.lineStyle(3, grass, 0.9);
+      g.beginPath();
+      g.moveTo(sx - hw, sy);
+      g.lineTo(sx - hw * (1 - frac), sy + hh * frac);
+      g.strokePath();
+    }
+    // Sits just above the ground block, below the furrow sprite.
+    g.setDepth(sy + 0.6);
+    view.cropBase = g;
+  }
+
+  /** Linear blend between two 0xRRGGBB colours at t∈[0,1]. */
+  private lerpColor(a: number, b: number, t: number): number {
+    const ar = (a >> 16) & 0xff;
+    const ag = (a >> 8) & 0xff;
+    const ab = a & 0xff;
+    const br = (b >> 16) & 0xff;
+    const bg = (b >> 8) & 0xff;
+    const bb = b & 0xff;
+    const r = Math.round(ar + (br - ar) * t);
+    const gg = Math.round(ag + (bg - ag) * t);
+    const bl = Math.round(ab + (bb - ab) * t);
+    return (r << 16) | (gg << 8) | bl;
   }
 
   private clearStructural(view: TileView): void {
@@ -1193,6 +1341,8 @@ export class Village extends Scene {
       view.pulseTween = undefined;
     }
     view.growthKey = undefined;
+    view.cropBase?.destroy();
+    view.cropBase = undefined;
   }
 
   private destroyView(key: string): void {
@@ -1223,17 +1373,19 @@ export class Village extends Scene {
       const { x, y } = parseKey(key);
       const { sx, sy } = isoToScreen(x, y, TILE_W, TILE_H);
 
-      // Wheatfield growth state can change over time — refresh its sprite.
+      // Wheatfield growth state can change over time — refresh its sprite and
+      // its growth-stage base plate.
       if (
         tile.buildingId === 'wheatfield' &&
         !view.constructing &&
         view.primary
       ) {
-        const gk = this.wheatGrowthKey(tile, x, y);
-        if (gk !== view.growthKey) {
-          view.growthKey = gk;
-          view.primary.setTexture(gk);
+        const g = this.wheatGrowth(tile, x, y);
+        if (g.key !== view.growthKey) {
+          view.growthKey = g.key;
+          view.primary.setTexture(g.key);
         }
+        this.drawCropBase(view, sx, sy, g.frac);
       }
 
       // Ready-to-collect coin pip (own producing tiles with pending output).

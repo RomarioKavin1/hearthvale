@@ -27,6 +27,7 @@ import type { VillageTheme } from '../../shared/types';
 import { GRID_SIZE } from '../../shared/catalog';
 import { tileKey } from '../../shared/logic/grid';
 import { isRiver } from '../../shared/logic/expansion';
+import type { MonumentId } from '../../shared/logic/monuments';
 
 /** Warm ink backdrop behind the diorama (see Task V3 — chosen over near-black
  * PAL.night so the smooth Sketch Town blocks read warmer). */
@@ -74,7 +75,64 @@ export const THEMES: Record<VillageTheme, ThemeStyle> = {
     skyBg: '#3c3a46',
     lockedTint: 0xa8a8b8,
   },
+  // Desert: NO tint — the sand biome swaps the whole terrain family for the
+  // natively-coloured Sketch Desert sprites (see `themedKey`), so a multiply
+  // tint would only muddy them. Warm sun-baked backdrop + a sandy locked rim.
+  desert: {
+    skyBg: '#3a2e22',
+    lockedTint: 0xc9a57a,
+  },
 };
+
+/**
+ * A terrain family: which sprite set a theme paints the world with. Meadow /
+ * autumn / twilight / pale all use the grass Sketch Town set (recoloured by the
+ * per-theme tints above); desert swaps to the Sketch Desert sand set.
+ */
+export type TerrainFamily = 'grass' | 'sand';
+
+export const themeFamily = (theme: VillageTheme): TerrainFamily =>
+  theme === 'desert' ? 'sand' : 'grass';
+
+/**
+ * Sand-family remap: the desert biome re-skins every terrain/decor sprite the
+ * renderer would otherwise place from the grass set. Keys absent here (buildings,
+ * roofs, castle, well — the actual game pieces) are deliberately left unchanged,
+ * so only the WORLD re-skins while the player's structures stay identical.
+ */
+const SAND_MAP: Partial<Record<SpriteKey, SpriteKey>> = {
+  'grass-center': 'sand-center',
+  'grass-corner': 'sand-corner',
+  'grass-block': 'sand-center',
+  'cliff-top': 'sand-center',
+  'dirt-center': 'sand-dirt-center',
+  'dirt-low': 'sand-dirt-center',
+  'grass-path': 'sand-path',
+  'grass-path-bend': 'sand-path-bend',
+  'grass-path-corner': 'sand-path-corner',
+  'grass-path-crossing': 'sand-path-crossing',
+  'grass-path-end': 'sand-path-end',
+  'grass-path-split': 'sand-path-split',
+  'grass-river': 'sand-river',
+  'grass-river-bend': 'sand-river-bend',
+  'grass-river-corner': 'sand-river-corner',
+  'grass-river-bridge': 'sand-river-bridge',
+  'grass-river-end': 'sand-river-end',
+  'water-center': 'desert-water-center',
+  'water-fall': 'desert-water-fall',
+  'grass-water': 'sand-water',
+  'tree-single': 'palm',
+  'tree-multiple': 'palms',
+  'tree-pine': 'palm',
+  'tree-pine-large': 'palms',
+  'rocks-grass': 'rocks-sand',
+  'rocks-dirt': 'rocks-sand',
+};
+
+/** The sprite a given terrain/decor key resolves to in the active biome family:
+ * the sand equivalent under 'sand', otherwise the key unchanged. */
+export const themedKey = (family: TerrainFamily, key: SpriteKey): SpriteKey =>
+  family === 'sand' ? (SAND_MAP[key] ?? key) : key;
 
 export const IMG_W = 128;
 export const IMG_H = 176;
@@ -860,4 +918,111 @@ export const castleParts = (stage: number): CastlePart[] => {
     parts.push({ x: cx, y: cy, key: 'roof-point-purple', roof: true, lift: 65 });
   }
   return parts;
+};
+
+// ── Seeded monuments (E2) — set-piece compositions ───────────────────────────
+//
+// The tile FOOTPRINT + placement of every monument lives in shared/logic/
+// monuments.ts (so claim validation matches the render). This is the ART: for
+// each template, the sprites to lay on its footprint tiles, in each biome
+// family. A piece's `layer` picks its vertical anchor:
+//   • 'surface' — addSurface (rests on the tile top-face: rocks, trees, arches, tents)
+//   • 'base'    — addBlock at BASE_DY (a full wall/structure block, flush on the tile)
+//   • 'cap'     — addBlock at BASE_DY + ROOF_DY (a roof capping a base beneath it)
+// `dx`/`dy` are tile offsets from the monument anchor (matching the footprint).
+
+export type MonumentPieceLayer = 'surface' | 'base' | 'cap';
+
+export type MonumentPiece = {
+  dx: number;
+  dy: number;
+  key: SpriteKey;
+  layer: MonumentPieceLayer;
+  flipX?: boolean;
+  /** Cosmetic rotation (deg) — used to tilt a collapsed roof. */
+  angle?: number;
+  tint?: number;
+};
+
+/** Sprite composition per monument template, per biome family. Grass family is
+ * the Sketch Town look; sand is the Sketch Desert swap (deliverable 2(f)). */
+export const MONUMENT_ART: Record<
+  MonumentId,
+  Record<TerrainFamily, MonumentPiece[]>
+> = {
+  // Ruined watchtower: a stone tower base capped with crenellations (grass); a
+  // half-collapsed sand dome ringed with rubble (desert).
+  watchtower: {
+    grass: [
+      { dx: 0, dy: 0, key: 'castle-tower-base', layer: 'base' },
+      { dx: 0, dy: 0, key: 'castle-tower-top', layer: 'cap' },
+    ],
+    sand: [{ dx: 0, dy: 0, key: 'desert-dome-small', layer: 'base' }],
+  },
+  // Old stone circle: a 2×2 ring of standing stones.
+  'stone-circle': {
+    grass: [
+      { dx: 0, dy: 0, key: 'rocks-grass', layer: 'surface' },
+      { dx: 1, dy: 0, key: 'rocks-grass', layer: 'surface', flipX: true },
+      { dx: 0, dy: 1, key: 'rocks-grass', layer: 'surface', flipX: true },
+      { dx: 1, dy: 1, key: 'rocks-grass', layer: 'surface' },
+    ],
+    sand: [
+      { dx: 0, dy: 0, key: 'rocks-sand', layer: 'surface' },
+      { dx: 1, dy: 0, key: 'rocks-sand', layer: 'surface', flipX: true },
+      { dx: 0, dy: 1, key: 'rocks-sand', layer: 'surface', flipX: true },
+      { dx: 1, dy: 1, key: 'rocks-sand', layer: 'surface' },
+    ],
+  },
+  // Abandoned homestead: a wall base under a tilted, weathered collapsed roof
+  // (grass); a lone abandoned dome (desert).
+  homestead: {
+    grass: [
+      { dx: 0, dy: 0, key: 'building-corner', layer: 'base' },
+      { dx: 0, dy: 0, key: 'roof-slant-brown', layer: 'cap', angle: 8, tint: 0xb8926a },
+    ],
+    sand: [{ dx: 0, dy: 0, key: 'desert-dome', layer: 'base' }],
+  },
+  // Ancient gate: a stone arch flanked by two wall stubs (grass); a taller wall
+  // corner flanked by broken walls (desert).
+  gate: {
+    grass: [
+      { dx: 0, dy: 0, key: 'castle-wall', layer: 'base' },
+      { dx: 1, dy: 0, key: 'structure-arch', layer: 'surface' },
+      { dx: 2, dy: 0, key: 'castle-wall', layer: 'base' },
+    ],
+    sand: [
+      { dx: 0, dy: 0, key: 'desert-wall-broken', layer: 'base' },
+      { dx: 1, dy: 0, key: 'desert-wall-corner', layer: 'base' },
+      { dx: 2, dy: 0, key: 'desert-wall-broken', layer: 'base', flipX: true },
+    ],
+  },
+  // Wild orchard: a dense 2×2 mix of overgrown trees (grass); a palm oasis grove
+  // (desert).
+  orchard: {
+    grass: [
+      { dx: 0, dy: 0, key: 'tree-pine-large', layer: 'surface' },
+      { dx: 1, dy: 0, key: 'tree-multiple', layer: 'surface' },
+      { dx: 0, dy: 1, key: 'tree-single', layer: 'surface' },
+      { dx: 1, dy: 1, key: 'tree-pine', layer: 'surface' },
+    ],
+    sand: [
+      { dx: 0, dy: 0, key: 'palms', layer: 'surface' },
+      { dx: 1, dy: 0, key: 'palm', layer: 'surface', flipX: true },
+      { dx: 0, dy: 1, key: 'palm', layer: 'surface' },
+      { dx: 1, dy: 1, key: 'palms', layer: 'surface', flipX: true },
+    ],
+  },
+  // Wayfarer's rest: a tall lean-to structure beside a fire-ring of rocks
+  // (grass); a two-tent caravan camp (desert).
+  camp: {
+    grass: [
+      { dx: 0, dy: 0, key: 'structure-high', layer: 'surface' },
+      { dx: 1, dy: 0, key: 'rocks-dirt', layer: 'surface' },
+    ],
+    sand: [
+      { dx: 0, dy: 0, key: 'desert-tent', layer: 'base' },
+      { dx: 1, dy: 0, key: 'desert-tent-slant', layer: 'base', flipX: true },
+    ],
+  },
 };

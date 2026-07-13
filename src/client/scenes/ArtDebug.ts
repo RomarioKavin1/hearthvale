@@ -13,11 +13,16 @@ import {
   CASTLE_TOP_DY,
   LOCKED_ALPHA,
   LOCKED_TINT,
+  MONUMENT_ART,
   ROOF_DY,
   terrainFor,
+  themedKey,
   TILE_H,
   TILE_W,
 } from '../art/render';
+import type { TerrainFamily } from '../art/render';
+import { MONUMENT_TEMPLATES, TEMPLATE_BY_ID } from '../../shared/logic/monuments';
+import type { MonumentId } from '../../shared/logic/monuments';
 
 const IDS: BuildingId[] = [
   'house',
@@ -86,6 +91,28 @@ export class ArtDebug extends Scene {
 
   private tile(key: SpriteKey, cx: number, cy: number, flipX = false): void {
     addBlock(this, key, cx, cy).setDepth(cy).setFlipX(flipX);
+  }
+
+  /** Render one seeded monument's composition (a biome family) on its footprint's
+   * ground tiles, centred at (ox, oy) — the reviewer's silhouette check. */
+  private monument(id: MonumentId, family: TerrainFamily, ox: number, oy: number): void {
+    const groundKey = themedKey(family, 'grass-center');
+    for (const [dx, dy] of TEMPLATE_BY_ID[id].footprint) {
+      const px = ox + (dx - dy) * TILE_H;
+      const py = oy + (dx + dy) * (TILE_H / 2);
+      addBlock(this, groundKey, px, py).setDepth(py);
+    }
+    for (const piece of MONUMENT_ART[id][family]) {
+      const px = ox + (piece.dx - piece.dy) * TILE_H;
+      const py = oy + (piece.dx + piece.dy) * (TILE_H / 2);
+      const dy = piece.layer === 'cap' ? BASE_DY + ROOF_DY : BASE_DY;
+      const boost = piece.layer === 'cap' ? 2 : piece.layer === 'base' ? 1 : 0.5;
+      const img = addBlock(this, piece.key, px, py, dy)
+        .setFlipX(piece.flipX ?? false)
+        .setDepth(py + boost);
+      if (piece.angle !== undefined) img.setAngle(piece.angle);
+      if (piece.tint !== undefined) img.setTint(piece.tint);
+    }
   }
 
   create(): void {
@@ -204,6 +231,43 @@ export class ArtDebug extends Scene {
       this.label(ox - 20, oy + 70, `seed ${seed}`, 10);
     });
     y += ROW + 220;
+
+    // Desert biome terrain strip (E2) — the sand family the 'desert' theme swaps in.
+    this.label(16, y - 4, 'desert biome terrain', 12);
+    const desert: Array<[string, SpriteKey, boolean]> = [
+      ['sand', 'sand-center', false],
+      ['sand-dirt', 'sand-dirt-center', false],
+      ['sand-path', 'sand-path', false],
+      ['sand-cross', 'sand-path-crossing', false],
+      ['sand-river', 'sand-river', true],
+      ['des-water', 'desert-water-center', false],
+      ['palm', 'palm', false],
+      ['palms', 'palms', false],
+      ['rocks-sand', 'rocks-sand', false],
+    ];
+    desert.forEach(([name, key, flip], i) => {
+      const cx = 90 + i * COL;
+      if (key === 'palm' || key === 'palms' || key === 'rocks-sand') {
+        addBlock(this, 'sand-center', cx, y + 60).setDepth(y);
+        addSurface(this, key, cx, y + 60).setDepth(y + 1);
+      } else {
+        this.tile(key, cx, y + 60, flip);
+      }
+      this.label(cx - 40, y + 96, name, 10);
+    });
+    y += ROW + 20;
+
+    // Seeded monuments (E2) — each template in both biome families, side by side,
+    // so the reviewer can confirm silhouettes read (grass = Sketch Town, sand =
+    // Sketch Desert swap).
+    this.label(16, y - 4, 'monuments — grass | desert', 12);
+    MONUMENT_TEMPLATES.forEach((tpl, i) => {
+      const rowY = y + 80 + i * 180;
+      this.label(16, rowY - 30, tpl.name, 11);
+      this.monument(tpl.id, 'grass', 300, rowY);
+      this.monument(tpl.id, 'sand', 620, rowY);
+    });
+    y += 80 + MONUMENT_TEMPLATES.length * 180 + 40;
 
     const contentHeight = y + 40;
     const maxScroll = Math.max(0, contentHeight - this.scale.height);

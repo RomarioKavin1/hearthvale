@@ -263,12 +263,13 @@ export const isValidVillageName = (name: string): boolean => {
 export const villageDisplayName = (name: string): string =>
   name.trim().length > 0 ? name.trim() : DEFAULT_VILLAGE_NAME;
 
-/** The four selectable themes, in a stable order for the mod form + guards. */
+/** The selectable themes, in a stable order for the mod form + guards. */
 export const VILLAGE_THEMES: VillageTheme[] = [
   'meadow',
   'autumn',
   'twilight',
   'pale',
+  'desert',
 ];
 
 /** Human labels for each theme (mod form select options). */
@@ -277,14 +278,16 @@ export const THEME_LABELS: Record<VillageTheme, string> = {
   autumn: 'Autumn (warm)',
   twilight: 'Twilight (purple)',
   pale: 'Pale (light)',
+  desert: 'Desert (sand biome)',
 };
 
-/** Runtime guard: true when a string is one of the four village themes. */
+/** Runtime guard: true when a string is one of the village themes. */
 export const isVillageTheme = (value: unknown): value is VillageTheme =>
   value === 'meadow' ||
   value === 'autumn' ||
   value === 'twilight' ||
-  value === 'pale';
+  value === 'pale' ||
+  value === 'desert';
 
 // ---------------------------------------------------------------------------
 // Market pricing.
@@ -437,10 +440,10 @@ export const STAGE_NAME_WORDS: {
  * level 5 clamps to index 4). Replaces the old population-keyed thresholds — land
  * now expands with the Hall level, not the raw villager count. */
 export const RING_BY_LEVEL: Array<{ lo: number; hi: number }> = [
-  { lo: 4, hi: 13 },
   { lo: 3, hi: 14 },
   { lo: 2, hi: 15 },
   { lo: 1, hi: 16 },
+  { lo: 0, hi: 17 },
   { lo: 0, hi: 17 },
 ];
 

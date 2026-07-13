@@ -98,10 +98,10 @@ describe('progression constants', () => {
 
   it('RING_BY_LEVEL opens the spec rings per level', () => {
     expect(RING_BY_LEVEL).toEqual([
-      { lo: 4, hi: 13 },
       { lo: 3, hi: 14 },
       { lo: 2, hi: 15 },
       { lo: 1, hi: 16 },
+      { lo: 0, hi: 17 },
       { lo: 0, hi: 17 },
     ]);
   });

@@ -77,6 +77,7 @@ import {
   isStackedBuilding,
   isValidVillageName,
   isVillageTheme,
+  VILLAGE_THEMES,
   defaultOutfit,
   tierStats,
 } from '../../src/shared/catalog';
@@ -676,7 +677,7 @@ const doClaim = (userId: string, x: number, y: number): { tile: TileState; me: P
   const owned = ownedPlots(world.grid, userId);
   const wasOwner = Object.values(world.grid).some((t) => t.owner === userId);
 
-  const err = canClaim(world.grid, x, y, player, owned, world.city.hallLevel);
+  const err = canClaim(world.grid, x, y, player, owned, world.city.hallLevel, world.city.foundedAt);
   if (err) throw new MockError(400, err);
   if (!isUnlocked(x, y, world.city.hallLevel)) {
     throw new MockError(400, 'Upgrade the Village Hall to unlock this land.');
@@ -1438,6 +1439,17 @@ export const devControls = {
   },
   crest: (): number => world.city.crest,
   crestColor: (): number => world.city.crestColor,
+  /** Cycle the village theme (meadow → autumn → twilight → pale → desert) and
+   * broadcast the fresh city so the live client re-skins the whole world. */
+  cycleTheme(): VillageTheme {
+    const i = VILLAGE_THEMES.indexOf(world.city.theme);
+    const next = VILLAGE_THEMES[(i + 1) % VILLAGE_THEMES.length] ?? 'meadow';
+    world.city = { ...world.city, theme: next };
+    bCity(world.city);
+    save();
+    return next;
+  },
+  theme: (): VillageTheme => world.city.theme,
   /** Drop a bot villager: a house + one ready random producer near the centre. */
   addBot(): boolean {
     const now = mockNow();

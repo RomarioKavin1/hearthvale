@@ -3,6 +3,7 @@ import type { StateResponse } from '../../shared/types';
 import { questSnapshot } from '../../shared/quests';
 import { isClaimable, isPlaza, neighbors, tileKey } from '../../shared/logic/grid';
 import { isRiver } from '../../shared/logic/expansion';
+import { isMonument } from '../../shared/logic/monuments';
 import { highlightTiles, tileToScreen } from '../events';
 import type { SpriteKey } from '../art/manifest';
 import { store } from '../state';
@@ -86,6 +87,7 @@ const isOpenTile = (data: StateResponse, x: number, y: number): boolean =>
   isClaimable(x, y) &&
   !isPlaza(x, y) &&
   !isRiver(x, y) &&
+  !isMonument(data.city.foundedAt, x, y) &&
   data.grid[tileKey(x, y)] === undefined;
 
 /** Up to `n` claimable, open tiles nearest the village centre, as `"x,y"` keys —

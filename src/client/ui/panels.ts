@@ -29,6 +29,7 @@ import {
   roleToFestival,
 } from '../../shared/logic/economy';
 import { isRiver } from '../../shared/logic/expansion';
+import { monumentAt } from '../../shared/logic/monuments';
 import { priceFor } from '../../shared/logic/market';
 import type { HvTileSelected } from '../events';
 import { api } from '../net';
@@ -119,7 +120,17 @@ export const openTileSheet = (detail: HvTileSelected): void => {
       const me = data.me;
       const tile = data.grid[key] ?? null;
       const mine = tile !== null && me !== null && tile.owner === me.id;
-      const claimable = isClaimable(x, y) && tile === null && !isRiver(x, y);
+
+      // Seeded monuments occupy otherwise-open grass but are never claimable —
+      // tapping one shows its flavour (no Settle button), matching the plaza.
+      const mon = monumentAt(data.city.foundedAt, x, y);
+      if (mon !== null && tile === null) {
+        renderMonument(body, mon.template.name, mon.template.flavor);
+        return;
+      }
+
+      const claimable =
+        isClaimable(x, y) && tile === null && !isRiver(x, y) && mon === null;
 
       if (claimable) {
         if (me) renderClaim(body, data, me, x, y, key);
@@ -154,7 +165,15 @@ const renderClaim = (
   setSheetTitle('Open plot');
   const owned = ownedPlots(data.grid, me.id);
   const max = plotsAllowed(me.level, data.city.hallLevel);
-  const reason = canClaim(data.grid, x, y, me, owned, data.city.hallLevel);
+  const reason = canClaim(
+    data.grid,
+    x,
+    y,
+    me,
+    owned,
+    data.city.hallLevel,
+    data.city.foundedAt
+  );
 
   const stack = el('div', { cls: 'hv-stack' });
   stack.appendChild(el('p', { cls: 'hv-note', text: 'A patch of open grass, waiting for a home.' }));
@@ -746,6 +765,13 @@ const renderPlaza = (body: HTMLElement): void => {
       text: 'The village square — a shared gathering place at the heart of Hearthvale. The Village Hall rises here; plots can’t be claimed on the plaza.',
     })
   );
+};
+
+// ── Variant: seeded monument (non-claimable set piece) ───────────────────────
+
+const renderMonument = (body: HTMLElement, name: string, flavor: string): void => {
+  setSheetTitle(name);
+  body.appendChild(el('p', { cls: 'hv-note', text: flavor }));
 };
 
 // ── Menu sheet ───────────────────────────────────────────────────────────────

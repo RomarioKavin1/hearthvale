@@ -27,6 +27,7 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 - **A Village Mural** — a mini r/place in every village: a shared 24×16 canvas anyone can paint, 12 pixels a day, from a wooden board on the plaza. Every subreddit's village ends up looking different at a glance.
 - **Villager outfits** — pick one of eight colours for your walker so "the little one in red is me"; the villagers strolling the plaza wear their owners' chosen outfits.
 - **A village crest** — moderators fly a crest on the Village Hall (six emblems × four banner colours) and it shows as a chip beside the village name on the feed splash.
+- **Ancient monuments** — every village is founded around a handful of seeded set pieces — a ruined watchtower, an old stone circle, an abandoned homestead, an ancient gate, a wild orchard, a wayfarer's camp — scattered on the map and unique to each subreddit. Tap one for its story; the land beneath a monument can't be built on, so they're permanent landmarks.
 - **A guided tour and quest journal** — a spotlight walkthrough covers your first session, and an 18-goal journal hands you the next objective (with rewards) for weeks.
 - **The Village Hall** — five levels built from planks and bricks, with pro-rata coin payouts, a village-wide production buff per level, land-ring unlocks, and naming rights for top contributors.
 - **Placement strategy** — a windmill by a wheat field earns more, so does a sawmill by a grove; river-side raw producers do best of all, and decor spreads a smaller bonus.
@@ -34,7 +35,8 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 - **Check-in streaks and neighbour boosts** — reward showing up and helping other players' plots.
 - **Demolish and rebuild** — clear any building for a 50% coin refund, so no plot is ever a dead end.
 - **Leaderboards and flair** — village value, lifetime earnings, and Hall contributions, with titles to match.
-- **Per-subreddit customization** — moderators name their village, pick a colour theme (meadow, autumn, twilight, or pale) and choose a crest emblem + banner colour from a mod menu form, and any player can paint their building roofs one of four colours.
+- **Two biomes, five themes** — moderators pick a look for the whole village: the four grass themes (Meadow, Autumn, Twilight, Pale) recolour the meadow world, and **Desert** swaps the entire terrain family for a sand biome — dunes, palms, oases and desert domes — while everyone's buildings and the Grand Keep stay the same. Monuments re-skin to match (a ruined tower becomes a fallen desert dome).
+- **Per-subreddit customization** — moderators name their village, pick a colour theme + biome (Meadow, Autumn, Twilight, Pale, or Desert) and choose a crest emblem + banner colour from a mod menu form, and any player can paint their building roofs one of four colours.
 - **Mobile-first** — designed for the phone-sized Reddit feed, with a comfortable touch HUD.
 
 ## The hook
@@ -74,6 +76,7 @@ A floating **dev panel** (top-right) gives you:
 - **Golden now** — force every collect into the Perfect-Harvest doubling window.
 - **+ bot villager** — drop a neighbouring house + producer to grow the population (and trigger Village-Hall level-ups).
 - **Crest** — cycle the Hall's crest emblem and banner colour (the mod form isn't reachable in the harness).
+- **Biome / theme** — cycle the village theme (Meadow → Autumn → Twilight → Pale → Desert) and watch the whole world re-skin live, including the desert sand-biome swap.
 - **Reset world** and an **FPS meter**.
 
 **Known quirk — use one focused tab.** Phaser drives its asset loader from the browser's `requestAnimationFrame`, which browsers pause in background/unfocused tabs. So a **second** harness tab (or one you `cmd`/`ctrl`-click open in the background) can appear frozen at the preloader bar around ~10% — every asset request still returns `200`, there is no console error, the tab is simply throttled. Focus that tab (click into it) and the loader resumes and finishes; keep a single focused tab while playing. This is browser tab-throttling, not a game bug, and does not affect the published Devvit post (which renders in a single, always-foreground webview).

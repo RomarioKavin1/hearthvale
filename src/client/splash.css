@@ -73,6 +73,13 @@ body {
   --sky-mid: #dfe9d5;
   --sky-low: #c3d4b6;
 }
+/* Desert: a warm sun-baked sky settling into dune-shadow amber at the horizon,
+   matching the Sketch Desert sand biome the diorama re-skins to. */
+#splash-root.hv-theme-desert {
+  --sky-top: #ffe7c2;
+  --sky-mid: #f2b579;
+  --sky-low: #c8794a;
+}
 
 /* ── Scene (warm sky with the floating island) ────────────────── */
 .hv-scene {

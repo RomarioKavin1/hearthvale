@@ -68,8 +68,10 @@ export type TileState = {
   roofColor?: RoofColor;
 };
 
-/** The four mod-selectable village themes that recolour the diorama + splash. */
-export type VillageTheme = 'meadow' | 'autumn' | 'twilight' | 'pale';
+/** The mod-selectable village themes that reskin the diorama + splash. Meadow /
+ * autumn / twilight / pale tint the grass world; desert swaps the whole terrain
+ * family for the Sketch Desert sand biome. */
+export type VillageTheme = 'meadow' | 'autumn' | 'twilight' | 'pale' | 'desert';
 
 export type CityState = {
   foundedAt: number;

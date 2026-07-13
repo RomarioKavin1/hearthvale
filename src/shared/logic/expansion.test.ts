@@ -3,17 +3,17 @@ import { RIVER_TILES, isRiver, isUnlocked, ringBounds } from './expansion';
 
 describe('ringBounds', () => {
   it('opens one ring per Village Hall level', () => {
-    expect(ringBounds(0)).toEqual({ lo: 4, hi: 13 });
-    expect(ringBounds(1)).toEqual({ lo: 3, hi: 14 });
-    expect(ringBounds(2)).toEqual({ lo: 2, hi: 15 });
-    expect(ringBounds(3)).toEqual({ lo: 1, hi: 16 });
+    expect(ringBounds(0)).toEqual({ lo: 3, hi: 14 });
+    expect(ringBounds(1)).toEqual({ lo: 2, hi: 15 });
+    expect(ringBounds(2)).toEqual({ lo: 1, hi: 16 });
+    expect(ringBounds(3)).toEqual({ lo: 0, hi: 17 });
     expect(ringBounds(4)).toEqual({ lo: 0, hi: 17 });
   });
 
-  it('clamps: levels 4 and 5 share the max ring, negatives fall back to level 0', () => {
+  it('clamps: levels 3, 4 and 5 share the max ring, negatives fall back to level 0', () => {
     expect(ringBounds(5)).toEqual({ lo: 0, hi: 17 });
     expect(ringBounds(50)).toEqual({ lo: 0, hi: 17 });
-    expect(ringBounds(-3)).toEqual({ lo: 4, hi: 13 });
+    expect(ringBounds(-3)).toEqual({ lo: 3, hi: 14 });
   });
 });
 
@@ -24,17 +24,17 @@ describe('isUnlocked', () => {
   });
 
   it('gates tiles outside the current ring', () => {
-    expect(isUnlocked(4, 4, 0)).toBe(true);
-    expect(isUnlocked(13, 13, 0)).toBe(true);
-    expect(isUnlocked(3, 3, 0)).toBe(false);
-    expect(isUnlocked(14, 5, 0)).toBe(false);
+    expect(isUnlocked(3, 3, 0)).toBe(true);
+    expect(isUnlocked(14, 14, 0)).toBe(true);
+    expect(isUnlocked(2, 2, 0)).toBe(false);
+    expect(isUnlocked(15, 5, 0)).toBe(false);
   });
 
   it('opens the next ring as the Hall levels up', () => {
-    expect(isUnlocked(3, 3, 1)).toBe(true);
-    expect(isUnlocked(14, 14, 1)).toBe(true);
-    expect(isUnlocked(2, 2, 1)).toBe(false);
-    expect(isUnlocked(0, 0, 4)).toBe(true);
+    expect(isUnlocked(2, 2, 1)).toBe(true);
+    expect(isUnlocked(15, 15, 1)).toBe(true);
+    expect(isUnlocked(1, 1, 1)).toBe(false);
+    expect(isUnlocked(0, 0, 3)).toBe(true);
     expect(isUnlocked(17, 17, 4)).toBe(true);
   });
 });
@@ -68,10 +68,10 @@ describe('RIVER_TILES / isRiver', () => {
     }
   });
 
-  it('every river tile is locked at Hall level 2 and unlocked at level 3', () => {
+  it('every river tile is locked at Hall level 1 and unlocked at level 2', () => {
     for (const t of RIVER_TILES) {
-      expect(isUnlocked(t.x, t.y, 2)).toBe(false);
-      expect(isUnlocked(t.x, t.y, 3)).toBe(true);
+      expect(isUnlocked(t.x, t.y, 1)).toBe(false);
+      expect(isUnlocked(t.x, t.y, 2)).toBe(true);
     }
   });
 

@@ -119,6 +119,36 @@ export type SpriteKey =
   | 'structure-high'
   | 'structure-low'
   | 'balcony-wood'
+  // desert biome (E2): Kenney Sketch Desert — a full sand terrain family + palms,
+  // domes, tents, broken walls that reskins the world when the theme is 'desert'.
+  | 'sand-center'
+  | 'sand-corner'
+  | 'sand-dirt-center'
+  | 'sand-path'
+  | 'sand-path-bend'
+  | 'sand-path-corner'
+  | 'sand-path-crossing'
+  | 'sand-path-end'
+  | 'sand-path-split'
+  | 'sand-river'
+  | 'sand-river-bend'
+  | 'sand-river-corner'
+  | 'sand-river-bridge'
+  | 'sand-river-end'
+  | 'sand-water'
+  | 'desert-water-center'
+  | 'desert-water-fall'
+  | 'palm'
+  | 'palms'
+  | 'rocks-sand'
+  | 'desert-dome'
+  | 'desert-dome-small'
+  | 'desert-tent'
+  | 'desert-tent-slant'
+  | 'desert-wall-broken'
+  | 'desert-wall-corner'
+  | 'desert-wall-end'
+  | 'desert-tiles-decorated'
   // UI icons (white, tintable via CSS filter)
   | 'icon-coin'
   | 'icon-star'
@@ -262,6 +292,34 @@ export const SPRITES: Record<SpriteKey, string> = {
   'structure-high': '/sprites/structure-high.png',
   'structure-low': '/sprites/structure-low.png',
   'balcony-wood': '/sprites/balcony-wood.png',
+  'sand-center': '/sprites/sand-center.png',
+  'sand-corner': '/sprites/sand-corner.png',
+  'sand-dirt-center': '/sprites/sand-dirt-center.png',
+  'sand-path': '/sprites/sand-path.png',
+  'sand-path-bend': '/sprites/sand-path-bend.png',
+  'sand-path-corner': '/sprites/sand-path-corner.png',
+  'sand-path-crossing': '/sprites/sand-path-crossing.png',
+  'sand-path-end': '/sprites/sand-path-end.png',
+  'sand-path-split': '/sprites/sand-path-split.png',
+  'sand-river': '/sprites/sand-river.png',
+  'sand-river-bend': '/sprites/sand-river-bend.png',
+  'sand-river-corner': '/sprites/sand-river-corner.png',
+  'sand-river-bridge': '/sprites/sand-river-bridge.png',
+  'sand-river-end': '/sprites/sand-river-end.png',
+  'sand-water': '/sprites/sand-water.png',
+  'desert-water-center': '/sprites/desert-water-center.png',
+  'desert-water-fall': '/sprites/desert-water-fall.png',
+  palm: '/sprites/palm.png',
+  palms: '/sprites/palms.png',
+  'rocks-sand': '/sprites/rocks-sand.png',
+  'desert-dome': '/sprites/desert-dome.png',
+  'desert-dome-small': '/sprites/desert-dome-small.png',
+  'desert-tent': '/sprites/desert-tent.png',
+  'desert-tent-slant': '/sprites/desert-tent-slant.png',
+  'desert-wall-broken': '/sprites/desert-wall-broken.png',
+  'desert-wall-corner': '/sprites/desert-wall-corner.png',
+  'desert-wall-end': '/sprites/desert-wall-end.png',
+  'desert-tiles-decorated': '/sprites/desert-tiles-decorated.png',
   'icon-coin': '/icons/icon-coin.png',
   'icon-star': '/icons/icon-star.png',
   'icon-home': '/icons/icon-home.png',

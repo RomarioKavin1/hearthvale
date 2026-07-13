@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PlayerState, Stockpile, TileState } from '../types';
 import { CATALOG, investedCost } from '../catalog';
+import { monuments } from './monuments';
 import {
   GOLDEN_CYCLE_MS,
   GOLDEN_GRACE_MS,
@@ -384,6 +385,16 @@ describe('canClaim', () => {
   });
   it('rejects a river tile', () => {
     expect(canClaim({}, 1, 4, player({ level: 1 }), 0, 0)).not.toBeNull();
+  });
+  it('rejects a seeded monument tile when the village seed is supplied', () => {
+    const seed = 1111;
+    const t = monuments(seed)[0]!.tiles[0]!;
+    // With the seed, the monument tile is rejected; without it, the monument
+    // check is skipped (the other rules still apply — here it is claimable).
+    expect(canClaim({}, t.x, t.y, player({ level: 1 }), 0, 0, seed)).toBe(
+      'An old monument stands here — it can’t be built on.'
+    );
+    expect(canClaim({}, t.x, t.y, player({ level: 1 }), 0, 0)).toBeNull();
   });
   it('rejects a later claim far from the house, allows one within 2 tiles', () => {
     const grid: Record<string, TileState> = {

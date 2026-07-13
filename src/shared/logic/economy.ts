@@ -13,6 +13,7 @@ import type { BuildingSpec } from '../catalog';
 import { CATALOG, MAX_LEVEL, PLOT_LEVELS, hallPerks, tierStats } from '../catalog';
 import { isClaimable, isPlaza, neighbors, parseKey, tileKey } from './grid';
 import { isRiver } from './expansion';
+import { isMonument } from './monuments';
 
 export const xpFor = (level: number): number => 50 * level * (level - 1);
 
@@ -375,11 +376,18 @@ export const canClaim = (
   y: number,
   player: PlayerState,
   owned: number,
-  hallLevel: number
+  hallLevel: number,
+  /** Village seed (`city.foundedAt`). When supplied, tiles occupied by a seeded
+   * monument are rejected — this is how claim validation stays in step with the
+   * renderer. Omitted only by unit tests that exercise the other rules. */
+  seed?: number
 ): string | null => {
   if (isPlaza(x, y)) return 'That tile is part of the village plaza.';
   if (!isClaimable(x, y)) return 'That tile is outside the village.';
   if (isRiver(x, y)) return "You can't settle on the river.";
+  if (seed !== undefined && isMonument(seed, x, y)) {
+    return 'An old monument stands here — it can’t be built on.';
+  }
   if (grid[tileKey(x, y)]) return 'That tile is already claimed.';
   if (owned >= plotsAllowed(player.level, hallLevel)) {
     return 'You have reached your plot limit. Level up to claim more.';
