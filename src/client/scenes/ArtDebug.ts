@@ -201,8 +201,9 @@ export class ArtDebug extends Scene {
         const py = oy + ly * (TILE_H / 2);
         const dy = (part.roof ? BASE_DY + CASTLE_TOP_DY : BASE_DY) - part.lift;
         let depthOffset = part.roof ? 2 : 1;
-        if (part.lift > 0) depthOffset += 3;
+        if (part.lift > 0) depthOffset += 3 + part.lift * 0.01;
         const img = addBlock(this, part.key, px, py, dy).setDepth(py + depthOffset);
+        if (part.scale !== undefined) img.setScale(part.scale);
         if (part.tint !== undefined) img.setTint(part.tint);
       }
       this.label(ox - 6, y + 190, `${stage}`, 11);

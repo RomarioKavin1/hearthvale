@@ -44,6 +44,8 @@ const C = {
   leaf: hexNum(PAL.leaf),
   leafDark: hexNum(PAL.leafDark),
   grassLight: hexNum(PAL.grassLight),
+  path: hexNum(PAL.path),
+  pathDark: hexNum(PAL.pathDark),
 };
 
 /** The accent objects + tweens for one building, so the caller can destroy the
@@ -200,49 +202,133 @@ export const buildBuildingAccents = (
     }
 
     case 'sawmill': {
-      // An OPEN TIMBER YARD (no house base): the frame comes from BUILDING_ART;
-      // here we add the slant canopy over it, a stacked log pile, and a big STATIC
-      // circular saw (no spin) drawn with the same outline + two-tone shading.
-      const canopy = addBlock(scene, 'roof-slant-brown', sx, sy - 4, BASE_DY + ROOF_DY)
-        .setScale(0.82)
-        .setDepth(sy + 1.5);
-      objects.push(canopy);
+      // A DENSE LUMBER YARD (H2). The tall open frame (BUILDING_ART) provides the
+      // canopy posts; here we cap it with a slant-roof canopy and fill the tile
+      // with a working yard: a BIG stacked log pile, a saw table with the blade
+      // half-buried mid-cut in a log (the storytelling detail), a plank lean-to
+      // and a sawdust mound. Tier grows the stacks, adds a second canopy, and
+      // turns the saw gold. Everything ink-lined + two-tone to match Sketch Town.
+      const t = tier;
 
-      const logs = scene.add.graphics().setDepth(sy + 2);
-      for (let i = 0; i < 3; i += 1) {
-        const lx = sx - 26 + (i % 2) * 6;
-        const ly = sy + 12 - i * 7;
-        logs.fillStyle(C.wood, 1);
-        logs.fillRoundedRect(lx - 12, ly - 4, 24, 8, 3);
-        logs.lineStyle(1, C.ink, 1);
-        logs.strokeRoundedRect(lx - 12, ly - 4, 24, 8, 3);
-        logs.fillStyle(C.woodLight, 1);
-        logs.fillCircle(lx + 11, ly, 4);
-        logs.lineStyle(1, C.woodDark, 1);
-        logs.strokeCircle(lx + 11, ly, 4);
+      // Slant-roof canopy over the posts. Tier 3 adds a second, smaller canopy so
+      // the yard reads as a bigger operation.
+      const canopy = addBlock(scene, 'roof-slant-brown', sx - 2, sy - 4, BASE_DY + ROOF_DY)
+        .setScale(0.86)
+        .setDepth(sy + 3.5);
+      objects.push(canopy);
+      if (t >= 3) {
+        const canopy2 = addBlock(scene, 'roof-slant-brown', sx + 24, sy - 14, BASE_DY + ROOF_DY)
+          .setScale(0.58)
+          .setFlipX(true)
+          .setDepth(sy + 3.4);
+        objects.push(canopy2);
       }
+
+      // Sawdust mound at the foot of the saw table (drawn first so it sits behind).
+      const tx = sx + 4;
+      const ty = sy + 12;
+      const dust = scene.add.graphics().setDepth(sy + 2.5);
+      dust.fillStyle(C.path, 0.95);
+      dust.fillEllipse(tx, ty + 13, 32, 10);
+      dust.fillStyle(C.pathDark, 0.9);
+      dust.fillEllipse(tx - 5, ty + 14, 15, 5);
+      dust.fillStyle(C.cream, 0.9);
+      for (const [dx, dy] of [[-9, 10], [3, 12], [-2, 15], [8, 13]] as const) {
+        dust.fillCircle(tx + dx, ty + dy, 1);
+      }
+      objects.push(dust);
+
+      // BIG log stack: a pyramid of log ends (heartwood discs) on the left — grows
+      // row by row with tier so a levelled yard is a visibly larger woodpile.
+      const logR = 7;
+      const rows = t >= 3 ? [3, 3, 2] : t >= 2 ? [3, 2, 1] : [2, 1];
+      const baseLX = sx - 44;
+      const baseLY = sy + 16;
+      const logs = scene.add.graphics().setDepth(sy + 2.6);
+      rows.forEach((count, row) => {
+        const ry = baseLY - row * (logR * 2 - 2);
+        const rowOff = row * logR;
+        for (let i = 0; i < count; i += 1) {
+          const cx = baseLX + rowOff + i * (logR * 2 + 1);
+          logs.fillStyle(C.wood, 1);
+          logs.fillCircle(cx, ry, logR);
+          logs.lineStyle(1.5, C.ink, 1);
+          logs.strokeCircle(cx, ry, logR);
+          logs.fillStyle(C.woodLight, 1);
+          logs.fillCircle(cx, ry, logR - 3);
+          logs.lineStyle(1, C.woodDark, 1);
+          logs.strokeCircle(cx, ry, logR - 3);
+          logs.strokeCircle(cx, ry, logR - 5);
+        }
+      });
       objects.push(logs);
 
-      // Static saw: an outlined stone disc, eight two-tone teeth, an outlined hub.
-      const saw = scene.add.graphics({ x: sx + 20, y: sy - 34 }).setDepth(sy + 3);
-      saw.fillStyle(C.stone, 1);
-      saw.fillCircle(0, 0, 12);
-      saw.lineStyle(1.5, C.ink, 1);
-      saw.strokeCircle(0, 0, 12);
-      for (let t = 0; t < 8; t += 1) {
-        const a = (t / 8) * Math.PI * 2;
-        // Two-tone tooth: cream leading, stone-dark trailing, ink outline.
-        poly(saw, [[-3, -12], [0, -12], [0, -17]], a, C.cream);
-        poly(saw, [[0, -12], [3, -12], [0, -17]], a, C.stoneDark);
-        outline(saw, [[-3, -12], [3, -12], [0, -17]], a, C.ink, 1);
+      // Plank lean-to: a stack of sawn boards on the right, staggered light/dark.
+      const planks = scene.add.graphics().setDepth(sy + 2.6);
+      const px0 = sx + 22;
+      const py0 = sy + 18;
+      const plankCount = t >= 3 ? 5 : t >= 2 ? 4 : 3;
+      for (let i = 0; i < plankCount; i += 1) {
+        const yy = py0 - i * 4;
+        const xoff = (i % 2) * 3;
+        planks.fillStyle(i % 2 === 0 ? C.woodLight : C.wood, 1);
+        planks.fillRect(px0 + xoff, yy, 30, 4);
+        planks.lineStyle(1, C.ink, 1);
+        planks.strokeRect(px0 + xoff, yy, 30, 4);
       }
-      saw.fillStyle(C.stoneDark, 1);
+      objects.push(planks);
+
+      // Saw table: a trestle carrying a log with a circular blade rising mid-cut.
+      const table = scene.add.graphics().setDepth(sy + 2.7);
+      table.lineStyle(3, C.woodDark, 1);
+      table.lineBetween(tx - 20, ty + 12, tx - 12, ty);
+      table.lineBetween(tx - 20, ty, tx - 12, ty + 12);
+      table.lineBetween(tx + 12, ty + 12, tx + 20, ty);
+      table.lineBetween(tx + 12, ty, tx + 20, ty + 12);
+      objects.push(table);
+
+      // The blade — drawn UNDER the log (depth 2.75 < 2.8) so its lower half is
+      // buried inside the log while its toothed upper half rises above the cut.
+      const gold = t >= 3;
+      const bladeFace = gold ? C.glow : C.stone;
+      const bladeEdge = gold ? C.accent : C.stoneDark;
+      const clx = tx - 26;
+      const cly = ty - 5;
+      const clh = 12;
+      const saw = scene.add.graphics({ x: tx, y: cly + 1 }).setDepth(sy + 2.75);
+      const R = 13;
+      saw.fillStyle(bladeFace, 1);
+      saw.fillCircle(0, 0, R);
+      saw.lineStyle(1.5, C.ink, 1);
+      saw.strokeCircle(0, 0, R);
+      for (let k = 0; k < 10; k += 1) {
+        const a = (k / 10) * Math.PI * 2;
+        poly(saw, [[-3, -R], [0, -R], [0, -R - 4]], a, C.cream);
+        poly(saw, [[0, -R], [3, -R], [0, -R - 4]], a, bladeEdge);
+        outline(saw, [[-3, -R], [3, -R], [0, -R - 4]], a, C.ink, 1);
+      }
+      saw.fillStyle(bladeEdge, 1);
       saw.fillCircle(0, 0, 3.5);
       saw.lineStyle(1, C.ink, 1);
       saw.strokeCircle(0, 0, 3.5);
-      // Frozen at a pleasant angle — no rotation tween at all.
-      saw.setAngle(22);
+      saw.setAngle(15);
       objects.push(saw);
+
+      // The log being cut, on top of the blade's lower half (mid-cut read).
+      const cutLog = scene.add.graphics().setDepth(sy + 2.8);
+      cutLog.fillStyle(C.wood, 1);
+      cutLog.fillRoundedRect(clx, cly, 52, clh, 5);
+      cutLog.lineStyle(1.5, C.ink, 1);
+      cutLog.strokeRoundedRect(clx, cly, 52, clh, 5);
+      // Near end cap (heartwood rings).
+      cutLog.fillStyle(C.woodLight, 1);
+      cutLog.fillEllipse(clx + 52, cly + clh / 2, 7, clh);
+      cutLog.lineStyle(1, C.woodDark, 1);
+      cutLog.strokeEllipse(clx + 52, cly + clh / 2, 7, clh);
+      // The kerf: a dark slit where the blade bites through the log.
+      cutLog.fillStyle(C.ink, 0.85);
+      cutLog.fillRect(tx - 1.5, cly - 1, 3, clh + 2);
+      objects.push(cutLog);
       break;
     }
 

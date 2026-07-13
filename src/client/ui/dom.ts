@@ -749,6 +749,9 @@ const CSS = `
 .hv-fab[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: 0 3px 0 var(--wood-dark); transform: none; }
 .hv-fab.is-checked { background: var(--wall-shade); }
 .hv-fab.is-checked .hv-icon-mask { color: var(--ink); opacity: 0.6; }
+/* Peek FAB while ghost mode is active — a glowing "on" state. */
+.hv-fab.is-peeking { background: var(--glow); box-shadow: 0 0 0 2px var(--glow), 0 3px 0 var(--wood-dark); }
+.hv-fab.is-peeking .hv-icon-mask { color: var(--ink); }
 /* Below a short viewport, drop the labels for icon-only FABs. */
 @media (max-height: 399px) {
   .hv-fab { width: 52px; height: 52px; }

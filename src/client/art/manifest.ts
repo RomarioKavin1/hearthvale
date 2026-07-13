@@ -524,15 +524,18 @@ export const BUILDING_ART: Record<BuildingId, BuildingArt> = {
     shape: 'point',
     roofByTier: { 1: 'roof-point-brown', 2: 'roof-point-green', 3: 'roof-point-purple' },
   },
-  // Sawmill = OPEN TIMBER YARD (H1): NO house base at all — an open timber frame
-  // (structure-low/high) that grows with tier, dressed by a slant canopy + log
-  // pile + static saw (accents.ts). A yard, not a cottage.
+  // Sawmill = DENSE LUMBER YARD (H2): NO house base — the tall open timber frame
+  // (structure-high) is the canopy's visible posts, and the accents pack the tile
+  // as a working yard: a slant-roof canopy, a BIG stacked log pile, a saw table
+  // with the blade half-buried mid-cut in a log (the storytelling detail), a
+  // plank lean-to and a sawdust mound. Tier growth (bigger stacks / a second
+  // canopy / a gold saw) lives in accents.ts. A yard, never a cottage.
   sawmill: {
     kind: 'flat',
     byTier: {
-      1: ['structure-low'],
+      1: ['structure-high'],
       2: ['structure-high'],
-      3: ['structure-high', 'structure-low'],
+      3: ['structure-high'],
     },
   },
   // Mason's Kiln = OVEN DOME (H1): NO house base — a desert oven dome body with a

@@ -6,8 +6,13 @@ import {
 } from '../../shared/catalog';
 import type { Good, PlayerState, StateResponse } from '../../shared/types';
 import { GOODS, xpFor } from '../../shared/logic/economy';
-import type { HvTileSelected } from '../events';
-import { HV_TILE_SELECTED, setCollapseObjectives } from '../events';
+import type { HvTileSelected, HvPeekState } from '../events';
+import {
+  HV_TILE_SELECTED,
+  HV_TOGGLE_PEEK,
+  HV_PEEK_STATE,
+  setCollapseObjectives,
+} from '../events';
 import { api } from '../net';
 import { store } from '../state';
 import {
@@ -299,6 +304,26 @@ const buildFabs = (): HTMLElement => {
   checkinFab.appendChild(checkinStreak);
   checkinFab.addEventListener('click', doCheckin);
 
+  // Peek: toggles a see-through "ghost" view so players can survey claims and
+  // ready tiles in a packed village. The scene reflects the live state back on
+  // HV_PEEK_STATE (it auto-turns-off after a few seconds), so the FAB's active
+  // styling always tracks reality.
+  const peekFab = buildFab(
+    iconEl('icon-home', 24),
+    'Peek',
+    'See through buildings',
+    false
+  );
+  peekFab.setAttribute('data-fab', 'peek');
+  peekFab.addEventListener('click', () => {
+    window.dispatchEvent(new CustomEvent(HV_TOGGLE_PEEK));
+  });
+  window.addEventListener(HV_PEEK_STATE, (e: Event) => {
+    if (!(e instanceof CustomEvent)) return;
+    const detail: HvPeekState = e.detail;
+    peekFab.classList.toggle('is-peeking', detail.active === true);
+  });
+
   const menuFab = buildFab(
     iconEl('icon-gear', 24),
     'Menu',
@@ -310,7 +335,7 @@ const buildFabs = (): HTMLElement => {
 
   return el('div', {
     cls: 'hv-fabs',
-    children: [collectFab, marketFab, checkinFab, menuFab],
+    children: [collectFab, marketFab, checkinFab, peekFab, menuFab],
   });
 };
 

@@ -840,6 +840,9 @@ export type CastlePart = {
   /** Extra upward lift (px) beyond the standard base/cap offset — raises the
    * elevated central keep at the final stage above the surrounding wall ring. */
   lift: number;
+  /** Optional uniform scale (default 1) — used to shrink the crowning pennant
+   * spires so they read as small turret caps rather than a second full roof. */
+  scale?: number | undefined;
   /** Optional tint (the purple spire caps at the full keep, matching the sample). */
   tint?: number | undefined;
 };
@@ -849,73 +852,108 @@ const KEEP_BACK = { x: 8, y: 8 };
 const KEEP_LEFT = { x: 8, y: 9 };
 const KEEP_RIGHT = { x: 9, y: 8 };
 const KEEP_FRONT = { x: 9, y: 9 };
+/** The courtyard centre point (between the four pad tiles) — where the elevated
+ * central keep stacks so it rises clear of the surrounding wall ring. */
+const KEEP_CENTER = { x: 8.5, y: 8.5 };
+
+/** The point-roof spire colour that crowns the pennant turrets at the top Hall
+ * levels, indexed by the city's crestColor (0..3 → Sand/Rustic/Forest/Royal).
+ * The four point-roof colours line up exactly with the four crest colours, so
+ * the crown respects the mod's chosen crest where it reads naturally. */
+export const CREST_SPIRE: readonly SpriteKey[] = [
+  'roof-point-beige',
+  'roof-point-brown',
+  'roof-point-green',
+  'roof-point-purple',
+];
+
+export const crestSpireKey = (crestColor: number): SpriteKey =>
+  CREST_SPIRE[crestColor] ?? 'roof-point-purple';
 
 /**
- * Cumulative Grand Keep silhouette per Hall level (0…5), redesigned so the town
- * centre is VISIBLE and reads as a clear step-up in mass at every level (Clash-of-
- * Clans style growth), culminating in the sample castle's purple-capped keep:
- *   0 a small stone gatehouse: a castle gate fronting one wall block ("town centre")
- *   1 + a side wall (an L of wall behind the gate)
- *   2 full wall ring with the front gate
- *   3 + two flanking towers (left/right) with caps
- *   4 + rear tower and a capped gatehouse (four tower masses)
- *   5 full keep: an elevated central spire + purple caps on every tower
+ * Cumulative Grand Keep silhouette per Hall level (0…5), rebuilt (Task H2) so the
+ * town centre reads as an actual CASTLE through HEIGHT and layering — not a flat
+ * walled compound. Each level is a clear step up in mass, culminating in a keep
+ * whose silhouette towers over any manor:
+ *   0 a stone plinth (castle-center foundation ring) fronted by a gate — a keep's
+ *     foundation, low and solid.
+ *   1 a full crenellated wall square with a proper gate front.
+ *   2 + two flanking corner towers (base + crenellation top).
+ *   3 four corner towers (the front becomes a capped gatehouse) + a central keep
+ *     mass begins to rise from the courtyard.
+ *   4 the central KEEP rises — stacked stone drum topped with battlements — clearly
+ *     above the wall ring.
+ *   5 crowning pennant turrets: a colour spire (crestColor) nested in every corner
+ *     crenellation + the tallest spire on the central keep. The full silhouette is
+ *     unmistakably taller than any building on the map.
  */
-export const castleParts = (stage: number): CastlePart[] => {
+export const castleParts = (stage: number, crestColor = 3): CastlePart[] => {
+  const spire = crestSpireKey(crestColor);
+  const parts: CastlePart[] = [];
+  const add = (
+    t: { x: number; y: number },
+    key: SpriteKey,
+    roof = false,
+    lift = 0,
+    scale?: number
+  ): void => {
+    parts.push({ x: t.x, y: t.y, key, roof, lift, scale });
+  };
+
   if (stage <= 0) {
-    // A modest but PRESENT town centre: a clean stone gatehouse — the castle gate
-    // fronting one wall block. Reads unambiguously as "town centre" and, unlike the
-    // old structure-arch, has no thin canopy that floats as a detached red fragment.
-    return [
-      { ...KEEP_BACK, key: 'castle-wall', roof: false, lift: 0 },
-      { ...KEEP_FRONT, key: 'castle-gate', roof: false, lift: 0 },
-    ];
+    // L0 — a low stone plinth (the keep's foundation ring) fronted by a gate.
+    add(KEEP_BACK, 'castle-center');
+    add(KEEP_LEFT, 'castle-center');
+    add(KEEP_RIGHT, 'castle-center');
+    add(KEEP_FRONT, 'castle-gate');
+    return parts;
   }
   const s = Math.min(stage, 5);
 
-  // Base wall/gate/tower on each pad tile (cumulative by level). At level 1 a
-  // second wall block rises beside the gate (an L of wall).
-  const base: Record<string, SpriteKey> = {
-    '9,9': 'castle-gate',
-    '8,8': 'castle-wall',
-  };
-  if (s === 1) base['8,9'] = 'castle-wall';
-  if (s >= 2) {
-    base['8,9'] = 'castle-wall';
-    base['9,8'] = 'castle-wall';
+  const sideTower = s >= 2; // L2: the two side corners become towers.
+  const backTower = s >= 3; // L3: the back corner too (→ four tower masses).
+  const gatehouse = s >= 3; // L3: the front gate becomes a capped gatehouse.
+
+  // ── Wall ring (cumulative): a crenellated wall square with the gate at front,
+  //    corners upgrading to towers as the Hall levels up. ──────────────────────
+  add(KEEP_BACK, backTower ? 'castle-tower' : 'castle-wall');
+  add(KEEP_LEFT, sideTower ? 'castle-tower' : 'castle-wall');
+  add(KEEP_RIGHT, sideTower ? 'castle-tower' : 'castle-wall');
+  add(KEEP_FRONT, 'castle-gate');
+
+  // ── Corner crenellation caps (nested tops on the towers + gatehouse). ────────
+  if (backTower) add(KEEP_BACK, 'castle-tower-top', true);
+  if (sideTower) {
+    add(KEEP_LEFT, 'castle-tower-top', true);
+    add(KEEP_RIGHT, 'castle-tower-top', true);
   }
+  if (gatehouse) add(KEEP_FRONT, 'castle-tower-top', true);
+
+  // ── Central keep: rises from the courtyard at L3, towers over the walls at
+  //    L4+. Stacked stone drum (base + one/two center blocks), capped with a
+  //    battlement ring. Each stack step is ~a third of a block so the keep reads
+  //    as one tall mass rather than separated cubes. ─────────────────────────────
   if (s >= 3) {
-    base['8,9'] = 'castle-tower';
-    base['9,8'] = 'castle-tower';
-  }
-  if (s >= 4) base['8,8'] = 'castle-tower';
-
-  const parts: CastlePart[] = [];
-  for (const t of [KEEP_BACK, KEEP_RIGHT, KEEP_LEFT, KEEP_FRONT]) {
-    const key = base[tileKey(t.x, t.y)];
-    if (key) parts.push({ x: t.x, y: t.y, key, roof: false, lift: 0 });
-  }
-
-  // Tower caps: nested crenellation caps on every tower.
-  for (const t of [KEEP_BACK, KEEP_RIGHT, KEEP_LEFT]) {
-    if (base[tileKey(t.x, t.y)] === 'castle-tower') {
-      parts.push({ x: t.x, y: t.y, key: 'castle-tower-top', roof: true, lift: 0 });
+    add(KEEP_CENTER, 'castle-tower-base', false, 0);
+    add(KEEP_CENTER, 'castle-tower-center', false, 34);
+    if (s >= 4) add(KEEP_CENTER, 'castle-tower-center', false, 66);
+    const keepCap = s >= 4 ? 98 : 62;
+    add(KEEP_CENTER, 'castle-tower-top', true, keepCap);
+    if (s >= 5) {
+      // The crowning spire on the keep — the tallest element on the whole map.
+      add(KEEP_CENTER, spire, true, keepCap + 20, 0.85);
     }
   }
-  if (s >= 4) {
-    // The front gate becomes a fortified gatehouse (capped) at level 4+.
-    parts.push({ ...KEEP_FRONT, key: 'castle-tower-top', roof: true, lift: 0 });
-  }
 
+  // ── L5 pennant turrets: a small colour spire nested in every corner
+  //    crenellation, so the whole crown flies the village's crest colour. ────────
   if (s >= 5) {
-    // Elevated central keep: a tower rising from the courtyard centre, crowned
-    // with the sample castle's purple point spire. The spire cap rides ROOF-deep
-    // (one full block step) rather than the nested tower-cap depth, hence the
-    // extra 20px on its lift (CASTLE_TOP_DY − ROOF_DY).
-    const cx = (KEEP_BACK.x + KEEP_FRONT.x) / 2;
-    const cy = (KEEP_BACK.y + KEEP_FRONT.y) / 2;
-    parts.push({ x: cx, y: cy, key: 'castle-tower-center', roof: false, lift: 45 });
-    parts.push({ x: cx, y: cy, key: 'roof-point-purple', roof: true, lift: 65 });
+    add(KEEP_BACK, spire, true, 15, 0.5);
+    if (sideTower) {
+      add(KEEP_LEFT, spire, true, 15, 0.5);
+      add(KEEP_RIGHT, spire, true, 15, 0.5);
+    }
+    if (gatehouse) add(KEEP_FRONT, spire, true, 15, 0.5);
   }
   return parts;
 };

@@ -86,11 +86,13 @@ import { store } from '../state';
 import { api } from '../net';
 import { toast } from '../ui/dom';
 import { openMuralSheet } from '../ui/mural';
-import type { HvTileSelected } from '../events';
+import type { HvPeekState, HvTileSelected } from '../events';
 import {
   HV_CLEAR_SELECTION,
   HV_FOCUS_TILE,
+  HV_PEEK_STATE,
   HV_TILE_SELECTED,
+  HV_TOGGLE_PEEK,
   requestCollapseObjectives,
   setHighlightTiles,
   setTileToScreen,
@@ -239,6 +241,13 @@ type TileView = {
 
 const BAR_W = 60;
 const BAR_H = 5;
+/** Occlusion relief (H2). Alpha a structure fades to while it occludes the open
+ * tile sheet's tile; the alpha ALL structures fade to in peek/ghost mode; the
+ * peek auto-off delay; and the fade tween length. */
+const OCCLUDER_ALPHA = 0.35;
+const PEEK_ALPHA = 0.3;
+const PEEK_MS = 6000;
+const FADE_MS = 120;
 const EFFECT_DEPTH = 100000;
 const PIP_DEPTH = 50000;
 /** Drifting cloud shadows sit above the diorama but below pips/effects. */
@@ -401,6 +410,22 @@ export class Village extends Scene {
   private onVisibility: () => void = () => {};
   private onFocusTile: (e: Event) => void = () => {};
   private onClearSelection: () => void = () => {};
+  private onTogglePeek: () => void = () => {};
+
+  /** Occlusion relief (H2). When a tile sheet is open, structures that sit in
+   * front of the selected tile AND overlap its diamond fade to `OCCLUDER_ALPHA`
+   * so the middle of a packed village stays readable; restored on close/switch. */
+  private occludedImgs: Phaser.GameObjects.Image[] = [];
+  /** The tile whose sheet is currently open (drives the occluder fade), or none. */
+  private selectedTile: { x: number; y: number } | undefined;
+  /** Peek (ghost) mode: ALL buildings + monuments + the Hall dim to `PEEK_ALPHA`
+   * so players can survey claims/ready tiles in a dense village. Auto-off timer. */
+  private peekActive = false;
+  private peekImgs: Phaser.GameObjects.Image[] = [];
+  private peekTimer: Phaser.Time.TimerEvent | undefined;
+  /** Per-image alpha tween registry so a fade/restore never double-tweens the same
+   * sprite (its ambient scale-pulse tween is a different tween and stays untouched). */
+  private alphaTweens: Map<Phaser.GameObjects.Image, Phaser.Tweens.Tween> = new Map();
 
   constructor() {
     super('Village');
@@ -608,6 +633,7 @@ export class Village extends Scene {
    * variants. Each piece depth-sorts by its own tile row like any structure.
    */
   private buildMonuments(): void {
+    this.untrackFades(this.monumentImgs);
     for (const img of this.monumentImgs) img.destroy();
     this.monumentImgs = [];
     const family = themeFamily(this.theme());
@@ -762,13 +788,16 @@ export class Village extends Scene {
   }
 
   private renderCastle(): void {
+    this.untrackFades(this.landmarkParts);
     for (const p of this.landmarkParts) p.destroy();
     this.landmarkParts = [];
     const stage = store.data?.city.hallLevel ?? 0;
-    for (const part of castleParts(stage)) {
+    const crestColor = store.data?.city.crestColor ?? 3;
+    for (const part of castleParts(stage, crestColor)) {
       const { sx, sy } = isoToScreen(part.x, part.y, TILE_W, TILE_H);
       const dy = (part.roof ? BASE_DY + CASTLE_TOP_DY : BASE_DY) - part.lift;
       const img = addBlock(this, part.key, sx, sy, dy);
+      if (part.scale !== undefined) img.setScale(part.scale);
       // Depth: a constant CASTLE_DEPTH_BOOST (≈1.5 iso rows) plus the part's own
       // pixel lift, added to sy. The constant is uniform across every castle
       // part, so the keep's internal stacking (base<cap<elevated) is preserved,
@@ -1370,7 +1399,24 @@ export class Village extends Scene {
     return (r << 16) | (gg << 8) | bl;
   }
 
+  /** Drop occlusion/peek fade bookkeeping for sprites about to be destroyed, so a
+   * rebuild (tile reconcile, theme repaint, Hall upgrade) mid-fade never leaves a
+   * dead reference to tween. */
+  private untrackFades(imgs: Phaser.GameObjects.Image[]): void {
+    if (imgs.length === 0 || this.alphaTweens.size + this.occludedImgs.length + this.peekImgs.length === 0) {
+      return;
+    }
+    const dying = new Set<Phaser.GameObjects.Image>(imgs);
+    for (const im of imgs) {
+      this.alphaTweens.get(im)?.remove();
+      this.alphaTweens.delete(im);
+    }
+    this.occludedImgs = this.occludedImgs.filter((im) => !dying.has(im));
+    this.peekImgs = this.peekImgs.filter((im) => !dying.has(im));
+  }
+
   private clearStructural(view: TileView): void {
+    this.untrackFades(view.parts);
     for (const p of view.parts) p.destroy();
     view.parts = [];
     view.primary = undefined;
@@ -1771,12 +1817,156 @@ export class Village extends Scene {
     this.highlight.closePath();
     this.highlight.strokePath();
     this.highlight.setVisible(true);
+    // Occlusion relief: fade any structure sitting in front of this tile while
+    // its sheet is open, so a tile buried in a packed village stays readable.
+    this.selectedTile = { x, y };
+    this.applyOccluderFade(x, y);
     void key;
   }
 
   private dispatchSelected(detail: HvTileSelected): void {
     window.dispatchEvent(
       new CustomEvent<HvTileSelected>(HV_TILE_SELECTED, { detail })
+    );
+  }
+
+  // ── Occlusion relief (H2) ─────────────────────────────────────────────────
+
+  /** Fade one structural sprite to `alpha`, cancelling any in-flight fade of the
+   * SAME sprite first (its ambient scale-pulse is a separate tween, untouched).
+   * Instant under reduced motion; a short cross-fade otherwise. */
+  private fadeStructure(img: Phaser.GameObjects.Image, alpha: number): void {
+    const prev = this.alphaTweens.get(img);
+    if (prev) {
+      prev.remove();
+      this.alphaTweens.delete(img);
+    }
+    if (this.reducedMotion) {
+      img.setAlpha(alpha);
+      return;
+    }
+    const tween = this.tweens.add({
+      targets: img,
+      alpha,
+      duration: FADE_MS,
+      onComplete: () => {
+        this.alphaTweens.delete(img);
+      },
+    });
+    this.alphaTweens.set(img, tween);
+  }
+
+  /** Union of the given sprites' screen bounds (undefined if empty). */
+  private unionBounds(
+    imgs: Phaser.GameObjects.Image[]
+  ): Phaser.Geom.Rectangle | undefined {
+    let r: Phaser.Geom.Rectangle | undefined;
+    for (const im of imgs) {
+      const b = im.getBounds();
+      r = r === undefined ? b : Phaser.Geom.Rectangle.Union(r, b);
+    }
+    return r;
+  }
+
+  /** Every occludable structure on the map as a group: its sprites, the screen
+   * row (sy) it stands on, and its union screen bounds. Buildings/decor (per
+   * tile view), seeded monuments, and the Grand Keep — never ground, pips,
+   * walkers or the mural/crest plaza dressing. Cheap: a few dozen structures. */
+  private structureGroups(): Array<{
+    objects: Phaser.GameObjects.Image[];
+    sy: number;
+    bounds: Phaser.Geom.Rectangle;
+  }> {
+    const groups: Array<{
+      objects: Phaser.GameObjects.Image[];
+      sy: number;
+      bounds: Phaser.Geom.Rectangle;
+    }> = [];
+    for (const [key, view] of this.views) {
+      if (view.parts.length === 0) continue;
+      const bounds = this.unionBounds(view.parts);
+      if (!bounds) continue;
+      const { x, y } = parseKey(key);
+      const { sy } = isoToScreen(x, y, TILE_W, TILE_H);
+      groups.push({ objects: view.parts, sy, bounds });
+    }
+    for (const img of this.monumentImgs) {
+      groups.push({ objects: [img], sy: img.depth, bounds: img.getBounds() });
+    }
+    if (this.landmarkParts.length > 0) {
+      const bounds = this.unionBounds(this.landmarkParts);
+      if (bounds) {
+        const { sy } = isoToScreen(9, 9, TILE_W, TILE_H); // keep front row
+        groups.push({ objects: this.landmarkParts, sy, bounds });
+      }
+    }
+    return groups;
+  }
+
+  /** Fade every structure that (a) sits in front of tile (x,y) and (b) overlaps
+   * its tile diamond, so the open sheet's tile is never hidden. No-op while peek
+   * mode already dims everything. */
+  private applyOccluderFade(x: number, y: number): void {
+    this.clearOccluderFade();
+    if (this.peekActive) return;
+    const { sx: tsx, sy: tsy } = isoToScreen(x, y, TILE_W, TILE_H);
+    const diamond = new Phaser.Geom.Rectangle(
+      tsx - TILE_W / 2,
+      tsy - TILE_H / 2,
+      TILE_W,
+      TILE_H
+    );
+    for (const g of this.structureGroups()) {
+      if (g.sy <= tsy) continue; // only structures IN FRONT can hide the tile
+      if (!Phaser.Geom.Intersects.RectangleToRectangle(diamond, g.bounds)) {
+        continue;
+      }
+      for (const im of g.objects) {
+        this.fadeStructure(im, OCCLUDER_ALPHA);
+        this.occludedImgs.push(im);
+      }
+    }
+  }
+
+  /** Restore every occluder-faded structure to full opacity. */
+  private clearOccluderFade(): void {
+    if (this.occludedImgs.length === 0) return;
+    for (const im of this.occludedImgs) this.fadeStructure(im, 1);
+    this.occludedImgs = [];
+  }
+
+  /** Peek (ghost) mode toggle from the rail FAB — see-through the whole village. */
+  private togglePeek(): void {
+    this.setPeek(!this.peekActive);
+  }
+
+  /** Enter/leave ghost mode: ALL buildings + monuments + the Hall dim to
+   * PEEK_ALPHA (ground, pips, walkers and the mural/crest dressing stay solid),
+   * auto-off after PEEK_MS. */
+  private setPeek(on: boolean): void {
+    this.peekTimer?.remove();
+    this.peekTimer = undefined;
+    this.peekActive = on;
+    if (on) {
+      this.clearOccluderFade(); // the per-tile fade is superseded by ghost mode
+      this.peekImgs = [];
+      for (const g of this.structureGroups()) {
+        for (const im of g.objects) {
+          this.fadeStructure(im, PEEK_ALPHA);
+          this.peekImgs.push(im);
+        }
+      }
+      this.peekTimer = this.time.delayedCall(PEEK_MS, () => this.setPeek(false));
+    } else {
+      for (const im of this.peekImgs) this.fadeStructure(im, 1);
+      this.peekImgs = [];
+      // Re-apply the per-tile occluder relief if a sheet is still open.
+      if (this.selectedTile) {
+        this.applyOccluderFade(this.selectedTile.x, this.selectedTile.y);
+      }
+    }
+    window.dispatchEvent(
+      new CustomEvent<HvPeekState>(HV_PEEK_STATE, { detail: { active: on } })
     );
   }
 
@@ -1839,9 +2029,13 @@ export class Village extends Scene {
     };
     this.onClearSelection = () => {
       this.highlight?.setVisible(false);
+      this.selectedTile = undefined;
+      this.clearOccluderFade();
     };
+    this.onTogglePeek = () => this.togglePeek();
     window.addEventListener(HV_FOCUS_TILE, this.onFocusTile);
     window.addEventListener(HV_CLEAR_SELECTION, this.onClearSelection);
+    window.addEventListener(HV_TOGGLE_PEEK, this.onTogglePeek);
 
     // Walkthrough bridge: map a tile's grid coords to a live viewport pixel
     // point (camera scroll + zoom + the canvas's page offset), so a coach mark
@@ -2800,6 +2994,10 @@ export class Village extends Scene {
     store.off('change', this.onStoreChange);
     window.removeEventListener(HV_FOCUS_TILE, this.onFocusTile);
     window.removeEventListener(HV_CLEAR_SELECTION, this.onClearSelection);
+    window.removeEventListener(HV_TOGGLE_PEEK, this.onTogglePeek);
+    this.peekTimer?.remove();
+    this.peekTimer = undefined;
+    this.alphaTweens.clear();
     document.removeEventListener('visibilitychange', this.onVisibility);
     setTileToScreen(null);
     setHighlightTiles(null);

@@ -26,6 +26,12 @@ export const HV_TILE_SELECTED = 'hv:tileSelected';
 export const HV_CLEAR_SELECTION = 'hv:clearSelection';
 export const HV_FOCUS_TILE = 'hv:focusTile';
 
+/** Fired by the HUD's Peek FAB to ask the scene to toggle ghost (see-through)
+ * mode; and back by the scene to reflect the live peek state on the FAB. */
+export const HV_TOGGLE_PEEK = 'hv:togglePeek';
+export const HV_PEEK_STATE = 'hv:peekState';
+export type HvPeekState = { active: boolean };
+
 /**
  * A viewport-space pixel position (relative to the top-left of the window),
  * used by the walkthrough to point a coach mark at a scene tile.

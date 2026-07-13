@@ -293,34 +293,54 @@ describe('riverPiece / riverPieceAt', () => {
 });
 
 describe('castleParts', () => {
-  it('is PRESENT from level 0 and grows monotonically in mass', () => {
+  it('is PRESENT from level 0 and never shrinks as the Hall levels up', () => {
     let prev = 0;
     for (let stage = 0; stage <= 5; stage++) {
       const parts = castleParts(stage);
-      expect(parts.length).toBeGreaterThan(prev);
+      expect(parts.length).toBeGreaterThanOrEqual(prev);
       prev = parts.length;
       // Every stage keeps the front gate anchoring the composition.
       expect(parts.some((p) => p.key === 'castle-gate')).toBe(true);
     }
+    // The finished castle is far more massive than the L0 foundation.
+    expect(castleParts(5).length).toBeGreaterThan(castleParts(0).length * 3);
   });
 
-  it('level 0 is a clean stone gatehouse (no floating structure-arch)', () => {
+  it('level 0 is a low stone plinth fronted by a gate (a keep foundation)', () => {
     const keys = castleParts(0).map((p) => p.key);
     expect(keys).toContain('castle-gate');
-    expect(keys).toContain('castle-wall');
+    expect(keys).toContain('castle-center'); // the plinth foundation ring
     // The old red structure-arch read as a detached floating fragment on the hall.
     expect(keys).not.toContain('structure-arch');
   });
 
-  it('the full keep crowns an elevated centre with the purple spire', () => {
+  it('the central keep rises above the walls from level 4', () => {
+    const l3 = castleParts(3);
+    const l4 = castleParts(4);
+    const maxLift = (parts: ReturnType<typeof castleParts>): number =>
+      Math.max(...parts.map((p) => p.lift));
+    // A second stacked keep block at L4 pushes the silhouette clearly taller.
+    expect(maxLift(l4)).toBeGreaterThan(maxLift(l3));
+    expect(l4.filter((p) => p.key === 'castle-tower-center')).toHaveLength(2);
+  });
+
+  it('the full keep towers over an elevated centre crowned with the crest spire', () => {
     const parts = castleParts(5);
-    const spireBase = parts.find((p) => p.key === 'castle-tower-center');
-    const spireCap = parts.find((p) => p.key === 'roof-point-purple');
-    expect(spireBase?.lift).toBeGreaterThan(0);
-    expect(spireCap?.lift).toBeGreaterThan(spireBase?.lift ?? 0);
-    // Three capped towers plus the capped gatehouse ring the spire.
-    expect(parts.filter((p) => p.key === 'castle-tower-top')).toHaveLength(4);
+    const keepBase = parts.find((p) => p.key === 'castle-tower-center');
+    expect(keepBase?.lift).toBeGreaterThan(0);
+    // The single tallest element is a crest-colour spire crowning the keep.
+    const maxLift = Math.max(...parts.map((p) => p.lift));
+    const crown = parts.find((p) => p.lift === maxLift);
+    expect(crown?.key).toBe('roof-point-purple');
+    // Four corner crenellations (back + two sides + fortified gatehouse) plus the
+    // keep cap ring the spire.
+    expect(parts.filter((p) => p.key === 'castle-tower-top')).toHaveLength(5);
     expect(parts.filter((p) => p.key === 'castle-tower')).toHaveLength(3);
+  });
+
+  it('respects the crest colour for the crowning spires', () => {
+    expect(castleParts(5, 2).some((p) => p.key === 'roof-point-green')).toBe(true);
+    expect(castleParts(5, 0).some((p) => p.key === 'roof-point-beige')).toBe(true);
   });
 
   it('clamps above the max stage', () => {
