@@ -15,13 +15,17 @@ import { tileKey } from './grid';
  * renderer (art/render.ts MONUMENT_ART); this shared module owns only the tile
  * FOOTPRINT (identical across biomes) and the flavour copy, so claim validation
  * stays biome-independent. */
+// H1 deliverable 4: the distinctive CASTLE compositions (ruined watchtower =
+// castle-tower + top; ancient gate = castle-wall + arch) were retired from the
+// monument pool — that art now goes to REAL buildings — and the monuments are
+// demoted to humble ruins that never compete with a player's structures.
 export type MonumentId =
-  | 'watchtower'
+  | 'broken-wall'
   | 'stone-circle'
   | 'homestead'
-  | 'gate'
+  | 'fence-rubble'
   | 'orchard'
-  | 'camp';
+  | 'dry-well';
 
 export type MonumentTemplate = {
   id: MonumentId;
@@ -36,11 +40,14 @@ export type MonumentTemplate = {
 
 export const MONUMENT_TEMPLATES: readonly MonumentTemplate[] = [
   {
-    id: 'watchtower',
-    name: 'Ruined Watchtower',
+    id: 'broken-wall',
+    name: 'Crumbled Wall',
     flavor:
-      'A crumbling watchtower from the founding days. Its beacon has long gone cold, but villagers still climb it at dusk to watch the sun set over the fields.',
-    footprint: [[0, 0]],
+      'A short run of broken stonework, half-swallowed by grass — the last of a boundary the village long ago outgrew. Children dare each other to walk its length.',
+    footprint: [
+      [0, 0],
+      [1, 0],
+    ],
   },
   {
     id: 'stone-circle',
@@ -62,14 +69,13 @@ export const MONUMENT_TEMPLATES: readonly MonumentTemplate[] = [
     footprint: [[0, 0]],
   },
   {
-    id: 'gate',
-    name: 'Ancient Gate',
+    id: 'fence-rubble',
+    name: 'Fallen Fence',
     flavor:
-      'A lone archway flanked by broken walls — all that survives of a boundary the village long ago outgrew. Travellers still pass beneath it for luck.',
+      'A collapsed length of old fencing gone to rubble, leaning where the wind left it. Nobody remembers whose field it once kept.',
     footprint: [
       [0, 0],
       [1, 0],
-      [2, 0],
     ],
   },
   {
@@ -85,24 +91,21 @@ export const MONUMENT_TEMPLATES: readonly MonumentTemplate[] = [
     ],
   },
   {
-    id: 'camp',
-    name: 'Wayfarer’s Rest',
+    id: 'dry-well',
+    name: 'Dry Well',
     flavor:
-      'A quiet roadside camp where wandering traders pause to rest. A cold fire-ring and a lean-to are all that mark it, but the welcome is always warm.',
-    footprint: [
-      [0, 0],
-      [1, 0],
-    ],
+      'An old well run dry, its bucket rope frayed to nothing and its stones furred with moss. Villagers toss a pebble in and make a wish all the same.',
+    footprint: [[0, 0]],
   },
 ];
 
 const TEMPLATE_BY_ID: Record<MonumentId, MonumentTemplate> = {
-  watchtower: MONUMENT_TEMPLATES[0]!,
+  'broken-wall': MONUMENT_TEMPLATES[0]!,
   'stone-circle': MONUMENT_TEMPLATES[1]!,
   homestead: MONUMENT_TEMPLATES[2]!,
-  gate: MONUMENT_TEMPLATES[3]!,
+  'fence-rubble': MONUMENT_TEMPLATES[3]!,
   orchard: MONUMENT_TEMPLATES[4]!,
-  camp: MONUMENT_TEMPLATES[5]!,
+  'dry-well': MONUMENT_TEMPLATES[5]!,
 };
 
 /** mulberry32 PRNG (same family as the renderer's terrain seed) — a compact,

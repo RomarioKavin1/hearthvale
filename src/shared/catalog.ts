@@ -225,8 +225,6 @@ export const PAINT_COST: number = 25;
 export const STACKED_BUILDINGS: ReadonlySet<BuildingId> = new Set<BuildingId>([
   'house',
   'windmill',
-  'sawmill',
-  'kiln',
   'bakery',
   'manor',
 ]);
@@ -543,12 +541,14 @@ export const CREST_EMBLEMS: readonly { label: string; icon: string }[] = [
   { label: 'Coin', icon: 'icon-coin' },
 ];
 
-/** The four crest banner colours (0..3): red / green / blue / gold. */
+/** The four crest banner colours (0..3), matching the pack's colored crest
+ * towers (Beige/Brown/Green/Purple) flown as the village standard. Labels are the
+ * heraldic names shown in the mod form + dev panel. */
 export const CREST_COLORS: readonly { label: string; hex: string }[] = [
-  { label: 'Red', hex: PAL.roofRed },
-  { label: 'Green', hex: PAL.roofGreen },
-  { label: 'Blue', hex: PAL.roofBlue },
-  { label: 'Gold', hex: PAL.roofStraw },
+  { label: 'Sand', hex: PAL.roofBeige },
+  { label: 'Rustic', hex: PAL.roofBrown },
+  { label: 'Forest', hex: PAL.roofGreen },
+  { label: 'Royal', hex: PAL.roofPurple },
 ];
 
 /** True when `v` is a valid crest emblem index (0..5). */

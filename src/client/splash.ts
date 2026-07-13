@@ -44,12 +44,13 @@ const CREST_ICON: readonly SpriteKey[] = [
   'icon-hammer',
   'icon-coin',
 ];
-/** The crest banner colour per index (0..3), matching catalog CREST_COLORS. */
+/** The crest banner colour per index (0..3), matching catalog CREST_COLORS
+ * (Sand/Rustic/Forest/Royal — the colored crest towers). */
 const CREST_HEX: readonly string[] = [
-  PAL.roofRed,
+  PAL.roofBeige,
+  PAL.roofBrown,
   PAL.roofGreen,
-  PAL.roofBlue,
-  PAL.roofStraw,
+  PAL.roofPurple,
 ];
 
 const DEFAULT_VILLAGE_NAME = 'Hearthvale';

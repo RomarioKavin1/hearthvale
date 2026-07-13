@@ -1,7 +1,14 @@
 import { Input, Scene } from 'phaser';
 import { PAL } from '../../shared/palette';
 import type { BuildingId, Tier } from '../../shared/types';
-import { BUILDING_ART, SPRITES } from '../art/manifest';
+import {
+  BUILDING_ART,
+  CREST_TOWER,
+  HOUSE_STYLES,
+  ROOF_SHAPE,
+  SPRITES,
+  houseStyle,
+} from '../art/manifest';
 import type { SpriteKey } from '../art/manifest';
 import { buildBuildingAccents } from '../art/accents';
 import {
@@ -74,12 +81,28 @@ export class ArtDebug extends Scene {
     addBlock(this, 'grass-center', cx, cy).setDepth(cy);
   }
 
-  private composeBuilding(id: BuildingId, tier: Tier, cx: number, cy: number): void {
+  private composeBuilding(
+    id: BuildingId,
+    tier: Tier,
+    cx: number,
+    cy: number,
+    ownerId = 'debug-owner'
+  ): void {
     this.ground(cx, cy);
     const art = BUILDING_ART[id];
     if (art.kind === 'stacked') {
-      addBlock(this, art.base, cx, cy, BASE_DY).setDepth(cy + 1);
-      addBlock(this, art.roofByTier[tier], cx, cy, BASE_DY + ROOF_DY).setDepth(cy + 2);
+      // Houses render the deterministic per-owner style (H1); other stacked
+      // buildings use their fixed base + tier roof.
+      if (id === 'house') {
+        const style = houseStyle(ownerId);
+        addBlock(this, style.base, cx, cy, BASE_DY).setDepth(cy + 1);
+        addBlock(this, ROOF_SHAPE[style.shape][style.roof], cx, cy, BASE_DY + ROOF_DY).setDepth(
+          cy + 2
+        );
+      } else {
+        addBlock(this, art.base, cx, cy, BASE_DY).setDepth(cy + 1);
+        addBlock(this, art.roofByTier[tier], cx, cy, BASE_DY + ROOF_DY).setDepth(cy + 2);
+      }
     } else {
       let d = cy + 1;
       for (const k of art.byTier[tier]) {
@@ -191,11 +214,47 @@ export class ArtDebug extends Scene {
       this.label(16, y + 40, id, 12);
       TIERS.forEach((tier, i) => {
         const cx = 150 + i * COL;
-        this.composeBuilding(id, tier, cx, y + 60);
+        // For houses, give each tier column a DIFFERENT owner so the row also
+        // shows the per-owner style variety alongside the tier accents.
+        this.composeBuilding(id, tier, cx, y + 60, `house-owner-${i}`);
         this.label(cx - 8, y + 100, `t${tier}`, 10);
       });
       y += ROW;
     }
+
+    // House style pool (H1): every curated combo, so the reviewer can confirm each
+    // reads "modest home" and none collides with a special building's grammar.
+    this.label(16, y + 20, `house style pool (${HOUSE_STYLES.length} combos)`, 12);
+    HOUSE_STYLES.forEach((_style, i) => {
+      const cx = 110 + (i % 6) * (COL - 8);
+      const cyRow = y + 70 + Math.floor(i / 6) * 150;
+      this.ground(cx, cyRow);
+      this.composeBuilding('house', 1, cx, cyRow, `pool-${i}`);
+      this.label(cx - 10, cyRow + 44, `#${i}`, 10);
+    });
+    y += ROW + 160;
+
+    // Crest standard (H1 flag v2): stone pedestal + each colored crest tower.
+    this.label(16, y + 20, 'crest standard — Sand | Rustic | Forest | Royal', 12);
+    CREST_TOWER.forEach((key, i) => {
+      const cx = 160 + i * (COL + 20);
+      const cyRow = y + 90;
+      this.ground(cx, cyRow);
+      // Pedestal plate raised so its top face meets the tower's foot, and the
+      // scaled tower nudged down to stand ON that plate (they nest as one standard).
+      this.add
+        .image(cx, cyRow - 15, 'base-stone-detail')
+        .setOrigin(0.5, 0.72)
+        .setScale(0.72)
+        .setDepth(cyRow + 1);
+      addSurface(this, key, cx, cyRow)
+        .setScale(0.56)
+        .setY(cyRow + BASE_DY + 8)
+        .setDepth(cyRow + 2);
+      const names = ['Sand', 'Rustic', 'Forest', 'Royal'];
+      this.label(cx - 16, cyRow + 40, names[i] ?? '', 10);
+    });
+    y += ROW + 20;
 
     // Wheatfield growth states + construction scaffold + golden roof.
     this.label(16, y + 40, 'states', 12);

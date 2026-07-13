@@ -5,7 +5,6 @@ import type { JsonValue } from '@devvit/web/shared';
 import { PAL } from '../../shared/palette';
 import {
   CATALOG,
-  CREST_COLORS,
   CREST_EMBLEMS,
   GRID_SIZE,
   MURAL_H,
@@ -36,7 +35,13 @@ import type {
   VillageMessage,
   VillageTheme,
 } from '../../shared/types';
-import { BUILDING_ART, roofKeyFor } from '../art/manifest';
+import {
+  BUILDING_ART,
+  CREST_TOWER,
+  ROOF_SHAPE,
+  houseStyle,
+  roofKeyFor,
+} from '../art/manifest';
 import { buildBuildingAccents } from '../art/accents';
 import type { SpriteKey } from '../art/manifest';
 import type { Cluster } from '../art/render';
@@ -128,9 +133,10 @@ const MURAL_TILE = { x: 10, y: 7 };
 const MURAL_SCALE = 4;
 /** The live mural-board canvas texture key. */
 const MURAL_TEX = 'hv-mural-board';
-/** Depth for the Hall crest pennant — above the diorama/castle, below the
- * ready-pip + effect layers so it never covers a toast or gold pip. */
-const CREST_DEPTH = 45000;
+/** The plaza-ring tile the crest standard stands on (H1): the front-right corner
+ * of the ring — beside the Hall, in front so it's never occluded by the growing
+ * keep, and clear of the well (SW) and mural (NE). */
+const CREST_TILE = { x: 10, y: 10 };
 
 // ── Runtime-guards for realtime messages (no casts) ─────────────────────────
 
@@ -872,45 +878,49 @@ export class Village extends Scene {
 
   // ── Village crest pennant (E1) ───────────────────────────────────────────────
 
-  /** (Re)build the crest pennant flying from the Village Hall: a wooden pole, a
-   * colour-banner triangle and the mod-chosen emblem icon. Anchored above the
-   * keep and raised a little more at each Hall level so it always crowns the
-   * growing silhouette. Cheap (four objects) so it just rebuilds on any change. */
+  /** (Re)build the village crest STANDARD on the plaza (H1 crest flag v2): a
+   * carved stone pedestal (bases pack) with the pack's own colored crest tower
+   * (Sand/Rustic/Forest/Royal → Beige/Brown/Green/Purple) standing on it as the
+   * heraldic flag element — 100% pack art, replacing the old drawn pennant. The
+   * mod-chosen emblem still flies as a small cream icon banner on the tower. Sits
+   * beside the Hall on the plaza front corner and depth-sorts like a building. */
   private updateCrest(): void {
     for (const p of this.crestParts) p.destroy();
     this.crestParts = [];
     const city = store.data?.city;
     if (!city) return;
 
+    const towerKey = CREST_TOWER[city.crestColor] ?? CREST_TOWER[0]!;
     const emblem = CREST_EMBLEMS[city.crest] ?? CREST_EMBLEMS[0];
-    const color = CREST_COLORS[city.crestColor] ?? CREST_COLORS[0];
-    if (!emblem || !color) return;
+    const { sx, sy } = isoToScreen(CREST_TILE.x, CREST_TILE.y, TILE_W, TILE_H);
 
-    // Anchor above the back keep tile; raise with the Hall level so the pennant
-    // stays near the top of the ever-taller silhouette.
-    const { sx, sy } = isoToScreen(8, 8, TILE_W, TILE_H);
-    const topY = sy + BASE_DY - 108 - Math.min(city.hallLevel, 5) * 6;
-    const poleH = 40;
-    const flagH = 20;
-    const flagW = 30;
+    // Stone pedestal: the tall bases-pack plate, raised so its top face meets the
+    // crest tower's foot (they nest as a single standard).
+    const pedestal = this.add
+      .image(sx, sy - 15, 'base-stone-detail')
+      .setOrigin(0.5, 0.72)
+      .setScale(0.72)
+      .setDepth(sy + 4);
+    this.crestParts.push(pedestal);
 
-    const pole = this.add
-      .rectangle(sx, topY + poleH / 2, 4, poleH, hexNum(PAL.woodDark))
-      .setDepth(CREST_DEPTH);
-    this.crestParts.push(pole);
-    // A right-pointing pennant triangle from the top of the pole.
-    const flag = this.add
-      .triangle(sx, topY, 0, 0, flagW, flagH / 2, 0, flagH, hexNum(color.hex))
-      .setOrigin(0, 0)
-      .setDepth(CREST_DEPTH + 0.1);
-    this.crestParts.push(flag);
-    // The emblem icon, tinted cream for contrast on the coloured banner.
-    const icon = this.add
-      .image(sx + 9, topY + flagH / 2, emblem.icon)
-      .setDisplaySize(11, 11)
-      .setTint(C_CREAM)
-      .setDepth(CREST_DEPTH + 0.2);
-    this.crestParts.push(icon);
+    // The colored crest tower standing ON the pedestal (Sketch Town geometry, so
+    // it aligns with addSurface); scaled down so it reads as a standard, not a
+    // second keep, and nudged down to seat on the plate.
+    const tower = addSurface(this, towerKey, sx, sy)
+      .setScale(0.56)
+      .setY(sy + BASE_DY + 8)
+      .setDepth(sy + 5);
+    this.crestParts.push(tower);
+
+    // Small cream emblem banner on the tower body — the mod's chosen device.
+    if (emblem) {
+      const icon = this.add
+        .image(sx, sy + BASE_DY - 6, emblem.icon)
+        .setDisplaySize(11, 11)
+        .setTint(C_CREAM)
+        .setDepth(sy + 5.1);
+      this.crestParts.push(icon);
+    }
   }
 
   // ── Void background (floating islets + starfield + vignette) ─────────────────
@@ -1173,13 +1183,23 @@ export class Village extends Scene {
 
     const art = BUILDING_ART[tile.buildingId];
     if (art.kind === 'stacked') {
+      // Houses render a DETERMINISTIC per-owner style (H1) so a village of homes
+      // reads as many individual houses, not one cloned cottage. A painted roof
+      // overrides the style's colour but keeps its shape; other stacked buildings
+      // use their fixed base + tier/painted roof.
+      let baseKey = art.base;
+      let roofKey: SpriteKey;
+      if (tile.buildingId === 'house') {
+        const style = houseStyle(tile.owner);
+        baseKey = style.base;
+        roofKey = ROOF_SHAPE[style.shape][tile.roofColor ?? style.roof];
+      } else {
+        roofKey =
+          roofKeyFor(tile.buildingId, tile.tier, tile.roofColor) ??
+          art.roofByTier[tile.tier];
+      }
       // Base lifted one block step onto the tile face; roof one more step up.
-      const base = addBlock(this, art.base, sx, sy, BASE_DY).setDepth(sy + 1);
-      // Painted roofs keep the building's shape but swap colour; fall back to the
-      // default tier colour progression when unpainted.
-      const roofKey =
-        roofKeyFor(tile.buildingId, tile.tier, tile.roofColor) ??
-        art.roofByTier[tile.tier];
+      const base = addBlock(this, baseKey, sx, sy, BASE_DY).setDepth(sy + 1);
       const roof = addBlock(
         this,
         roofKey,
@@ -1285,11 +1305,14 @@ export class Village extends Scene {
    * grass plate once ready — with a small progress wedge that sweeps around the
    * diamond as it ripens.
    *
-   * Deliverable 4 asked for the Kenney Isometric Miniature Bases pack here, but
-   * that download shipped as empty directories (no PNGs) — so, per the task's
-   * own "fall back to a drawn progress ring and document the call" clause, the
-   * plate is drawn vector art. It reads cleanly beside the Sketch Town furrow and
-   * never risks an art-style clash, since it uses the game's own palette.
+   * H1 deliverable 6 (bonus) re-evaluated the now-available Kenney Isometric
+   * Miniature Bases pack (base_dirt/grass plates) for this plate. Verified in
+   * ArtDebug: the pack's round, wooden-rimmed, grass-tufted discs render in a
+   * softer, higher-detail style that clashes with the flat, ink-lined Sketch Town
+   * furrow at real map zoom (and don't tile the square footprint). So — per the
+   * deliverable's own "if it clashes, keep the drawn plate and say so" clause —
+   * the drawn palette plate is kept. It reads cleanly beside the furrow and can
+   * never clash, since it uses the game's own PAL.
    */
   private drawCropBase(
     view: TileView,

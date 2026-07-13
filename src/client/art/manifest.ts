@@ -119,6 +119,16 @@ export type SpriteKey =
   | 'structure-high'
   | 'structure-low'
   | 'balcony-wood'
+  // H1 pack additions: a clean round stone mill tower (windmill body) + the four
+  // colored crest towers + a stone pedestal (crest flag v2). (The bases-pack crop
+  // plates were evaluated and dropped — see Village.drawCropBase — as their round,
+  // wooden-rimmed render clashes with the flat Sketch Town furrow at map zoom.)
+  | 'mill-tower-base'
+  | 'crest-tower-beige'
+  | 'crest-tower-brown'
+  | 'crest-tower-green'
+  | 'crest-tower-purple'
+  | 'base-stone-detail'
   // desert biome (E2): Kenney Sketch Desert — a full sand terrain family + palms,
   // domes, tents, broken walls that reskins the world when the theme is 'desert'.
   | 'sand-center'
@@ -292,6 +302,12 @@ export const SPRITES: Record<SpriteKey, string> = {
   'structure-high': '/sprites/structure-high.png',
   'structure-low': '/sprites/structure-low.png',
   'balcony-wood': '/sprites/balcony-wood.png',
+  'mill-tower-base': '/sprites/mill-tower-base.png',
+  'crest-tower-beige': '/sprites/crest-tower-beige.png',
+  'crest-tower-brown': '/sprites/crest-tower-brown.png',
+  'crest-tower-green': '/sprites/crest-tower-green.png',
+  'crest-tower-purple': '/sprites/crest-tower-purple.png',
+  'base-stone-detail': '/sprites/base-stone-detail.png',
   'sand-center': '/sprites/sand-center.png',
   'sand-corner': '/sprites/sand-corner.png',
   'sand-dirt-center': '/sprites/sand-dirt-center.png',
@@ -358,6 +374,67 @@ export type BuildingArt =
       roofByTier: Record<Tier, SpriteKey>;
     }
   | { kind: 'flat'; byTier: Record<Tier, SpriteKey[]> };
+
+// ── House style pool (H1 deliverable 1) ──────────────────────────────────────
+//
+// Every player's House renders a DETERMINISTIC style from a hash of the owner's
+// id, so a map full of houses reads as a real village of individual homes rather
+// than one cloned cottage. The pool is CURATED: each combo is a modest wall +
+// pitched roof that reads "home", and none reuses a special building's reserved
+// grammar (windmill's round stone tower + point roof; bakery's round roof +
+// awning; manor's stack-beige + church roof). So a house can never be mistaken
+// for a producer, and vice-versa.
+//
+// Tier progression is shown by the per-tier ACCENTS (dormer at t2, gold eave
+// trim at t3 — see accents.ts), not by the roof colour, so a levelled home still
+// reads as grander while keeping its owner's signature style. A painted roof
+// (tile.roofColor) overrides the pool's roof hue but keeps the pool's SHAPE; the
+// golden-roof cosmetic still overrides everything.
+
+export type HouseStyle = { base: SpriteKey; shape: RoofShape; roof: RoofColor };
+
+/** Twelve curated modest-home combos over {door, door-windows, window, windows}
+ * × {red plaster, beige} walls × {gable, slant, rounded} roofs × roof colour.
+ * Deliberately excludes round/point/church roofs and the stack walls (all
+ * reserved to special buildings). */
+export const HOUSE_STYLES: readonly HouseStyle[] = [
+  { base: 'building-door', shape: 'gable', roof: 'brown' },
+  { base: 'building-door-beige', shape: 'gable', roof: 'green' },
+  { base: 'building-window', shape: 'slant', roof: 'brown' },
+  { base: 'building-window-beige', shape: 'rounded', roof: 'beige' },
+  { base: 'building-windows', shape: 'gable', roof: 'purple' },
+  { base: 'building-windows-beige', shape: 'slant', roof: 'green' },
+  { base: 'building-door-windows', shape: 'rounded', roof: 'brown' },
+  { base: 'building-door-windows-beige', shape: 'gable', roof: 'beige' },
+  { base: 'building-door', shape: 'slant', roof: 'green' },
+  { base: 'building-window', shape: 'gable', roof: 'beige' },
+  { base: 'building-windows-beige', shape: 'rounded', roof: 'purple' },
+  { base: 'building-door-beige', shape: 'slant', roof: 'brown' },
+];
+
+/** FNV-1a hash of a string → uint32 (same family as catalog.defaultOutfit). */
+const hashStr = (s: string): number => {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+};
+
+/** The deterministic house style for a plot owner — stable per owner id, so a
+ * player's homes always look the same and neighbours' homes visibly differ. */
+export const houseStyle = (ownerId: string): HouseStyle =>
+  HOUSE_STYLES[hashStr(ownerId) % HOUSE_STYLES.length] ?? HOUSE_STYLES[0]!;
+
+/** The colored crest tower flown as the village standard, indexed by the city's
+ * crestColor (0..3 → Sand/Rustic/Forest/Royal). Pack art — no drawn pennant. */
+export const CREST_TOWER: readonly SpriteKey[] = [
+  'crest-tower-beige',
+  'crest-tower-brown',
+  'crest-tower-green',
+  'crest-tower-purple',
+];
 
 /** The six roof silhouette shapes shared across stacked buildings. */
 export type RoofShape =
@@ -437,32 +514,44 @@ export const BUILDING_ART: Record<BuildingId, BuildingArt> = {
     shape: 'gable',
     roofByTier: { 1: 'roof-gable-brown', 2: 'roof-gable-green', 3: 'roof-gable-purple' },
   },
-  // Windmill: stack base (taller silhouette) + point roof — closest available shape to a
-  // windmill spire in this pack (no dedicated windmill/sail sprite exists).
+  // Windmill = STONE TOWER MILL (H1): a clean round tapering stone tower body
+  // (mill-tower-base, NOT a house wall) capped with a point roof and redesigned
+  // sails (see accents.ts). The round-stone-tower + point-roof grammar is
+  // reserved to the windmill — unmistakable against any house.
   windmill: {
     kind: 'stacked',
-    base: 'building-stack',
+    base: 'mill-tower-base',
     shape: 'point',
     roofByTier: { 1: 'roof-point-brown', 2: 'roof-point-green', 3: 'roof-point-purple' },
   },
-  // Sawmill: corner base (angled silhouette, reads distinct from cottage) + slant roof.
+  // Sawmill = OPEN TIMBER YARD (H1): NO house base at all — an open timber frame
+  // (structure-low/high) that grows with tier, dressed by a slant canopy + log
+  // pile + static saw (accents.ts). A yard, not a cottage.
   sawmill: {
-    kind: 'stacked',
-    base: 'building-corner',
-    shape: 'slant',
-    roofByTier: { 1: 'roof-slant-brown', 2: 'roof-slant-green', 3: 'roof-slant-purple' },
+    kind: 'flat',
+    byTier: {
+      1: ['structure-low'],
+      2: ['structure-high'],
+      3: ['structure-high', 'structure-low'],
+    },
   },
-  // Mason's Kiln: window-beige base (stone-toned wall) + rounded (kiln-dome-like) roof.
+  // Mason's Kiln = OVEN DOME (H1): NO house base — a desert oven dome body with a
+  // chimney stub + subtle ember (accents.ts). The dome silhouette can't be
+  // confused with a walled house.
   kiln: {
-    kind: 'stacked',
-    base: 'building-window-beige',
-    shape: 'rounded',
-    roofByTier: { 1: 'roof-rounded-brown', 2: 'roof-rounded-green', 3: 'roof-rounded-purple' },
+    kind: 'flat',
+    byTier: {
+      1: ['desert-dome-small'],
+      2: ['desert-dome-small'],
+      3: ['desert-dome-small'],
+    },
   },
-  // Bakery: door-windows base (shopfront silhouette) + round roof.
+  // Bakery = SHOP (H1): windows base + ROUND roof + a big striped awning + hanging
+  // sign board (accents.ts). The round-roof + awning grammar is reserved to the
+  // bakery alone (no house in the style pool uses a round roof).
   bakery: {
     kind: 'stacked',
-    base: 'building-door-windows',
+    base: 'building-windows',
     shape: 'round',
     roofByTier: { 1: 'roof-round-brown', 2: 'roof-round-green', 3: 'roof-round-purple' },
   },

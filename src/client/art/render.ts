@@ -950,14 +950,19 @@ export const MONUMENT_ART: Record<
   MonumentId,
   Record<TerrainFamily, MonumentPiece[]>
 > = {
-  // Ruined watchtower: a stone tower base capped with crenellations (grass); a
-  // half-collapsed sand dome ringed with rubble (desert).
-  watchtower: {
+  // Crumbled wall (H1): a short run of broken stonework with rubble at its foot —
+  // humble ruins, no castle art. Both biomes use the broken-wall sprite.
+  'broken-wall': {
     grass: [
-      { dx: 0, dy: 0, key: 'castle-tower-base', layer: 'base' },
-      { dx: 0, dy: 0, key: 'castle-tower-top', layer: 'cap' },
+      { dx: 0, dy: 0, key: 'desert-wall-broken', layer: 'base' },
+      { dx: 1, dy: 0, key: 'desert-wall-broken', layer: 'base', flipX: true },
+      { dx: 1, dy: 0, key: 'rocks-grass', layer: 'surface' },
     ],
-    sand: [{ dx: 0, dy: 0, key: 'desert-dome-small', layer: 'base' }],
+    sand: [
+      { dx: 0, dy: 0, key: 'desert-wall-broken', layer: 'base' },
+      { dx: 1, dy: 0, key: 'desert-wall-broken', layer: 'base', flipX: true },
+      { dx: 1, dy: 0, key: 'rocks-sand', layer: 'surface' },
+    ],
   },
   // Old stone circle: a 2×2 ring of standing stones.
   'stone-circle': {
@@ -983,18 +988,18 @@ export const MONUMENT_ART: Record<
     ],
     sand: [{ dx: 0, dy: 0, key: 'desert-dome', layer: 'base' }],
   },
-  // Ancient gate: a stone arch flanked by two wall stubs (grass); a taller wall
-  // corner flanked by broken walls (desert).
-  gate: {
+  // Fallen fence (H1): a collapsed length of old fencing gone to rubble — a
+  // tilted rail, a broken end post, and a rubble pile. Humble, never house-like.
+  'fence-rubble': {
     grass: [
-      { dx: 0, dy: 0, key: 'castle-wall', layer: 'base' },
-      { dx: 1, dy: 0, key: 'structure-arch', layer: 'surface' },
-      { dx: 2, dy: 0, key: 'castle-wall', layer: 'base' },
+      { dx: 0, dy: 0, key: 'fence-wood', layer: 'surface', angle: 6 },
+      { dx: 1, dy: 0, key: 'fence-wood-end', layer: 'surface', flipX: true },
+      { dx: 1, dy: 0, key: 'rocks-grass', layer: 'surface' },
     ],
     sand: [
-      { dx: 0, dy: 0, key: 'desert-wall-broken', layer: 'base' },
-      { dx: 1, dy: 0, key: 'desert-wall-corner', layer: 'base' },
-      { dx: 2, dy: 0, key: 'desert-wall-broken', layer: 'base', flipX: true },
+      { dx: 0, dy: 0, key: 'fence-wood', layer: 'surface', angle: 6 },
+      { dx: 1, dy: 0, key: 'fence-wood-end', layer: 'surface', flipX: true },
+      { dx: 1, dy: 0, key: 'rocks-sand', layer: 'surface' },
     ],
   },
   // Wild orchard: a dense 2×2 mix of overgrown trees (grass); a palm oasis grove
@@ -1013,16 +1018,10 @@ export const MONUMENT_ART: Record<
       { dx: 1, dy: 1, key: 'palms', layer: 'surface', flipX: true },
     ],
   },
-  // Wayfarer's rest: a tall lean-to structure beside a fire-ring of rocks
-  // (grass); a two-tent caravan camp (desert).
-  camp: {
-    grass: [
-      { dx: 0, dy: 0, key: 'structure-high', layer: 'surface' },
-      { dx: 1, dy: 0, key: 'rocks-dirt', layer: 'surface' },
-    ],
-    sand: [
-      { dx: 0, dy: 0, key: 'desert-tent', layer: 'base' },
-      { dx: 1, dy: 0, key: 'desert-tent-slant', layer: 'base', flipX: true },
-    ],
+  // Dry well (H1): a lone old well run dry, its stones furred with moss (a cool
+  // desaturating tint in meadow, a sun-baked one in the desert).
+  'dry-well': {
+    grass: [{ dx: 0, dy: 0, key: 'well', layer: 'surface', tint: 0xb7c0b0 }],
+    sand: [{ dx: 0, dy: 0, key: 'well', layer: 'surface', tint: 0xcdbd9a }],
   },
 };
