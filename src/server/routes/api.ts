@@ -12,9 +12,11 @@ import {
   doCollectAll,
   doContribute,
   doDemolish,
+  doMural,
   doNameStage,
   doPaint,
   doSell,
+  doSetOutfit,
   doShare,
   doUpgrade,
   isBuildingId,
@@ -27,6 +29,7 @@ import {
   loadSummary,
   MAX_SELL_QTY,
 } from '../core/village';
+import { isMuralColor, isOutfit } from '../../shared/catalog';
 
 type ErrorResponse = {
   status: 'error';
@@ -152,6 +155,40 @@ api.post('/paint', async (c) => {
     if (error instanceof OpError) return c.json(...fail(error.message, error.status));
     console.error('POST /api/paint failed:', error);
     return c.json(...fail('Failed to paint roof.', 500));
+  }
+});
+
+// Village Mural (E1): paint one pixel of the shared 24×16 canvas. Bounds/colour/
+// budget are validated in the op; here we just coerce the coordinate + colour.
+api.post('/mural', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ x?: unknown; y?: unknown; c?: unknown }>();
+    const x = asCoord(body.x);
+    const y = asCoord(body.y);
+    if (x === null || y === null) return c.json(...fail('Invalid pixel coordinates.', 400));
+    if (!isMuralColor(body.c)) return c.json(...fail('Unknown mural colour.', 400));
+    const result = await doMural(userId, x, y, body.c);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/mural failed:', error);
+    return c.json(...fail('Failed to paint the mural.', 500));
+  }
+});
+
+// Villager outfit (E1): free, whenever — pick one of the eight colours.
+api.post('/outfit', async (c) => {
+  try {
+    const userId = requireUser();
+    const body = await c.req.json<{ c?: unknown }>();
+    if (!isOutfit(body.c)) return c.json(...fail('Unknown outfit.', 400));
+    const result = await doSetOutfit(userId, body.c);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof OpError) return c.json(...fail(error.message, error.status));
+    console.error('POST /api/outfit failed:', error);
+    return c.json(...fail('Failed to set outfit.', 500));
   }
 });
 

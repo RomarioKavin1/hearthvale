@@ -6,6 +6,7 @@
 // code is touched.
 
 import { store } from '../../src/client/state';
+import { CREST_COLORS, CREST_EMBLEMS } from '../../src/shared/catalog';
 import { devControls } from './mock-api';
 
 const refresh = (): void => {
@@ -148,6 +149,24 @@ export const mountDevPanel = (): void => {
   goldenChk.addEventListener('change', () => devControls.setGoldenAlways(goldenChk.checked));
   goldenWrap.append(goldenChk, document.createTextNode('golden now (every collect doubles)'));
   bodyWrap.append(goldenWrap);
+
+  // Village crest (mod identity — the form isn't reachable in the harness)
+  bodyWrap.append(label('crest'));
+  const crestBtn = button('emblem ▸', () => {});
+  crestBtn.textContent = `emblem ▸ ${CREST_EMBLEMS[devControls.crest()]?.label ?? '—'}`;
+  crestBtn.addEventListener('click', () => {
+    const i = devControls.cycleCrest();
+    crestBtn.textContent = `emblem ▸ ${CREST_EMBLEMS[i]?.label ?? '—'}`;
+    refresh();
+  });
+  const crestColBtn = button('colour ▸', () => {});
+  crestColBtn.textContent = `colour ▸ ${CREST_COLORS[devControls.crestColor()]?.label ?? '—'}`;
+  crestColBtn.addEventListener('click', () => {
+    const i = devControls.cycleCrestColor();
+    crestColBtn.textContent = `colour ▸ ${CREST_COLORS[i]?.label ?? '—'}`;
+    refresh();
+  });
+  bodyWrap.append(row(crestBtn, crestColBtn));
 
   // World
   bodyWrap.append(label('world'));

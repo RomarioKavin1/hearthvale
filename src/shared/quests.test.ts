@@ -39,6 +39,10 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   boostsGiven: 0,
   votesCast: 0,
   tradesDone: 0,
+  muralToday: 0,
+  muralDate: '',
+  muralPixels: 0,
+  outfit: 0,
   questIndex: 0,
   questLap: 0,
   questBaseline: 0,
@@ -65,8 +69,8 @@ const tile = (overrides: Partial<TileState> = {}): TileState => ({
 });
 
 describe('QUEST_CHAIN content (v3 — the great simplification)', () => {
-  it('has exactly 17 quests (vote + trader retired; Perfect Harvest added)', () => {
-    expect(QUEST_CHAIN).toHaveLength(17);
+  it('has exactly 18 quests (vote + trader retired; Perfect Harvest + mural added)', () => {
+    expect(QUEST_CHAIN).toHaveLength(18);
   });
 
   it('has unique ids across chain and repeatables', () => {
@@ -88,11 +92,13 @@ describe('QUEST_CHAIN content (v3 — the great simplification)', () => {
     expect(QUEST_CHAIN[3]).toMatchObject({ metric: 'goldenHarvests', target: 1, reward: { coins: 40 } });
     // q5: sell goods at the Market — soldUnits counts manual sales (P1).
     expect(QUEST_CHAIN[4]).toMatchObject({ metric: 'soldUnits', target: 10 });
-    // q10: sell goods — soldUnits is the manual-sell counter.
-    expect(QUEST_CHAIN[9]).toMatchObject({ metric: 'soldUnits', target: 150 });
-    expect(QUEST_CHAIN[11]).toMatchObject({ metric: 'processedUnits', target: 15, reward: { coins: 50, xp: 50 } });
-    expect(QUEST_CHAIN[15]).toMatchObject({ metric: 'lifetimeEarned', target: 1000, reward: { xp: 100 } });
-    expect(QUEST_CHAIN[16]).toMatchObject({ metric: 'level', target: 4, reward: { coins: 150 } });
+    // "Leave your mark" (E1): inserted at index 6, right after the check-in rung.
+    expect(QUEST_CHAIN[6]).toMatchObject({ metric: 'muralPixels', target: 3, reward: { coins: 30 } });
+    // Indices past the insert shift by one.
+    expect(QUEST_CHAIN[10]).toMatchObject({ metric: 'soldUnits', target: 150 });
+    expect(QUEST_CHAIN[12]).toMatchObject({ metric: 'processedUnits', target: 15, reward: { coins: 50, xp: 50 } });
+    expect(QUEST_CHAIN[16]).toMatchObject({ metric: 'lifetimeEarned', target: 1000, reward: { xp: 100 } });
+    expect(QUEST_CHAIN[17]).toMatchObject({ metric: 'level', target: 4, reward: { coins: 150 } });
   });
 
   it('has no vote or trader quests left', () => {

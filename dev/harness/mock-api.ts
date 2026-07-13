@@ -60,6 +60,7 @@ import {
   KEEP_STAGE_COSTS,
   MARKET,
   MAX_LEVEL,
+  MURAL_DAILY,
   PAINT_COST,
   RING_BY_LEVEL,
   STAGE_MIN_PAYOUT,
@@ -68,9 +69,15 @@ import {
   hallPerks,
   houseBonus,
   investedCost,
+  isCrest,
+  isCrestColor,
+  isMuralColor,
+  isMuralCoord,
+  isOutfit,
   isStackedBuilding,
   isValidVillageName,
   isVillageTheme,
+  defaultOutfit,
   tierStats,
 } from '../../src/shared/catalog';
 import {
@@ -123,6 +130,10 @@ type World = {
   players: Record<string, PlayerState>;
   /** stage index -> userId -> units contributed toward that Hall level. */
   stageContrib: Record<number, Record<string, number>>;
+  /** Village Mural: `"x,y"` -> colour index (0..11). */
+  mural: Record<string, number>;
+  /** House-owner outfit mirror: userId -> outfit index. */
+  outfits: Record<string, number>;
   botSeq: number;
   clockOffset: number;
   goldenAlways: boolean;
@@ -145,6 +156,8 @@ const freshCity = (now: number): CityState => ({
   weatherDate: '',
   population: 0,
   stageNames: [],
+  crest: 0,
+  crestColor: 0,
 });
 
 const freshPlayer = (id: string, name: string): PlayerState => ({
@@ -170,6 +183,10 @@ const freshPlayer = (id: string, name: string): PlayerState => ({
   boostsGiven: 0,
   votesCast: 0,
   tradesDone: 0,
+  muralToday: 0,
+  muralDate: '',
+  muralPixels: 0,
+  outfit: defaultOutfit(id),
   questIndex: 0,
   questLap: 0,
   questBaseline: 0,
@@ -183,6 +200,8 @@ const freshWorld = (): World => {
     stockpile: emptyStockpile(),
     players: {},
     stageContrib: {},
+    mural: {},
+    outfits: {},
     botSeq: 0,
     clockOffset: 0,
     goldenAlways: false,
@@ -548,6 +567,7 @@ const ensurePlayer = (userId: string): PlayerState => {
   if (!p) {
     p = freshPlayer(userId, userId === DEV_USER ? DEV_NAME : userId);
     world.players[userId] = p;
+    world.outfits[userId] = p.outfit;
   }
   return p;
 };
@@ -610,6 +630,8 @@ const bMarket = (stockpile: Stockpile): void =>
   publish('village', { t: 'market', prices: pricesFor(stockpile), stockpile });
 const bRing = (bounds: { lo: number; hi: number }): void =>
   publish('village', { t: 'ring', bounds });
+const bMural = (x: number, y: number, c: number): void =>
+  publish('village', { t: 'mural', x, y, c });
 
 const anyPriceChanged = (before: Stockpile, after: Stockpile): boolean =>
   GOODS.some((g) => priceFor(before[g], g) !== priceFor(after[g], g));
@@ -642,6 +664,8 @@ const loadState = (): StateResponse => {
       population: world.city.population,
     },
     quest: questView(me),
+    mural: world.mural,
+    outfits: world.outfits,
   };
 };
 
@@ -817,6 +841,42 @@ const doPaint = (
   bTile(key, painted);
   save();
   return { tile: painted, me };
+};
+
+const doMural = (
+  userId: string,
+  x: number,
+  y: number,
+  c: number
+): { me: PlayerState; x: number; y: number; c: number } => {
+  const player = ensurePlayer(userId);
+  const today = utcDay(mockNow());
+  const used = player.muralDate === today ? player.muralToday : 0;
+  if (!isMuralCoord(x, y)) throw new MockError(400, 'That pixel is off the mural.');
+  if (!isMuralColor(c)) throw new MockError(400, 'That is not a mural colour.');
+  if (used >= MURAL_DAILY) throw new MockError(400, 'You have painted all your mural pixels today.');
+
+  world.mural[tileKey(x, y)] = c;
+  const me: PlayerState = {
+    ...player,
+    muralToday: used + 1,
+    muralDate: today,
+    muralPixels: player.muralPixels + 1,
+  };
+  world.players[userId] = me;
+  bMural(x, y, c);
+  save();
+  return { me, x, y, c };
+};
+
+const doSetOutfit = (userId: string, c: number): { me: PlayerState } => {
+  if (!isOutfit(c)) throw new MockError(400, 'That is not a villager outfit.');
+  const player = ensurePlayer(userId);
+  const me: PlayerState = { ...player, outfit: c };
+  world.players[userId] = me;
+  world.outfits[userId] = c;
+  save();
+  return { me };
 };
 
 const doCollect = (
@@ -1143,6 +1203,8 @@ const loadSummary = (): Summary => {
     weather: world.city.weather,
     hotGood: hot,
     hotPrice: priceFor(world.stockpile[hot], hot),
+    crest: world.city.crest,
+    crestColor: world.city.crestColor,
   };
 };
 
@@ -1199,6 +1261,17 @@ const route = (method: string, path: string, body: unknown): Response => {
         if (x === null || y === null) return fail('Invalid tile coordinates.', 400);
         if (!isRoofColor(color)) return fail('Unknown roof colour.', 400);
         return json(doPaint(uid, x, y, color));
+      }
+      case '/api/mural': {
+        const cc = getField(body, 'c');
+        if (x === null || y === null) return fail('Invalid pixel coordinates.', 400);
+        if (!isMuralColor(cc)) return fail('Unknown mural colour.', 400);
+        return json(doMural(uid, x, y, cc));
+      }
+      case '/api/outfit': {
+        const cc = getField(body, 'c');
+        if (!isOutfit(cc)) return fail('Unknown outfit.', 400);
+        return json(doSetOutfit(uid, cc));
       }
       case '/api/collect':
         if (x === null || y === null) return fail('Invalid tile coordinates.', 400);
@@ -1346,6 +1419,25 @@ export const devControls = {
     save();
   },
   goldenAlways: (): boolean => world.goldenAlways,
+  /** Cycle the crest emblem (0..5) and broadcast the fresh city. Returns the
+   * new index so the dev-panel button can label itself. */
+  cycleCrest(): number {
+    const next = isCrest(world.city.crest) ? (world.city.crest + 1) % 6 : 0;
+    world.city = { ...world.city, crest: next };
+    bCity(world.city);
+    save();
+    return next;
+  },
+  /** Cycle the crest banner colour (0..3) and broadcast the fresh city. */
+  cycleCrestColor(): number {
+    const next = isCrestColor(world.city.crestColor) ? (world.city.crestColor + 1) % 4 : 0;
+    world.city = { ...world.city, crestColor: next };
+    bCity(world.city);
+    save();
+    return next;
+  },
+  crest: (): number => world.city.crest,
+  crestColor: (): number => world.city.crestColor,
   /** Drop a bot villager: a house + one ready random producer near the centre. */
   addBot(): boolean {
     const now = mockNow();

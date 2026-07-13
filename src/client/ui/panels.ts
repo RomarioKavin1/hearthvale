@@ -57,6 +57,7 @@ import {
   openLeaderboardsSheet,
   openMarketSheet,
 } from './sheets';
+import { openMuralSheet } from './mural';
 
 /**
  * The two "hub" sheets: the context-sensitive tile sheet (six variants driven by
@@ -758,6 +759,7 @@ type MenuItem = {
 const MENU: MenuItem[] = [
   { icon: 'icon-cart', label: 'Village Market', open: () => openMarketSheet() },
   { icon: 'castle-tower', label: 'Village Hall', open: openKeepSheet },
+  { icon: 'icon-scroll', label: 'Village Mural', open: openMuralSheet },
   { icon: 'icon-trophy', label: 'Leaderboards', open: openLeaderboardsSheet },
   { icon: 'icon-question', label: 'How to play', open: openHowToSheet },
 ];

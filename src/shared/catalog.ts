@@ -1,4 +1,5 @@
 import type { BuildingId, BuildingRole, Good, Tier, VillageTheme } from './types';
+import { PAL } from './palette';
 
 export type BuildingSpec = {
   id: BuildingId;
@@ -442,6 +443,118 @@ export const RING_BY_LEVEL: Array<{ lo: number; hi: number }> = [
   { lo: 1, hi: 16 },
   { lo: 0, hi: 17 },
 ];
+
+// ---------------------------------------------------------------------------
+// Expression pack (E1): the Village Mural, villager outfits, and the crest.
+// No new assets — every colour is drawn from the shared PAL, every crest emblem
+// reuses an existing UI icon.
+// ---------------------------------------------------------------------------
+
+/** Mural canvas dimensions (a mini r/place per village): 24 wide × 16 tall. */
+export const MURAL_W: number = 24;
+export const MURAL_H: number = 16;
+
+/** Pixels a single villager may paint per UTC day (r/place-style rationing). */
+export const MURAL_DAILY: number = 12;
+
+/**
+ * The mural's 12 fixed colours (index 0..11). Index 0 is the "parchment blank"
+ * — painting it is how you erase (an absent redis field renders as this too).
+ * The rest are drawn straight from PAL (roof hues, foliage, stone, timber) so
+ * the mural reads as part of the same hand-crafted world.
+ */
+export const MURAL_PALETTE: readonly string[] = [
+  PAL.cream, // 0 — parchment blank
+  PAL.ink, // 1 — ink
+  PAL.roofRed, // 2 — red
+  PAL.roofBlue, // 3 — blue
+  PAL.roofStraw, // 4 — straw gold
+  PAL.leaf, // 5 — green
+  PAL.accent, // 6 — orange
+  PAL.water, // 7 — sky blue
+  PAL.roofPurple, // 8 — purple
+  PAL.grass, // 9 — grass green
+  PAL.wood, // 10 — timber brown
+  PAL.stone, // 11 — stone grey
+];
+
+/** True when `c` is a valid mural colour index (0..11). */
+export const isMuralColor = (c: unknown): c is number =>
+  typeof c === 'number' && Number.isInteger(c) && c >= 0 && c < MURAL_PALETTE.length;
+
+/** True when `(x, y)` is inside the mural canvas bounds. */
+export const isMuralCoord = (x: unknown, y: unknown): boolean =>
+  typeof x === 'number' &&
+  Number.isInteger(x) &&
+  typeof y === 'number' &&
+  Number.isInteger(y) &&
+  x >= 0 &&
+  x < MURAL_W &&
+  y >= 0 &&
+  y < MURAL_H;
+
+// --- Villager outfits (personal identity) -----------------------------------
+
+/** Number of selectable villager outfit colours (0..7). */
+export const OUTFIT_COUNT: number = 8;
+
+/** The eight outfit swatch colours — the walker's shirt cloth, drawn from PAL. */
+export const OUTFIT_HEX: readonly string[] = [
+  PAL.roofRed,
+  PAL.roofBlue,
+  PAL.roofStraw,
+  PAL.leaf,
+  PAL.accent,
+  PAL.wood,
+  PAL.roofPurple,
+  PAL.water,
+];
+
+/** True when `c` is a valid outfit index (0..7). */
+export const isOutfit = (c: unknown): c is number =>
+  typeof c === 'number' && Number.isInteger(c) && c >= 0 && c < OUTFIT_COUNT;
+
+/**
+ * A stable default outfit for a player who has never chosen one: a small hash of
+ * their userId, so "the little one in red is me" is consistent from day one and
+ * villagers don't all start identical. Pure.
+ */
+export const defaultOutfit = (userId: string): number => {
+  let h = 2166136261;
+  for (let i = 0; i < userId.length; i += 1) {
+    h ^= userId.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % OUTFIT_COUNT;
+};
+
+// --- Village crest (mod identity) -------------------------------------------
+
+/** The six crest emblems (0..5) — each reuses an existing UI icon sprite. */
+export const CREST_EMBLEMS: readonly { label: string; icon: string }[] = [
+  { label: 'Star', icon: 'icon-star' },
+  { label: 'Trophy', icon: 'icon-trophy' },
+  { label: 'Scroll', icon: 'icon-scroll' },
+  { label: 'Home', icon: 'icon-home' },
+  { label: 'Hammer', icon: 'icon-hammer' },
+  { label: 'Coin', icon: 'icon-coin' },
+];
+
+/** The four crest banner colours (0..3): red / green / blue / gold. */
+export const CREST_COLORS: readonly { label: string; hex: string }[] = [
+  { label: 'Red', hex: PAL.roofRed },
+  { label: 'Green', hex: PAL.roofGreen },
+  { label: 'Blue', hex: PAL.roofBlue },
+  { label: 'Gold', hex: PAL.roofStraw },
+];
+
+/** True when `v` is a valid crest emblem index (0..5). */
+export const isCrest = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < CREST_EMBLEMS.length;
+
+/** True when `v` is a valid crest colour index (0..3). */
+export const isCrestColor = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < CREST_COLORS.length;
 
 export const GRID_SIZE: number = 18;
 export const MAX_LEVEL: number = 15;

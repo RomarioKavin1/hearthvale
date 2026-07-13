@@ -42,6 +42,8 @@ export type CheckInResult = {
   gained: { coins: number; xp: number };
 };
 export type ContributeResult = { city: CityState; me: PlayerState };
+export type MuralResult = { me: PlayerState; x: number; y: number; c: number };
+export type OutfitResult = { me: PlayerState };
 export type SellResult = { me: PlayerState; stockpile: Stockpile; prices: Prices };
 export type LeaderboardsResult = {
   value: LeaderRow[];
@@ -146,6 +148,11 @@ export const api = {
 
   sell: (good: Good, qty: number): Promise<SellResult> =>
     post('/api/sell', { good, qty }),
+
+  mural: (x: number, y: number, c: number): Promise<MuralResult> =>
+    post('/api/mural', { x, y, c }),
+
+  outfit: (c: number): Promise<OutfitResult> => post('/api/outfit', { c }),
 
   nameStage: (first: number, second: number): Promise<NameStageResult> =>
     post('/api/name-stage', { first, second }),

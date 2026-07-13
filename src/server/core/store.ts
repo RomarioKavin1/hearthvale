@@ -9,10 +9,14 @@ import type {
 } from '../../shared/types';
 import type { TileState } from '../../shared/types';
 import { GOODS, emptyStockpile } from '../../shared/logic/economy';
-import { isVillageTheme } from '../../shared/catalog';
+import { defaultOutfit, isVillageTheme } from '../../shared/catalog';
 
 const GRID_KEY = 'city:grid';
 const CITY_KEY = 'city:state';
+/** The Village Mural hash: field `"x,y"` → colour index (0..11). */
+const MURAL_KEY = 'city:mural';
+/** House-owner outfit mirror: field userId → outfit index (cheap walker map). */
+const OUTFITS_KEY = 'city:outfits';
 /** The village stockpile hash key — exported so the market sell transaction can
  * `redis.watch` it alongside the seller's player hash. */
 export const STOCKPILE_KEY = 'city:stockpile';
@@ -104,6 +108,8 @@ export const getCity = async (): Promise<CityState> => {
     weatherDate: h.weatherDate ? h.weatherDate : '',
     population: num(h.population, 0),
     stageNames: parseStageNames(h.stageNames),
+    crest: num(h.crest, 0),
+    crestColor: num(h.crestColor, 0),
   };
 };
 
@@ -129,6 +135,8 @@ export const putCity = async (c: Partial<CityState>): Promise<void> => {
   if (c.stageNames !== undefined) {
     fields.stageNames = JSON.stringify(c.stageNames);
   }
+  if (c.crest !== undefined) fields.crest = String(c.crest);
+  if (c.crestColor !== undefined) fields.crestColor = String(c.crestColor);
   if (Object.keys(fields).length > 0) {
     await redis.hSet(CITY_KEY, fields);
   }
@@ -185,6 +193,12 @@ const parsePlayer = (
   boostsGiven: num(h.boostsGiven, 0),
   votesCast: num(h.votesCast, 0),
   tradesDone: num(h.tradesDone, 0),
+  // Expression pack (E1): mural budget counters + outfit (legacy players default
+  // to a stable hash-of-id outfit and an empty mural budget).
+  muralToday: num(h.muralToday, 0),
+  muralDate: h.muralDate ?? '',
+  muralPixels: num(h.muralPixels, 0),
+  outfit: num(h.outfit, defaultOutfit(userId)),
   questIndex: num(h.questIndex, 0),
   questLap: num(h.questLap, 0),
   questBaseline: num(h.questBaseline, 0),
@@ -214,6 +228,10 @@ export const playerFields = (p: PlayerState): Record<string, string> => ({
   boostsGiven: String(p.boostsGiven),
   votesCast: String(p.votesCast),
   tradesDone: String(p.tradesDone),
+  muralToday: String(p.muralToday),
+  muralDate: p.muralDate,
+  muralPixels: String(p.muralPixels),
+  outfit: String(p.outfit),
   questIndex: String(p.questIndex),
   questLap: String(p.questLap),
   questBaseline: String(p.questBaseline),
@@ -254,11 +272,16 @@ export const initPlayer = async (
     boostsGiven: 0,
     votesCast: 0,
     tradesDone: 0,
+    muralToday: 0,
+    muralDate: '',
+    muralPixels: 0,
+    outfit: defaultOutfit(userId),
     questIndex: 0,
     questLap: 0,
     questBaseline: 0,
   };
   await redis.hSet(playerKey(userId), playerFields(player));
+  await redis.hSet(OUTFITS_KEY, { [userId]: String(player.outfit) });
   return player;
 };
 
@@ -320,6 +343,53 @@ export const stageTopContributor = async (
   });
   const [top] = rows;
   return top ? top.member : null;
+};
+
+// ---------------------------------------------------------------------------
+// Village Mural (E1). `city:mural` is a hash `"x,y"` -> colour index (0..11);
+// an absent field renders as the parchment blank (colour 0). The whole hash is
+// tiny (≤ 24×16 = 384 entries) so it ships in every state response.
+// ---------------------------------------------------------------------------
+
+export const getMural = async (): Promise<Record<string, number>> => {
+  const raw = await redis.hGetAll(MURAL_KEY);
+  const mural: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    mural[key] = num(value, 0);
+  }
+  return mural;
+};
+
+/** Paint a single mural pixel: `"x,y"` -> colour index. Idempotent (a repeated
+ * write of the same pixel is a no-op), so the paint step is at-least-once safe. */
+export const putMuralPixel = async (
+  key: string,
+  color: number
+): Promise<void> => {
+  await redis.hSet(MURAL_KEY, { [key]: String(color) });
+};
+
+// ---------------------------------------------------------------------------
+// Outfit mirror (E1). `city:outfits` is a hash userId -> outfit index, kept in
+// step with each player's `outfit` field so loadState can dress the walkers
+// from a single small read instead of one player-hash read per house owner.
+// ---------------------------------------------------------------------------
+
+export const getOutfits = async (): Promise<Record<string, number>> => {
+  const raw = await redis.hGetAll(OUTFITS_KEY);
+  const outfits: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    outfits[key] = num(value, 0);
+  }
+  return outfits;
+};
+
+/** Absolute write of a player's outfit into the mirror (replay-safe). */
+export const putOutfitMirror = async (
+  userId: string,
+  outfit: number
+): Promise<void> => {
+  await redis.hSet(OUTFITS_KEY, { [userId]: String(outfit) });
 };
 
 // The wandering-trader (`traderdone:{date}`) and ballot (`ballot:{day}`,

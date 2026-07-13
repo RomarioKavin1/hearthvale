@@ -6,6 +6,7 @@ import {
   KEEP_STAGE_COSTS,
   MARKET,
   MAX_LEVEL,
+  OUTFIT_HEX,
   PLOT_LEVELS,
   STAGE_NAME_WORDS,
   STAGE_POT,
@@ -758,6 +759,34 @@ export const openJournalSheet = (): void => {
         body.appendChild(stack);
         return;
       }
+
+      // My villager: pick the outfit colour your walker wears in the village.
+      stack.appendChild(el('div', { cls: 'hv-mkt-seg-label', text: 'My villager' }));
+      const outfits = el('div', { cls: 'hv-outfits' });
+      OUTFIT_HEX.forEach((hex, i) => {
+        const selected = me.outfit === i;
+        const btn = el('button', {
+          cls: `hv-outfit${selected ? ' is-selected' : ''}`,
+          attrs: { type: 'button', style: `background:${hex}` },
+        });
+        btn.setAttribute('aria-label', `Outfit ${i + 1}`);
+        if (selected || isPending('outfit')) btn.disabled = true;
+        btn.addEventListener('click', () => {
+          void action('outfit', async () => {
+            const res = await api.outfit(i);
+            store.applyMutation({ me: res.me });
+            toast('Your villager changed outfit', 'gain');
+          });
+        });
+        outfits.appendChild(btn);
+      });
+      stack.appendChild(outfits);
+      stack.appendChild(
+        el('p', {
+          cls: 'hv-note hv-muted',
+          text: 'The villager in this colour on the map is you.',
+        })
+      );
 
       const idx = me.questIndex;
       const lap = me.questLap;

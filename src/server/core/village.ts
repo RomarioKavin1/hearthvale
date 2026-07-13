@@ -26,10 +26,16 @@ import {
   KEEP_STAGE_COSTS,
   MARKET,
   MAX_LEVEL,
+  MURAL_DAILY,
   PAINT_COST,
   STAGE_MIN_PAYOUT,
   STAGE_NAME_WORDS,
   STAGE_POT,
+  isCrest,
+  isCrestColor,
+  isMuralColor,
+  isMuralCoord,
+  isOutfit,
   hallPerks,
   houseBonus,
   investedCost,
@@ -70,6 +76,8 @@ import { parseKey, tileKey } from '../../shared/logic/grid';
 import {
   getCity,
   getGrid,
+  getMural,
+  getOutfits,
   getPlayer,
   getStockpile,
   getTile,
@@ -79,6 +87,8 @@ import {
   playerFields,
   playerKey,
   putCity,
+  putMuralPixel,
+  putOutfitMirror,
   putPlayer,
   putStockpile,
   putTile,
@@ -247,6 +257,39 @@ export const validateBoost = (
   if (now < tile.readyAt) return 'This building is still under construction.';
   if (tile.boostUntil > now) return 'This building already has a boost running.';
   if (usedToday >= limit) return 'You have used all your boosts today.';
+  return null;
+};
+
+// --- Village Mural (E1) ------------------------------------------------------
+
+/** Pixels a villager may paint per UTC day (from the shared catalog). */
+export const MURAL_BUDGET = MURAL_DAILY;
+
+/** Mural pixels already painted today; the daily counter resets on date
+ * rollover (mirrors boostsUsedToday). Pure. */
+export const muralPaintedToday = (
+  player: PlayerState,
+  today: string
+): number => (player.muralDate === today ? player.muralToday : 0);
+
+/**
+ * A mural paint at `(x, y)` with colour `c`. Returns an error message or null.
+ * `usedToday` must already account for date rollover; `budget` is the daily
+ * allowance. Bounds + colour are validated against the shared catalog. Pure —
+ * unit-tested in village.test.ts.
+ */
+export const validateMuralPaint = (
+  x: number,
+  y: number,
+  c: number,
+  usedToday: number,
+  budget: number
+): string | null => {
+  if (!isMuralCoord(x, y)) return 'That pixel is off the mural.';
+  if (!isMuralColor(c)) return 'That is not a mural colour.';
+  if (usedToday >= budget) {
+    return 'You have painted all your mural pixels today.';
+  }
   return null;
 };
 
@@ -738,6 +781,18 @@ const broadcastRing = async (bounds: {
   }
 };
 
+const broadcastMural = async (
+  x: number,
+  y: number,
+  c: number
+): Promise<void> => {
+  try {
+    await realtime.send('village', { t: 'mural', x, y, c });
+  } catch (error) {
+    console.error('realtime mural broadcast failed:', error);
+  }
+};
+
 /**
  * Lazily roll today's weather if the persisted roll is stale (covers missed
  * scheduler runs). Returns the city with today's weather; persists on a change.
@@ -895,10 +950,12 @@ export const loadState = async (
   userId: string | undefined
 ): Promise<StateResponse> => {
   const now = Date.now();
-  const [grid, cityRaw, stockpile] = await Promise.all([
+  const [grid, cityRaw, stockpile, mural, outfits] = await Promise.all([
     getGrid(),
     getCity(),
     getStockpile(),
+    getMural(),
+    getOutfits(),
   ]);
   const city = await ensureWeather(cityRaw, now);
 
@@ -933,6 +990,8 @@ export const loadState = async (
       population: city.population,
     },
     quest: questView(grid, me),
+    mural,
+    outfits,
   };
 };
 
@@ -1462,6 +1521,8 @@ export const loadSummary = async (
     weather: city.weather,
     hotGood: hot.good,
     hotPrice: hot.price,
+    crest: city.crest,
+    crestColor: city.crestColor,
   };
 };
 
@@ -1570,13 +1631,67 @@ export const doPaint = async (
 };
 
 /**
- * Mod-set village name + theme (from the "Village settings" form). Validates the
- * name server-side, persists both to city:state, then broadcasts the fresh city
- * so open clients rename/retheme live. Returns the updated city.
+ * Paint a single mural pixel (E1) — the r/place-style headline mechanic. Every
+ * villager gets `MURAL_BUDGET` pixels per UTC day; a paint validates bounds +
+ * colour + budget, writes the pixel immediately (overwriting others' pixels is
+ * the whole game), bumps the daily counter + the monotonic `muralPixels` quest
+ * counter, then broadcasts `{t:'mural'}`. The pixel write is idempotent so the
+ * paint is at-least-once safe.
+ */
+export const doMural = async (
+  userId: string,
+  x: number,
+  y: number,
+  c: number
+): Promise<{ me: PlayerState; x: number; y: number; c: number }> => {
+  const player = await ensurePlayer(userId);
+  const today = utcDay(Date.now());
+  const used = muralPaintedToday(player, today);
+  const err = validateMuralPaint(x, y, c, used, MURAL_BUDGET);
+  if (err) throw new OpError(400, err);
+
+  const key = tileKey(x, y);
+  await putMuralPixel(key, c);
+
+  const me: PlayerState = {
+    ...player,
+    muralToday: used + 1,
+    muralDate: today,
+    muralPixels: player.muralPixels + 1,
+  };
+  await putPlayer(me);
+  await broadcastMural(x, y, c);
+  return { me, x, y, c };
+};
+
+/**
+ * Set the player's villager outfit colour (E1) — free, whenever. Persists the
+ * choice on the player and mirrors it into the `outfits` hash so the walkers
+ * (dressed from that mirror) re-dress on the next state load.
+ */
+export const doSetOutfit = async (
+  userId: string,
+  c: number
+): Promise<{ me: PlayerState }> => {
+  if (!isOutfit(c)) throw new OpError(400, 'That is not a villager outfit.');
+  const player = await ensurePlayer(userId);
+  const me: PlayerState = { ...player, outfit: c };
+  await putPlayer(me);
+  await putOutfitMirror(userId, c);
+  return { me };
+};
+
+/**
+ * Mod-set village name + theme + crest (from the "Village settings" form).
+ * Validates the name server-side, persists everything to city:state, then
+ * broadcasts the fresh city so open clients rename/retheme/re-crest live.
+ * Invalid crest selections fall back to the current values. Returns the city.
  */
 export const doVillageSettings = async (
   rawName: unknown,
-  rawTheme: unknown
+  rawTheme: unknown,
+  rawCrest: unknown,
+  rawCrestColor: unknown
 ): Promise<CityState> => {
   const name = typeof rawName === 'string' ? rawName.trim() : '';
   if (!isValidVillageName(name)) {
@@ -1586,8 +1701,11 @@ export const doVillageSettings = async (
     );
   }
   const theme: VillageTheme = isVillageTheme(rawTheme) ? rawTheme : 'meadow';
+  const current = await getCity();
+  const crest = isCrest(rawCrest) ? rawCrest : current.crest;
+  const crestColor = isCrestColor(rawCrestColor) ? rawCrestColor : current.crestColor;
 
-  await putCity({ villageName: name, theme });
+  await putCity({ villageName: name, theme, crest, crestColor });
   const city = await getCity();
   await broadcastCity(city);
   return city;

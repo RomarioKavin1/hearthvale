@@ -89,6 +89,14 @@ export const store = {
     emit();
   },
 
+  /** Set a single mural pixel `"x,y"` → colour index (from a paint or a
+   * realtime `{t:'mural'}` broadcast) and emit one change. */
+  patchMuralPixel(x: number, y: number, c: number): void {
+    if (!data) return;
+    data.mural[`${x},${y}`] = c;
+    emit();
+  },
+
   /** Merge a POST mutation response into the snapshot and emit one change. */
   applyMutation(m: Mutation): void {
     if (!data) return;

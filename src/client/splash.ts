@@ -31,7 +31,26 @@ type Summary = {
   weather: Weather;
   hotGood: string;
   hotPrice: number;
+  crest: number;
+  crestColor: number;
 };
+
+/** The crest emblem sprite per index (0..5), matching catalog CREST_EMBLEMS. */
+const CREST_ICON: readonly SpriteKey[] = [
+  'icon-star',
+  'icon-trophy',
+  'icon-scroll',
+  'icon-home',
+  'icon-hammer',
+  'icon-coin',
+];
+/** The crest banner colour per index (0..3), matching catalog CREST_COLORS. */
+const CREST_HEX: readonly string[] = [
+  PAL.roofRed,
+  PAL.roofGreen,
+  PAL.roofBlue,
+  PAL.roofStraw,
+];
 
 const DEFAULT_VILLAGE_NAME = 'Hearthvale';
 
@@ -211,7 +230,11 @@ const isSummary = (body: unknown): body is Summary =>
   'hotGood' in body &&
   typeof body.hotGood === 'string' &&
   'hotPrice' in body &&
-  typeof body.hotPrice === 'number';
+  typeof body.hotPrice === 'number' &&
+  'crest' in body &&
+  typeof body.crest === 'number' &&
+  'crestColor' in body &&
+  typeof body.crestColor === 'number';
 
 const fmtInt = (n: number): string => Math.round(n).toLocaleString('en-US');
 
@@ -237,13 +260,15 @@ const THEME_CLASSES: Record<Theme, string> = {
 const fillStats = (
   root: HTMLElement,
   titleEl: HTMLHeadingElement,
+  crestEl: HTMLSpanElement,
   statsEl: HTMLDivElement,
   hookEl: HTMLDivElement,
   capEl: HTMLImageElement,
   s: Summary
 ): void => {
-  // Village name in the title line; sky theme on the root.
+  // Village name in the title line; sky theme on the root; crest chip beside it.
   titleEl.textContent = displayName(s.villageName);
+  fillCrest(crestEl, s);
   for (const cls of Object.values(THEME_CLASSES)) root.classList.remove(cls);
   root.classList.add(THEME_CLASSES[s.theme]);
 
@@ -271,6 +296,7 @@ const fillStats = (
 const loadSummary = async (
   root: HTMLElement,
   titleEl: HTMLHeadingElement,
+  crestEl: HTMLSpanElement,
   statsEl: HTMLDivElement,
   hookEl: HTMLDivElement,
   capEl: HTMLImageElement
@@ -280,7 +306,7 @@ const loadSummary = async (
     if (!res.ok) throw new Error('summary unavailable');
     const body: unknown = await res.json();
     if (!isSummary(body)) throw new Error('bad summary shape');
-    fillStats(root, titleEl, statsEl, hookEl, capEl, body);
+    fillStats(root, titleEl, crestEl, statsEl, hookEl, capEl, body);
   } catch {
     // Silent in the feed: drop the stats + hook, keep the scene, title and CTA.
     statsEl.classList.add('is-hidden');
@@ -293,6 +319,7 @@ const loadSummary = async (
 const buildContent = (): {
   content: HTMLDivElement;
   titleEl: HTMLHeadingElement;
+  crestEl: HTMLSpanElement;
   statsEl: HTMLDivElement;
   hookEl: HTMLDivElement;
   cta: HTMLButtonElement;
@@ -305,8 +332,18 @@ const buildContent = (): {
   }
 
   // Defaults to the fallback name; the live summary swaps in the mod-set name.
+  // A crest chip (emblem + colour dot) sits beside the title once the summary
+  // arrives — hidden until then.
   const titleEl = el('h1', { cls: 'hv-title', text: DEFAULT_VILLAGE_NAME });
-  content.appendChild(titleEl);
+  const crestEl = el('span', { cls: 'hv-crest-chip is-hidden' });
+  crestEl.style.cssText =
+    'display:none;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;' +
+    'border:2px solid var(--ink);background:var(--cream);vertical-align:middle;margin-left:8px';
+  const titleRow = el('div', { cls: 'hv-titlerow' });
+  titleRow.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:4px';
+  titleRow.appendChild(titleEl);
+  titleRow.appendChild(crestEl);
+  content.appendChild(titleRow);
   content.appendChild(
     el('p', { cls: 'hv-tagline', text: 'a village your subreddit builds together' })
   );
@@ -323,7 +360,28 @@ const buildContent = (): {
   cta.type = 'button';
   content.appendChild(cta);
 
-  return { content, titleEl, statsEl, hookEl, cta };
+  return { content, titleEl, crestEl, statsEl, hookEl, cta };
+};
+
+/** Fill the crest chip (emblem icon + colour dot), or hide it if unset. */
+const fillCrest = (crestEl: HTMLSpanElement, s: Summary): void => {
+  const icon = CREST_ICON[s.crest];
+  const hex = CREST_HEX[s.crestColor];
+  if (icon === undefined || hex === undefined) {
+    crestEl.style.display = 'none';
+    return;
+  }
+  crestEl.replaceChildren();
+  const dot = el('span');
+  dot.style.cssText = `width:11px;height:11px;border-radius:50%;background:${hex};border:1px solid var(--ink)`;
+  const img = el('img');
+  img.src = SPRITES[icon];
+  img.alt = '';
+  img.draggable = false;
+  img.style.cssText = 'width:15px;height:15px';
+  crestEl.appendChild(dot);
+  crestEl.appendChild(img);
+  crestEl.style.display = 'inline-flex';
 };
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -336,7 +394,7 @@ const mount = (): void => {
   const { scene, capEl } = buildScene();
   root.appendChild(scene);
 
-  const { content, titleEl, statsEl, hookEl, cta } = buildContent();
+  const { content, titleEl, crestEl, statsEl, hookEl, cta } = buildContent();
   root.appendChild(content);
 
   // Whole card taps through; the button is the visual affordance. A one-shot
@@ -354,7 +412,7 @@ const mount = (): void => {
   root.addEventListener('click', enter);
 
   // Fetch after first paint — nothing blocks the initial render.
-  void loadSummary(root, titleEl, statsEl, hookEl, capEl);
+  void loadSummary(root, titleEl, crestEl, statsEl, hookEl, capEl);
 };
 
 if (document.readyState === 'loading') {

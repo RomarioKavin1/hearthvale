@@ -945,6 +945,51 @@ const CSS = `
 .hv-swatch.is-selected[disabled] { opacity: 1; }
 .hv-swatch[disabled]:not(.is-selected) { opacity: 0.55; }
 
+/* ── Village Mural (E1) ──────────────────────────────────── */
+.hv-mural-wrap {
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+  padding: 4px;
+  background: var(--wall-shade);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.hv-mural-canvas {
+  image-rendering: pixelated;
+  border-radius: 3px;
+  cursor: crosshair;
+  touch-action: manipulation;
+}
+.hv-mural-pal { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.hv-mural-swatch {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  box-shadow: 0 3px 0 var(--wood-dark);
+  cursor: pointer;
+  padding: 0;
+}
+.hv-mural-swatch:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark); }
+.hv-mural-swatch.is-selected { outline: 3px solid var(--glow); outline-offset: 2px; }
+.hv-mural-count { text-align: center; font-size: 13.5px; }
+.hv-mural-count b { color: var(--glow); font-variant-numeric: tabular-nums; }
+
+/* ── My villager (outfit picker, E1) ─────────────────────── */
+.hv-outfits { display: flex; gap: 8px; flex-wrap: wrap; }
+.hv-outfit {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--ink);
+  border-radius: 9px;
+  box-shadow: 0 3px 0 var(--wood-dark);
+  cursor: pointer;
+  padding: 0;
+}
+.hv-outfit:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark); }
+.hv-outfit.is-selected { outline: 3px solid var(--glow); outline-offset: 2px; }
+
 .hv-fill {
   position: relative;
   height: 16px;

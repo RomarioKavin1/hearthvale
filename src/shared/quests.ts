@@ -25,7 +25,8 @@ export type QuestMetric =
   | 'boostsGiven'
   | 'tier2Owned'
   | 'lifetimeContributed'
-  | 'lifetimeEarned';
+  | 'lifetimeEarned'
+  | 'muralPixels';
 
 export type Quest = {
   id: string;
@@ -37,10 +38,11 @@ export type Quest = {
 };
 
 /**
- * The fixed 17-step ladder (S1 retired the vote + trader quests; S2 added a
+ * The fixed 18-step ladder (S1 retired the vote + trader quests; S2 added a
  * Perfect Harvest rung after the first-harvest quest; P1 restored manual selling
- * so the `soldUnits` rungs measure goods sold at the Market again). Each blurb is
- * one warm line of flavour.
+ * so the `soldUnits` rungs measure goods sold at the Market again; E1 inserted a
+ * "Leave your mark" mural rung after the check-in quest). Each blurb is one warm
+ * line of flavour.
  */
 export const QUEST_CHAIN: Quest[] = [
   {
@@ -90,6 +92,14 @@ export const QUEST_CHAIN: Quest[] = [
     metric: 'streak',
     target: 1,
     reward: { xp: 50 },
+  },
+  {
+    id: 'q-mural',
+    title: 'Leave your mark',
+    blurb: 'Every village has a mural — paint three pixels on it to make your mark.',
+    metric: 'muralPixels',
+    target: 3,
+    reward: { coins: 30 },
   },
   {
     id: 'q07',
@@ -286,6 +296,8 @@ export const questMetricValue = (
       return player.lifetimeContributed;
     case 'lifetimeEarned':
       return player.lifetimeEarned;
+    case 'muralPixels':
+      return player.muralPixels;
   }
 };
 

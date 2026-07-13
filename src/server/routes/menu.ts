@@ -4,6 +4,8 @@ import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
 import { getCity } from '../core/store';
 import {
+  CREST_COLORS,
+  CREST_EMBLEMS,
   MAX_VILLAGE_NAME,
   THEME_LABELS,
   VILLAGE_THEMES,
@@ -44,6 +46,26 @@ menu.post('/village-settings', async (c) => {
                   value: t,
                 })),
                 defaultValue: [city.theme],
+              },
+              {
+                type: 'select',
+                name: 'crest',
+                label: 'Crest emblem (flies as a pennant on the Village Hall)',
+                options: CREST_EMBLEMS.map((e, i) => ({
+                  label: e.label,
+                  value: String(i),
+                })),
+                defaultValue: [String(city.crest)],
+              },
+              {
+                type: 'select',
+                name: 'crestColor',
+                label: 'Crest banner colour',
+                options: CREST_COLORS.map((cc, i) => ({
+                  label: cc.label,
+                  value: String(i),
+                })),
+                defaultValue: [String(city.crestColor)],
               },
             ],
           },

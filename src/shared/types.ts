@@ -96,6 +96,10 @@ export type CityState = {
   population: number;
   /** Naming-rights label chosen by each Hall level's top contributor. */
   stageNames: string[];
+  /** Mod-set crest emblem index (0..5: star/trophy/scroll/home/hammer/coin). */
+  crest: number;
+  /** Mod-set crest banner colour index (0..3: red/green/blue/gold). */
+  crestColor: number;
 };
 
 export type PlayerState = {
@@ -138,6 +142,14 @@ export type PlayerState = {
   /** Lifetime accepted trader deals (RETIRED with the trader; kept to avoid a
    * store migration — frozen at its pre-S1 value). */
   tradesDone: number;
+  /** Mural pixels painted today (the daily budget counter). */
+  muralToday: number;
+  /** UTC day (YYYY-MM-DD) the muralToday counter belongs to. */
+  muralDate: string;
+  /** Lifetime mural pixels painted — the "Leave your mark" quest counter. */
+  muralPixels: number;
+  /** Chosen villager outfit index (0..7); default is a stable hash of the id. */
+  outfit: number;
   /** Index into the quest ladder: the fixed chain, then repeatable tiers. */
   questIndex: number;
   /** Repeatable-tier lap; scales repeatable targets/rewards by 1.6^lap. */
@@ -158,7 +170,9 @@ export type VillageMessage =
   /** A Village Hall level-up: `stage` is the new Hall level (1..5). */
   | { t: 'stage'; stage: number }
   | { t: 'market'; prices: Prices; stockpile: Stockpile }
-  | { t: 'ring'; bounds: { lo: number; hi: number } };
+  | { t: 'ring'; bounds: { lo: number; hi: number } }
+  /** A single mural pixel painted at (x, y) with colour index c (0..11). */
+  | { t: 'mural'; x: number; y: number; c: number };
 
 /** Land-expansion snapshot: the unlocked ring bounds (derived from the Village
  * Hall level), the population needed for the next Hall level (null once the Hall
@@ -186,6 +200,12 @@ export type StateResponse = {
   ring: RingState;
   /** The player's active Villager's Journal quest (progress + reward). */
   quest: QuestView;
+  /** The Village Mural: `"x,y"` → colour index (0..11). Absent = parchment
+   * blank. Tiny (≤384 entries), so it ships whole in every state response. */
+  mural: Record<string, number>;
+  /** Each house-owner's chosen outfit index (userId → 0..7), for dressing the
+   * deterministic villager walkers. */
+  outfits: Record<string, number>;
 };
 
 /** The active quest as surfaced to the client (StateResponse.quest). */
@@ -227,6 +247,10 @@ export type Summary = {
   hotGood: Good;
   /** That good's current market price. */
   hotPrice: number;
+  /** Mod-set crest emblem index (0..5) — shown as a chip on the splash. */
+  crest: number;
+  /** Mod-set crest banner colour index (0..3). */
+  crestColor: number;
 };
 
 /** The result of a collect: coins + xp + any goods produced into the wallet.

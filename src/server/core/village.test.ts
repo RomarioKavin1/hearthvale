@@ -16,6 +16,8 @@ import {
   expansionGate,
   flairTitle,
   landmarkComplete,
+  MURAL_BUDGET,
+  muralPaintedToday,
   nextFestival,
   nextStreak,
   processedUnits,
@@ -27,6 +29,7 @@ import {
   validateBoost,
   validateBuild,
   validateDemolish,
+  validateMuralPaint,
   validateNaming,
   validatePaint,
   validateUpgrade,
@@ -55,6 +58,10 @@ const player = (overrides: Partial<PlayerState> = {}): PlayerState => ({
   boostsGiven: 0,
   votesCast: 0,
   tradesDone: 0,
+  muralToday: 0,
+  muralDate: '',
+  muralPixels: 0,
+  outfit: 0,
   questIndex: 0,
   questLap: 0,
   questBaseline: 0,
@@ -87,6 +94,8 @@ const city = (overrides: Partial<CityState> = {}): CityState => ({
   weatherDate: '2026-07-07',
   population: 0,
   stageNames: [],
+  crest: 0,
+  crestColor: 0,
   ...overrides,
 });
 
@@ -155,6 +164,42 @@ describe('validatePaint', () => {
 
   it('charges a flat 25 coins', () => {
     expect(PAINT_COST).toBe(25);
+  });
+});
+
+describe('mural budget (E1)', () => {
+  it('reads today\'s count and resets on a date rollover', () => {
+    expect(muralPaintedToday(player({ muralToday: 5, muralDate: '2026-07-13' }), '2026-07-13')).toBe(5);
+    // Yesterday's count doesn't carry into today.
+    expect(muralPaintedToday(player({ muralToday: 5, muralDate: '2026-07-12' }), '2026-07-13')).toBe(0);
+    // Never painted.
+    expect(muralPaintedToday(player(), '2026-07-13')).toBe(0);
+  });
+
+  it('grants a 12-pixel daily budget', () => {
+    expect(MURAL_BUDGET).toBe(12);
+  });
+
+  it('rejects out-of-bounds pixels', () => {
+    expect(validateMuralPaint(-1, 0, 0, 0, MURAL_BUDGET)).not.toBeNull();
+    expect(validateMuralPaint(24, 0, 0, 0, MURAL_BUDGET)).not.toBeNull();
+    expect(validateMuralPaint(0, 16, 0, 0, MURAL_BUDGET)).not.toBeNull();
+    expect(validateMuralPaint(1.5, 0, 0, 0, MURAL_BUDGET)).not.toBeNull();
+  });
+
+  it('rejects colours outside 0..11', () => {
+    expect(validateMuralPaint(0, 0, -1, 0, MURAL_BUDGET)).not.toBeNull();
+    expect(validateMuralPaint(0, 0, 12, 0, MURAL_BUDGET)).not.toBeNull();
+  });
+
+  it('rejects once the daily budget is spent', () => {
+    expect(validateMuralPaint(0, 0, 0, MURAL_BUDGET, MURAL_BUDGET)).not.toBeNull();
+    expect(validateMuralPaint(0, 0, 0, MURAL_BUDGET - 1, MURAL_BUDGET)).toBeNull();
+  });
+
+  it('allows a valid in-bounds paint with budget left', () => {
+    expect(validateMuralPaint(23, 15, 11, 0, MURAL_BUDGET)).toBeNull();
+    expect(validateMuralPaint(0, 0, 0, 0, MURAL_BUDGET)).toBeNull();
   });
 });
 

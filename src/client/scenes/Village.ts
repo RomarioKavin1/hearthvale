@@ -3,7 +3,17 @@ import * as Phaser from 'phaser';
 import { connectRealtime, disconnectRealtime } from '@devvit/web/client';
 import type { JsonValue } from '@devvit/web/shared';
 import { PAL } from '../../shared/palette';
-import { CATALOG, GRID_SIZE, tierStats } from '../../shared/catalog';
+import {
+  CATALOG,
+  CREST_COLORS,
+  CREST_EMBLEMS,
+  GRID_SIZE,
+  MURAL_H,
+  MURAL_PALETTE,
+  MURAL_W,
+  defaultOutfit,
+  tierStats,
+} from '../../shared/catalog';
 import {
   isClaimable,
   isPlaza,
@@ -64,6 +74,7 @@ import {
 import { store } from '../state';
 import { api } from '../net';
 import { toast } from '../ui/dom';
+import { openMuralSheet } from '../ui/mural';
 import type { HvTileSelected } from '../events';
 import {
   HV_CLEAR_SELECTION,
@@ -102,6 +113,18 @@ const CONFETTI = [
 // Grand Keep centre (avg of the 2×2 [8,9]² footprint) for celebration effects.
 const KEEP_CX = 0;
 const KEEP_CY = 17 * (TILE_H / 2); // (8.5+8.5)·32 = 544
+
+/** The plaza-ring tile the Village Mural board stands on — the NE corner of the
+ * ring, opposite the well (which sits at the SW corner [7,10]). Always unlocked,
+ * never claimable, so tapping it always opens the mural (see handleTap). */
+const MURAL_TILE = { x: 10, y: 7 };
+/** Screen pixels per mural pixel on the world board (4× → a 96×64 canvas). */
+const MURAL_SCALE = 4;
+/** The live mural-board canvas texture key. */
+const MURAL_TEX = 'hv-mural-board';
+/** Depth for the Hall crest pennant — above the diorama/castle, below the
+ * ready-pip + effect layers so it never covers a toast or gold pip. */
+const CREST_DEPTH = 45000;
 
 // ── Runtime-guards for realtime messages (no casts) ─────────────────────────
 
@@ -154,6 +177,12 @@ const isVillageMessage = (v: JsonValue): v is VillageMessage => {
       return isRecord(v.prices) && isRecord(v.stockpile);
     case 'ring':
       return isBounds(v.bounds);
+    case 'mural':
+      return (
+        typeof v.x === 'number' &&
+        typeof v.y === 'number' &&
+        typeof v.c === 'number'
+      );
     default:
       return false;
   }
@@ -221,7 +250,8 @@ const AMBIENT_CAP = 40;
 /** Once-generated soft-circle / chevron textures (see ensureAmbientTextures). */
 const SMOKE_TEX = 'hv-smoke';
 const BIRD_TEX = 'hv-bird';
-/** Six PAL-family cloth colours for villager shirts (deterministic per variant). */
+/** The eight outfit cloth colours (mirrors catalog OUTFIT_HEX order, so a walker's
+ * `variant` IS its owner's outfit index — the swatch and the shirt match). */
 const WALKER_CLOTH: readonly number[] = [
   hexNum(PAL.roofRed),
   hexNum(PAL.roofBlue),
@@ -229,6 +259,8 @@ const WALKER_CLOTH: readonly number[] = [
   hexNum(PAL.leaf),
   hexNum(PAL.accent),
   hexNum(PAL.wood),
+  hexNum(PAL.roofPurple),
+  hexNum(PAL.water),
 ];
 /** Three warm skin tones for villager faces. */
 const WALKER_SKIN: readonly number[] = [0xf1c9a5, 0xe0a878, 0xc08552];
@@ -293,6 +325,11 @@ export class Village extends Scene {
   private decorImgs: Map<string, Phaser.GameObjects.Image> = new Map();
   private landmarkParts: Phaser.GameObjects.Image[] = [];
   private dressingParts: Phaser.GameObjects.Image[] = [];
+  /** The live Village Mural board on the plaza ring (frame, posts, canvas). */
+  private muralParts: Phaser.GameObjects.GameObject[] = [];
+  private muralBoard: Phaser.GameObjects.Image | undefined;
+  /** The village crest pennant flying on the Hall (pole, flag, emblem). */
+  private crestParts: Phaser.GameObjects.GameObject[] = [];
   private clouds: Phaser.GameObjects.Ellipse[] = [];
   /** Void background (F1): vignette + floating islets + starfield. Their bob /
    * twinkle tweens target these objects, so killing tweens of each on cleanup
@@ -407,6 +444,8 @@ export class Village extends Scene {
     this.buildGround();
     this.buildLandmark();
     this.buildDressing();
+    this.buildMural();
+    this.updateCrest();
     this.buildClouds();
     // Ambient group + shared textures must exist before reconcileAll(), since
     // buildBuilding() attaches per-building smoke/pulse as tiles are composed.
@@ -665,6 +704,7 @@ export class Village extends Scene {
 
   private updateLandmark(): void {
     this.renderCastle();
+    this.updateCrest();
   }
 
   // ── World dressing (well, drifting cloud shadows) ────────────────────────────
@@ -675,6 +715,126 @@ export class Village extends Scene {
   private buildDressing(): void {
     const w = isoToScreen(WELL_TILE.x, WELL_TILE.y, TILE_W, TILE_H);
     this.dressingParts.push(addWell(this, w.sx, w.sy).setDepth(w.sy + 0.4));
+  }
+
+  // ── Village Mural board (E1) ─────────────────────────────────────────────────
+
+  /** (Re)draw the live mural into its canvas texture: each of the 24×16 pixels is
+   * a MURAL_SCALE-square block, parchment where a pixel is unset. Creates the
+   * texture on first call, then refreshes it in place so the board image updates
+   * without being rebuilt. */
+  private drawMuralTexture(): void {
+    const w = MURAL_W * MURAL_SCALE;
+    const h = MURAL_H * MURAL_SCALE;
+    let canvasTex: Phaser.Textures.CanvasTexture | null;
+    if (this.textures.exists(MURAL_TEX)) {
+      const existing = this.textures.get(MURAL_TEX);
+      canvasTex =
+        existing instanceof Phaser.Textures.CanvasTexture ? existing : null;
+    } else {
+      canvasTex = this.textures.createCanvas(MURAL_TEX, w, h);
+    }
+    if (!canvasTex) return;
+    const ctx = canvasTex.getContext();
+    if (!ctx) return;
+    const mural = store.data?.mural ?? {};
+    for (let y = 0; y < MURAL_H; y += 1) {
+      for (let x = 0; x < MURAL_W; x += 1) {
+        const c = mural[`${x},${y}`] ?? 0;
+        ctx.fillStyle = MURAL_PALETTE[c] ?? MURAL_PALETTE[0] ?? '#fff3d9';
+        ctx.fillRect(x * MURAL_SCALE, y * MURAL_SCALE, MURAL_SCALE, MURAL_SCALE);
+      }
+    }
+    canvasTex.refresh();
+  }
+
+  /** Build the mural board once: an ink frame, two wooden posts, and the live
+   * canvas texture on top — anchored on the plaza ring and depth-sorted like a
+   * building so villagers pass in front of / behind it correctly. */
+  private buildMural(): void {
+    for (const p of this.muralParts) p.destroy();
+    this.muralParts = [];
+    this.drawMuralTexture();
+
+    const { sx, sy } = isoToScreen(MURAL_TILE.x, MURAL_TILE.y, TILE_W, TILE_H);
+    const boardW = MURAL_W * MURAL_SCALE; // 96
+    const boardH = MURAL_H * MURAL_SCALE; // 64
+    const postH = 26;
+    const surfaceY = sy + BASE_DY; // the tile's top face
+    const boardBottom = surfaceY - postH;
+    const boardCx = sx;
+    const boardCy = boardBottom - boardH / 2;
+    const depth = sy + 8;
+
+    // Two wooden posts holding the frame up.
+    for (const dx of [-(boardW / 2) + 5, boardW / 2 - 5]) {
+      const post = this.add
+        .rectangle(boardCx + dx, boardBottom - postH / 2 + postH, 6, postH * 2, hexNum(PAL.woodDark))
+        .setDepth(depth);
+      this.muralParts.push(post);
+    }
+    // Ink frame (a filled rounded rect a few px larger than the canvas).
+    const frame = this.add
+      .rectangle(boardCx, boardCy, boardW + 8, boardH + 8, C_INK)
+      .setDepth(depth + 0.1);
+    this.muralParts.push(frame);
+    // A parchment mat inside the frame, then the live canvas on top.
+    const mat = this.add
+      .rectangle(boardCx, boardCy, boardW + 2, boardH + 2, C_CREAM)
+      .setDepth(depth + 0.2);
+    this.muralParts.push(mat);
+    const board = this.add.image(boardCx, boardCy, MURAL_TEX).setDepth(depth + 0.3);
+    this.muralBoard = board;
+    this.muralParts.push(board);
+  }
+
+  /** Refresh the mural board's texture in place (after a paint or full state). */
+  private refreshMural(): void {
+    if (!this.muralBoard) return;
+    this.drawMuralTexture();
+  }
+
+  // ── Village crest pennant (E1) ───────────────────────────────────────────────
+
+  /** (Re)build the crest pennant flying from the Village Hall: a wooden pole, a
+   * colour-banner triangle and the mod-chosen emblem icon. Anchored above the
+   * keep and raised a little more at each Hall level so it always crowns the
+   * growing silhouette. Cheap (four objects) so it just rebuilds on any change. */
+  private updateCrest(): void {
+    for (const p of this.crestParts) p.destroy();
+    this.crestParts = [];
+    const city = store.data?.city;
+    if (!city) return;
+
+    const emblem = CREST_EMBLEMS[city.crest] ?? CREST_EMBLEMS[0];
+    const color = CREST_COLORS[city.crestColor] ?? CREST_COLORS[0];
+    if (!emblem || !color) return;
+
+    // Anchor above the back keep tile; raise with the Hall level so the pennant
+    // stays near the top of the ever-taller silhouette.
+    const { sx, sy } = isoToScreen(8, 8, TILE_W, TILE_H);
+    const topY = sy + BASE_DY - 108 - Math.min(city.hallLevel, 5) * 6;
+    const poleH = 40;
+    const flagH = 20;
+    const flagW = 30;
+
+    const pole = this.add
+      .rectangle(sx, topY + poleH / 2, 4, poleH, hexNum(PAL.woodDark))
+      .setDepth(CREST_DEPTH);
+    this.crestParts.push(pole);
+    // A right-pointing pennant triangle from the top of the pole.
+    const flag = this.add
+      .triangle(sx, topY, 0, 0, flagW, flagH / 2, 0, flagH, hexNum(color.hex))
+      .setOrigin(0, 0)
+      .setDepth(CREST_DEPTH + 0.1);
+    this.crestParts.push(flag);
+    // The emblem icon, tinted cream for contrast on the coloured banner.
+    const icon = this.add
+      .image(sx + 9, topY + flagH / 2, emblem.icon)
+      .setDisplaySize(11, 11)
+      .setTint(C_CREAM)
+      .setDepth(CREST_DEPTH + 0.2);
+    this.crestParts.push(icon);
   }
 
   // ── Void background (floating islets + starfield + vignette) ─────────────────
@@ -804,6 +964,10 @@ export class Village extends Scene {
     this.repaintRing();
     // A theme change (mod form) can also arrive via poll — repaint if it differs.
     this.repaintTheme();
+    // The mural + crest can change via a paint/broadcast or a dropped realtime
+    // message — refresh both from the current snapshot (idempotent).
+    this.refreshMural();
+    this.updateCrest();
     for (const [key, tile] of Object.entries(data.grid)) {
       this.syncTile(key, tile);
     }
@@ -1319,6 +1483,14 @@ export class Village extends Scene {
       return;
     }
 
+    // The Village Mural board sits on this plaza-ring tile — tapping it opens the
+    // mural editor (routed before claim/flavor logic, since the plaza is never
+    // claimable and would otherwise show generic square flavour).
+    if (x === MURAL_TILE.x && y === MURAL_TILE.y) {
+      openMuralSheet();
+      return;
+    }
+
     // The river runs through the outer ring — it can't be settled or built on.
     if (isRiver(x, y)) {
       toast('The river flows here', 'info');
@@ -1550,6 +1722,11 @@ export class Village extends Scene {
       }
       case 'ring': {
         this.onRingUnlock(msg.bounds.lo, msg.bounds.hi);
+        break;
+      }
+      case 'mural': {
+        store.patchMuralPixel(msg.x, msg.y, msg.c);
+        this.refreshMural();
         break;
       }
     }
@@ -1971,14 +2148,37 @@ export class Village extends Scene {
     this.reconcileWalkers();
   }
 
+  /** House owners, sorted for a stable walker→owner mapping (E1). Walker k dresses
+   * as the k-th house owner's outfit. */
+  private houseOwners(): string[] {
+    const grid = store.data?.grid ?? {};
+    const owners: string[] = [];
+    for (const tile of Object.values(grid)) {
+      if (tile.buildingId === 'house') owners.push(tile.owner);
+    }
+    return owners.sort();
+  }
+
+  /** The outfit index (→ walker variant) for the k-th house owner: their chosen
+   * outfit from the state's `outfits` map, else a stable hash of their id, else
+   * the plain index scheme. Pure lookup. */
+  private walkerVariant(owners: string[], index: number): number {
+    const owner = owners[index];
+    if (owner === undefined) return index % VILLAGER_VARIANTS;
+    const chosen = store.data?.outfits[owner];
+    if (chosen !== undefined) return chosen % VILLAGER_VARIANTS;
+    return defaultOutfit(owner) % VILLAGER_VARIANTS;
+  }
+
   /** Keep exactly min(population, 12) villagers alive, spawning/despawning only
    * to close the gap when the house count changes — no random lifecycle. Each
-   * walker's appearance is deterministic by its index (variant = index % 8), and
-   * new ones start on a stable ring tile. */
+   * walker dresses as the k-th house owner's outfit; a changed outfit re-dresses
+   * the existing walker in place. New ones start on a stable ring tile. */
   private reconcileWalkers(): void {
     if (!this.ambient) return;
     const ring = this.walkerRing();
     if (ring.length === 0) return;
+    const owners = this.houseOwners();
     const target = Math.min(this.population(), MAX_WALKERS);
     while (this.walkers.length > target) {
       this.removeWalker(this.walkers.length - 1);
@@ -1987,7 +2187,18 @@ export class Village extends Scene {
       const i = this.walkers.length;
       const tile = ring[(i * 7 + 1) % ring.length];
       if (!tile) break;
-      this.makeWalker(i, tile.x, tile.y);
+      this.makeWalker(tile.x, tile.y, this.walkerVariant(owners, i));
+    }
+    // Re-dress existing walkers whose owner's outfit changed (e.g. after the
+    // player picks a new outfit from the Journal — no population change).
+    for (let i = 0; i < this.walkers.length; i += 1) {
+      const w = this.walkers[i];
+      if (!w) continue;
+      const variant = this.walkerVariant(owners, i);
+      if (variant !== w.variant) {
+        w.variant = variant;
+        w.body.setTexture(`hv-vill-${variant}-${w.frame}`);
+      }
     }
   }
 
@@ -2002,8 +2213,7 @@ export class Village extends Scene {
     this.walkers.splice(index, 1);
   }
 
-  private makeWalker(index: number, tx: number, ty: number): void {
-    const variant = index % VILLAGER_VARIANTS;
+  private makeWalker(tx: number, ty: number, variant: number): void {
     const { sx, sy } = isoToScreen(tx, ty, TILE_W, TILE_H);
 
     // Soft shadow sits at the feet on the root (so it never bobs); the character
@@ -2365,6 +2575,11 @@ export class Village extends Scene {
       p.destroy();
     }
     this.bgParts = [];
+    for (const p of this.muralParts) p.destroy();
+    this.muralParts = [];
+    this.muralBoard = undefined;
+    for (const p of this.crestParts) p.destroy();
+    this.crestParts = [];
     this.stopPolling();
     if (this.conn) {
       disconnectRealtime('village');

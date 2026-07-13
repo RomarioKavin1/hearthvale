@@ -10,11 +10,21 @@ export const forms = new Hono();
 type VillageSettingsValues = {
   villageName?: unknown;
   theme?: unknown;
+  crest?: unknown;
+  crestColor?: unknown;
 };
 
 /** First entry of a select field's array value (or the raw value as a fallback). */
 const firstOf = (value: unknown): unknown =>
   Array.isArray(value) ? value[0] : value;
+
+/** Devvit select values arrive as strings; the crest fields are numeric indices. */
+const asIndex = (value: unknown): number | undefined => {
+  const first = firstOf(value);
+  if (typeof first !== 'string') return undefined;
+  const n = Number(first);
+  return Number.isInteger(n) ? n : undefined;
+};
 
 /**
  * Persist the moderator's village name + theme choice, then confirm with a
@@ -24,7 +34,12 @@ const firstOf = (value: unknown): unknown =>
 forms.post('/village-settings', async (c) => {
   try {
     const body = await c.req.json<VillageSettingsValues>();
-    const city = await doVillageSettings(body.villageName, firstOf(body.theme));
+    const city = await doVillageSettings(
+      body.villageName,
+      firstOf(body.theme),
+      asIndex(body.crest),
+      asIndex(body.crestColor)
+    );
     return c.json<UiResponse>(
       { showToast: `Saved — welcome to ${villageDisplayName(city.villageName)}` },
       200
