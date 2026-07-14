@@ -32,11 +32,13 @@ import { isRiver } from '../../shared/logic/expansion';
 import { monumentAt } from '../../shared/logic/monuments';
 import { priceFor } from '../../shared/logic/market';
 import type { HvTileSelected } from '../events';
+import { tileToScreen } from '../events';
 import { api } from '../net';
 import { store } from '../state';
 import {
   boostsLeft,
   buildingIconKey,
+  closePopover,
   el,
   fmtBuildTime,
   fmtDur,
@@ -46,6 +48,7 @@ import {
   goodIcon,
   iconEl,
   isPending,
+  openPopover,
   pctStr,
   promptLogin,
   withTip,
@@ -111,6 +114,16 @@ const coinCost = (cost: number, broke: boolean): HTMLElement =>
 
 export const openTileSheet = (detail: HvTileSelected): void => {
   const { x, y, key } = detail;
+  // H3: a tile that already holds a building (yours or a neighbour's) opens a
+  // compact anchored POPOVER pinned to the building, not the full-screen modal —
+  // the interaction no longer covers the map. Everything else (an open/claimable
+  // plot, your empty owned plot → build grid, the plaza, a seeded monument's
+  // flavour) keeps the centred modal.
+  const built = store.data?.grid[key] ?? null;
+  if (built !== null && built.buildingId !== undefined) {
+    openTilePopover(detail);
+    return;
+  }
   openSheet({
     title: 'Plot',
     tick: 1000,
@@ -148,6 +161,40 @@ export const openTileSheet = (detail: HvTileSelected): void => {
         return;
       }
       renderPlaza(body);
+    },
+  });
+};
+
+/**
+ * The building interaction as an anchored POPOVER (H3). Reuses the exact same
+ * building views as the modal — `renderMineBuilding` (your building: production,
+ * storage, Collect/Upgrade/Paint/Demolish) and `renderNeighbour` (someone else's:
+ * owner + Boost) — so ALL existing behaviour, validation and pending guards are
+ * unchanged; this is purely a presentation swap from a centred modal to a compact
+ * card pinned to the tile. The card re-renders every second (countdowns/storage)
+ * and on every store change, and closes itself if the tile stops holding a
+ * building (e.g. demolished). Sheets opened from inside it (market, etc.) close
+ * the popover via openSheet.
+ */
+export const openTilePopover = (detail: HvTileSelected): void => {
+  const { x, y, key } = detail;
+  openPopover({
+    tileKey: key,
+    anchor: () => tileToScreen(x, y),
+    tick: 1000,
+    render: (body) => {
+      const data = store.data;
+      if (!data) return;
+      const me = data.me;
+      const tile = data.grid[key] ?? null;
+      // The building is gone (demolished / reset) — nothing to show; close.
+      if (tile === null || tile.buildingId === undefined) {
+        closePopover();
+        return;
+      }
+      const mine = me !== null && tile.owner === me.id;
+      if (mine && me) renderMineBuilding(body, data, me, tile, x, y, key);
+      else renderNeighbour(body, me, tile, x, y);
     },
   });
 };

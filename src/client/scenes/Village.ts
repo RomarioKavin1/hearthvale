@@ -5,7 +5,6 @@ import type { JsonValue } from '@devvit/web/shared';
 import { PAL } from '../../shared/palette';
 import {
   CATALOG,
-  CREST_EMBLEMS,
   GRID_SIZE,
   MURAL_H,
   MURAL_PALETTE,
@@ -235,12 +234,31 @@ type TileView = {
    * tweens (blade/saw spin, ember pulse). Destroyed together in clearStructural. */
   accents: Phaser.GameObjects.GameObject[];
   accentTweens: Phaser.Tweens.Tween[];
+  /** H3: the container that holds every structural sprite/accent for this tile,
+   * scaled to BUILDING_SCALE about the tile's ground pivot so the building sits
+   * in its footprint with breathing room. Its children keep scale 1 (so the work
+   * pulse / dust-pop scale tweens are unaffected); the container carries the
+   * shrink. Destroyed with the rest of the structure in clearStructural. */
+  structure: Phaser.GameObjects.Container | undefined;
   sig: string;
   constructing: boolean;
 };
 
 const BAR_W = 60;
 const BAR_H = 5;
+/**
+ * Congestion relief (H3). Every building / monument STRUCTURE renders in a
+ * container scaled to BUILDING_SCALE about the tile's ground-contact (bottom of
+ * the tile diamond), so structures shrink slightly toward their footprint and
+ * leave a visible gutter between packed neighbours. Ground, decor and walkers
+ * stay full-size, so the world still reads as a solid diorama — only the built
+ * pieces breathe. The pivot is the tile's front-bottom so buildings stay planted
+ * on the tile (they shrink upward, not off the ground). */
+const BUILDING_SCALE = 0.88;
+/** User zoom clamp (wheel + pinch). Widened (H3) to let players push in closer
+ * (was 2.0) for a good look at a dense village, and slightly further out. */
+const ZOOM_MIN = 0.42;
+const ZOOM_MAX = 2.4;
 /** Occlusion relief (H2). Alpha a structure fades to while it occludes the open
  * tile sheet's tile; the alpha ALL structures fade to in peek/ghost mode; the
  * peek auto-off delay; and the fade tween length. */
@@ -631,6 +649,12 @@ export class Village extends Scene {
    * validation matches); the sprite composition per biome comes from
    * MONUMENT_ART. Rebuilt on a theme change so the desert swaps to its sand
    * variants. Each piece depth-sorts by its own tile row like any structure.
+   *
+   * H3 congestion relief: every piece is shrunk to BUILDING_SCALE about the
+   * monument's screen centroid — the WHOLE set-piece scales as one unit (all its
+   * pieces share the same pivot, so their alignment is preserved) and gains the
+   * same footprint gutter as the buildings. Pieces stay loose images (no
+   * container) so the occlusion/peek bookkeeping over `monumentImgs` is unchanged.
    */
   private buildMonuments(): void {
     this.untrackFades(this.monumentImgs);
@@ -639,7 +663,19 @@ export class Village extends Scene {
     const family = themeFamily(this.theme());
     const { monuments: placed } = this.landscape();
     for (const m of placed) {
-      for (const piece of MONUMENT_ART[m.template.id][family]) {
+      const pieces = MONUMENT_ART[m.template.id][family];
+      // Screen centroid of the monument's footprint (the shared scale pivot).
+      let sumDx = 0;
+      let sumDy = 0;
+      for (const p of pieces) {
+        sumDx += p.dx;
+        sumDy += p.dy;
+      }
+      const n = Math.max(1, pieces.length);
+      const pv = isoToScreen(m.x + sumDx / n, m.y + sumDy / n, TILE_W, TILE_H);
+      const pivotX = pv.sx;
+      const pivotY = pv.sy + TILE_H / 2;
+      for (const piece of pieces) {
         const { sx, sy } = isoToScreen(m.x + piece.dx, m.y + piece.dy, TILE_W, TILE_H);
         const dy = piece.layer === 'cap' ? BASE_DY + ROOF_DY : BASE_DY;
         const depthBoost = piece.layer === 'cap' ? 2 : piece.layer === 'base' ? 1 : 0.5;
@@ -647,6 +683,12 @@ export class Village extends Scene {
         img.setDepth(sy + depthBoost);
         if (piece.angle !== undefined) img.setAngle(piece.angle);
         if (piece.tint !== undefined) img.setTint(piece.tint);
+        // Shrink about the monument centroid (see method note).
+        img.setScale(BUILDING_SCALE);
+        img.setPosition(
+          pivotX + BUILDING_SCALE * (img.x - pivotX),
+          pivotY + BUILDING_SCALE * (img.y - pivotY)
+        );
         this.monumentImgs.push(img);
       }
     }
@@ -910,9 +952,14 @@ export class Village extends Scene {
   /** (Re)build the village crest STANDARD on the plaza (H1 crest flag v2): a
    * carved stone pedestal (bases pack) with the pack's own colored crest tower
    * (Sand/Rustic/Forest/Royal → Beige/Brown/Green/Purple) standing on it as the
-   * heraldic flag element — 100% pack art, replacing the old drawn pennant. The
-   * mod-chosen emblem still flies as a small cream icon banner on the tower. Sits
-   * beside the Hall on the plaza front corner and depth-sorts like a building. */
+   * heraldic flag element — 100% pack art, replacing the old drawn pennant.
+   *
+   * H3: the small flat cream emblem ICON that used to fly on the tower is removed
+   * from the WORLD — a 2D screen-plane glyph on an isometric standard read as a
+   * sticker, clashing the diorama the same way the old drawn accents did. The
+   * mod's chosen emblem still appears in the Village Hall sheet and splash chip;
+   * in the world the native colored crest tower carries the heraldry. Sits beside
+   * the Hall on the plaza front corner and depth-sorts like a building. */
   private updateCrest(): void {
     for (const p of this.crestParts) p.destroy();
     this.crestParts = [];
@@ -920,7 +967,6 @@ export class Village extends Scene {
     if (!city) return;
 
     const towerKey = CREST_TOWER[city.crestColor] ?? CREST_TOWER[0]!;
-    const emblem = CREST_EMBLEMS[city.crest] ?? CREST_EMBLEMS[0];
     const { sx, sy } = isoToScreen(CREST_TILE.x, CREST_TILE.y, TILE_W, TILE_H);
 
     // Stone pedestal: the tall bases-pack plate, raised so its top face meets the
@@ -940,16 +986,6 @@ export class Village extends Scene {
       .setY(sy + BASE_DY + 8)
       .setDepth(sy + 5);
     this.crestParts.push(tower);
-
-    // Small cream emblem banner on the tower body — the mod's chosen device.
-    if (emblem) {
-      const icon = this.add
-        .image(sx, sy + BASE_DY - 6, emblem.icon)
-        .setDisplaySize(11, 11)
-        .setTint(C_CREAM)
-        .setDepth(sy + 5.1);
-      this.crestParts.push(icon);
-    }
   }
 
   // ── Void background (floating islets + starfield + vignette) ─────────────────
@@ -1114,6 +1150,7 @@ export class Village extends Scene {
       pulseTween: undefined,
       accents: [],
       accentTweens: [],
+      structure: undefined,
       sig: '',
       constructing: false,
     };
@@ -1207,6 +1244,9 @@ export class Village extends Scene {
         .rectangle(sx - BAR_W / 2, sy - TILE_H * 1.5, BAR_W, BAR_H, C_GLOW)
         .setOrigin(0, 0.5)
         .setDepth(sy + 4);
+      // The scaffold block scales like a finished building (the progress bar
+      // stays loose, full-size, above it).
+      this.finalizeStructure(view, sx, sy);
       return;
     }
 
@@ -1254,6 +1294,7 @@ export class Village extends Scene {
       view.primary = base;
       view.parts.push(base, roof);
       this.addBuildingAccents(view, tile, sx, sy);
+      this.finalizeStructure(view, sx, sy);
       return;
     }
 
@@ -1278,6 +1319,52 @@ export class Village extends Scene {
       if (!view.primary) view.primary = img;
     }
     this.addBuildingAccents(view, tile, sx, sy);
+    this.finalizeStructure(view, sx, sy);
+  }
+
+  /**
+   * Gather every structural object for this tile (base/roof/flat sprites, the
+   * wheatfield growth plate, and the drawn accents) into one container scaled to
+   * BUILDING_SCALE about the tile's ground pivot, giving the building breathing
+   * room in its footprint (H3 congestion relief). Pips (finder/gold/ready) and
+   * the construction progress bar stay LOOSE and full-size — they are HUD-like
+   * markers that read best unshrunk. The container's children keep scale 1, so
+   * the work-pulse and dust-pop scale tweens (which target view.parts / primary)
+   * are unaffected — the container alone carries the shrink. */
+  private finalizeStructure(view: TileView, sx: number, sy: number): void {
+    const objs: Phaser.GameObjects.GameObject[] = [...view.parts];
+    if (view.cropBase) objs.push(view.cropBase);
+    for (const a of view.accents) objs.push(a);
+    if (objs.length === 0) return;
+    view.structure = this.wrapStructure(objs, sx, sy + TILE_H / 2, sy + 1);
+  }
+
+  /**
+   * Wrap already-placed display objects into a container scaled by BUILDING_SCALE
+   * about the pivot (pivotX, pivotY), WITHOUT touching any child's coordinates —
+   * so it works uniformly for images (positioned by origin) AND graphics (drawing
+   * at absolute coords) and even nested containers (the windmill's foreshortened
+   * sail rig). The trick: keep the container at the origin and add children at
+   * their existing world coords, then scale the container by s and translate it
+   * by pivot·(1−s). Every child point p then maps to pivot·(1−s)+s·p = the
+   * about-pivot scaling of p — no per-child math, no casts. Children are sorted
+   * by their own depth so the internal back-to-front order (plate < base < roof <
+   * accents) is preserved; the container's scene depth sorts it against walkers
+   * and neighbouring structures. */
+  private wrapStructure(
+    objects: Phaser.GameObjects.GameObject[],
+    pivotX: number,
+    pivotY: number,
+    depth: number
+  ): Phaser.GameObjects.Container {
+    const c = this.add.container(0, 0);
+    for (const o of objects) c.add(o);
+    const s = BUILDING_SCALE;
+    c.setScale(s);
+    c.setPosition(pivotX * (1 - s), pivotY * (1 - s));
+    c.setDepth(depth);
+    c.sort('depth');
+    return c;
   }
 
   /** Compose the building's distinct drawn accents (E3) and record them on the
@@ -1349,7 +1436,12 @@ export class Village extends Scene {
     sy: number,
     frac: number
   ): void {
-    view.cropBase?.destroy();
+    // Reuse the existing plate graphics (clear + redraw) rather than recreate it,
+    // so that once it has been wrapped into the tile's scaled structure container
+    // (H3) a live growth refresh redraws IN PLACE and stays inside the container —
+    // a fresh graphics would escape it and render full-size at the wrong depth.
+    const g = view.cropBase ?? this.add.graphics();
+    g.clear();
     // Full tile top-face so the plate reads as a coloured plot AROUND the furrow
     // sprite (which covers the tile centre) rather than hiding beneath it.
     const hw = TILE_W / 2 - 3;
@@ -1360,7 +1452,6 @@ export class Village extends Scene {
     const grass = hexNum(PAL.grass);
     const ready = frac >= 1;
     const fill = frac < 0.33 ? dirt : ready ? grass : this.lerpColor(dirt, grass, frac);
-    const g = this.add.graphics();
     g.fillStyle(fill, ready ? 0.85 : 0.7);
     g.beginPath();
     g.moveTo(sx, sy - hh);
@@ -1449,6 +1540,10 @@ export class Village extends Scene {
     view.growthKey = undefined;
     view.cropBase?.destroy();
     view.cropBase = undefined;
+    // The scaled structure container (H3): its children are already destroyed
+    // individually above, so this just tears down the now-empty wrapper.
+    view.structure?.destroy();
+    view.structure = undefined;
   }
 
   private destroyView(key: string): void {
@@ -1685,7 +1780,7 @@ export class Village extends Scene {
         if (this.pinchDist > 0) {
           const cam = this.cameras.main;
           cam.setZoom(
-            Phaser.Math.Clamp((cam.zoom * d) / this.pinchDist, 0.5, 2)
+            Phaser.Math.Clamp((cam.zoom * d) / this.pinchDist, ZOOM_MIN, ZOOM_MAX)
           );
         }
         this.pinchDist = d;
@@ -1718,7 +1813,7 @@ export class Village extends Scene {
       (_p: unknown, _o: unknown, _dx: number, dy: number) => {
         const cam = this.cameras.main;
         cam.setZoom(
-          Phaser.Math.Clamp(cam.zoom * (dy > 0 ? 0.9 : 1.1), 0.5, 2)
+          Phaser.Math.Clamp(cam.zoom * (dy > 0 ? 0.9 : 1.1), ZOOM_MIN, ZOOM_MAX)
         );
       }
     );

@@ -25,6 +25,8 @@ import {
   utcDay,
 } from '../../shared/logic/economy';
 import { store } from '../state';
+import type { ScreenPoint } from '../events';
+import { HV_CLEAR_SELECTION } from '../events';
 
 /**
  * DOM utility layer for the HUD (Task 6).
@@ -513,6 +515,190 @@ export const toastAction = (
   window.setTimeout(close, timeoutMs);
 };
 
+// ── Anchored popover (H3) ────────────────────────────────────────────────────
+//
+// A compact parchment card that points at a map tile with a small arrow notch,
+// used for building interactions instead of a full-screen modal. Unlike the
+// modal it has NO backdrop and does not block the map — only the small card
+// catches pointer events. It TRACKS its tile: an rAF loop re-anchors the card to
+// the tile's live screen point every frame (via the `anchor` callback the caller
+// wires to the scene's tileToScreen bridge — the same bridge the walkthrough
+// uses), auto-flipping above/below and clamping to the viewport, so it stays
+// glued to the building as the camera pans/zooms. It closes on: an outside tap
+// (anywhere that is not the card and not the map canvas — a map tap is left to
+// the scene, which re-selects or, on the same tile, toggles this closed), the
+// Escape key, a re-tap of the same tile, or the tile scrolling off-canvas.
+//
+// (Design note: the brief offered "track the tile" OR the simpler "close on pan
+// start" — tracking was chosen as the more robust/premium behaviour; a pan that
+// carries the tile off the canvas still closes it, since the anchor returns null.)
+
+export type PopoverSpec = {
+  /** The tile this popover is anchored to (`"x,y"`) — used for re-tap toggling. */
+  tileKey: string;
+  /** Live viewport point of the tile, or null when it is off-canvas (→ close). */
+  anchor: () => ScreenPoint | null;
+  /** Populate `body`; called on open, on each store change and on each tick. */
+  render: (body: HTMLElement) => void;
+  /** Optional re-render cadence in ms (for countdowns/storage bars). */
+  tick?: number;
+  /** Extra cleanup when this popover closes. */
+  onClose?: () => void;
+};
+
+let popCard: HTMLElement | undefined;
+let popBody: HTMLElement | undefined;
+let popArrow: HTMLElement | undefined;
+let popSpec: PopoverSpec | undefined;
+let popOnStore: (() => void) | undefined;
+let popTick: number | undefined;
+let popRaf: number | undefined;
+
+const clearPopSubs = (): void => {
+  if (popOnStore) {
+    store.off('change', popOnStore);
+    popOnStore = undefined;
+  }
+  if (popTick !== undefined) {
+    window.clearInterval(popTick);
+    popTick = undefined;
+  }
+};
+
+/** Re-anchor the card to its tile's live screen point (flip + clamp), or close
+ * it when the tile has scrolled off the canvas. */
+const positionPopover = (): void => {
+  if (!popSpec || !popCard || !popArrow) return;
+  const pt = popSpec.anchor();
+  if (!pt) {
+    closePopover();
+    return;
+  }
+  const margin = 8;
+  const gap = 18; // clearance for the building sprite + the arrow notch
+  const rect = popCard.getBoundingClientRect();
+  const w = rect.width;
+  const h = rect.height;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  // Prefer above the tile (arrow points down at it); flip below if it won't fit.
+  let below = false;
+  let top = pt.y - gap - h;
+  if (top < margin) {
+    below = true;
+    top = pt.y + gap;
+  }
+  if (below && top + h > vh - margin) {
+    top = Math.max(margin, vh - margin - h);
+  }
+  let left = pt.x - w / 2;
+  left = Math.min(Math.max(left, margin), Math.max(margin, vw - margin - w));
+  popCard.style.left = `${Math.round(left)}px`;
+  popCard.style.top = `${Math.round(top)}px`;
+  // Keep the arrow pointing at the tile even when the card is clamped sideways.
+  const arrowX = Math.min(Math.max(pt.x - left, 18), Math.max(18, w - 18));
+  popArrow.style.left = `${Math.round(arrowX)}px`;
+  popCard.classList.toggle('is-below', below);
+};
+
+const popLoop = (): void => {
+  if (!popSpec) return;
+  positionPopover();
+  popRaf = requestAnimationFrame(popLoop);
+};
+
+const renderPopover = (): void => {
+  if (!popSpec || !popBody) return;
+  hideTip();
+  clearNode(popBody);
+  popSpec.render(popBody);
+  // Content height may have changed (a countdown ending, a warning appearing) —
+  // re-anchor immediately so the card never drifts off its tile.
+  positionPopover();
+};
+
+const onPopPointerDown = (e: Event): void => {
+  if (!popSpec || !popCard) return;
+  const t = e.target;
+  if (!(t instanceof Element)) return;
+  // Taps inside the card (its buttons/swatches) never dismiss.
+  if (popCard.contains(t)) return;
+  // A tap on the map canvas is left to the scene: it either re-selects another
+  // tile (swapping this popover) or, on the same tile, toggles it closed. Closing
+  // here too would race that flow.
+  if (t.closest('#game-container')) return;
+  closePopover();
+};
+
+const onPopKeydown = (e: KeyboardEvent): void => {
+  if (e.key === 'Escape') closePopover();
+};
+
+/** Mount the single popover card into the HUD host (once, at boot). */
+export const mountPopoverRoot = (parent: HTMLElement): void => {
+  popArrow = el('div', { cls: 'hv-pop-arrow' });
+  popBody = el('div', { cls: 'hv-pop-body' });
+  const close = el('button', {
+    cls: 'hv-pop-close',
+    attrs: { type: 'button', 'aria-label': 'Close' },
+    children: [iconEl('icon-cross', 12)],
+    on: { click: () => closePopover() },
+  });
+  popCard = el('div', {
+    cls: 'hv-pop',
+    attrs: { role: 'dialog' },
+    children: [close, popBody, popArrow],
+  });
+  parent.appendChild(popCard);
+  document.addEventListener('pointerdown', onPopPointerDown, true);
+  document.addEventListener('keydown', onPopKeydown);
+};
+
+export const isPopoverOpen = (): boolean => popSpec !== undefined;
+
+/** Open (or, on a re-tap of the same tile, toggle-close) the tile popover. */
+export const openPopover = (spec: PopoverSpec): void => {
+  if (!popCard || !popBody) return;
+  // Re-tapping the tile the popover already points at closes it.
+  if (popSpec && popSpec.tileKey === spec.tileKey) {
+    closePopover();
+    return;
+  }
+  clearPopSubs();
+  popSpec = spec;
+  renderPopover();
+  popOnStore = () => renderPopover();
+  store.on('change', popOnStore);
+  if (spec.tick !== undefined) {
+    popTick = window.setInterval(renderPopover, spec.tick);
+  }
+  popCard.classList.add('is-open');
+  positionPopover();
+  if (popRaf === undefined) popRaf = requestAnimationFrame(popLoop);
+};
+
+/**
+ * Close the popover. Dispatches HV_CLEAR_SELECTION so the scene drops its tile
+ * highlight / occluder fade — UNLESS `silent` (used when a modal sheet takes over
+ * the selection, so it isn't cleared out from under the new sheet).
+ */
+export const closePopover = (silent = false): void => {
+  if (!popSpec) return;
+  const spec = popSpec;
+  popSpec = undefined;
+  clearPopSubs();
+  if (popRaf !== undefined) {
+    cancelAnimationFrame(popRaf);
+    popRaf = undefined;
+  }
+  popCard?.classList.remove('is-open');
+  hideTip();
+  spec.onClose?.();
+  if (!silent) {
+    window.dispatchEvent(new CustomEvent(HV_CLEAR_SELECTION));
+  }
+};
+
 // ── Stylesheet (colours interpolated from PAL) ───────────────────────────────
 
 let stylesInjected = false;
@@ -872,6 +1058,76 @@ const CSS = `
   /* Allow vertical touch-panning inside the sheet; nothing horizontal here. */
   touch-action: pan-y;
   padding: 16px;
+}
+
+/* ── Anchored tile popover (H3) ──────────────────────────────
+ * A compact parchment card that points at a map tile. No backdrop — it sits over
+ * the map (z above the modal layer) but only the card itself catches input. */
+.hv-pop {
+  position: fixed;
+  left: 0; top: 0;
+  z-index: 30;
+  width: min(260px, 92vw);
+  max-height: 74vh;
+  display: none;
+  flex-direction: column;
+  background: var(--cream);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 5px 0 rgba(59,51,71,0.3), 0 8px 22px rgba(0,0,0,0.28);
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+  transform-origin: center bottom;
+  transition: opacity 130ms ease-out, transform 130ms ease-out;
+}
+.hv-pop.is-open { display: flex; opacity: 1; transform: none; }
+.hv-pop.is-below { transform-origin: center top; }
+.hv-pop-body {
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  padding: 14px 14px 14px;
+}
+/* Tighter internals than the modal so the card stays compact. */
+.hv-pop-body .hv-stack > * + * { margin-top: 9px; }
+.hv-pop-body .hv-btn { min-height: 44px; font-size: 14px; }
+.hv-pop-close {
+  pointer-events: auto;
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 28px; height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--wall);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--ink);
+  z-index: 1;
+}
+.hv-pop-close:active { transform: translateY(1px); }
+/* The arrow notch: a rotated parchment square poking out toward the tile. Default
+ * (card above the tile) it sits on the bottom edge; flipped (is-below) it moves
+ * to the top edge. Two borders are drawn so it reads as a continuation of the
+ * card's ink outline. */
+.hv-pop-arrow {
+  position: absolute;
+  width: 14px; height: 14px;
+  background: var(--cream);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.hv-pop:not(.is-below) .hv-pop-arrow {
+  bottom: -8px;
+  border-right: 3px solid var(--ink);
+  border-bottom: 3px solid var(--ink);
+}
+.hv-pop.is-below .hv-pop-arrow {
+  top: -8px;
+  border-left: 3px solid var(--ink);
+  border-top: 3px solid var(--ink);
 }
 
 /* ── Tooltip bubble ──────────────────────────────────────── */
@@ -1674,6 +1930,8 @@ const CSS = `
   .hv-toast.is-in { transform: none; }
   .hv-modal { transition: opacity 120ms linear; transform: none; }
   .hv-backdrop.is-open .hv-modal { transform: none; }
+  .hv-pop { transition: opacity 100ms linear; }
+  .hv-pop:not(.is-open) { transform: none; }
   .hv-tip { transition: opacity 100ms linear; transform: none; }
   .hv-tip.is-in { transform: none; }
   .hv-fill > i { transition: none; }

@@ -11,11 +11,17 @@
 // ?artdebug surface so both render identically.
 //
 // H1 animation style pass (fixing "the drawn accents look bad"): the sails are
-// rebuilt as 4 tapered blades with a 1px ink outline + two-tone shading (light
-// face / dark edge) on a hub dot, turning slowly (~12s/rev); the saw blade is
-// now STATIC (no spin), drawn with the same outline+shading; the ember glow is a
-// small 2px core with a gentle pulse. Everything freezes legibly under reduced
-// motion.
+// tapered blades with a 1px ink outline + two-tone shading (light face / dark
+// edge) on a hub dot, turning slowly (~12s/rev); the ember glow is a small 2px
+// core with a gentle pulse. Everything freezes legibly under reduced motion.
+//
+// H3 iso-projection pass (fixing "the accents feel detached from the isometric
+// aesthetics — they're drawn in the flat screen plane"): the windmill sails now
+// spin INSIDE a foreshortened, slightly-tilted container (scaleX ≈ 0.72 of
+// scaleY + a small face rotation), so the sweep traces an ELLIPSE on the tower's
+// SE face instead of a screen-plane circle; the sawmill's flat saw disc becomes
+// a 2:1 iso ellipse half-buried lengthwise in the cut log. Both read as part of
+// the diorama rather than stickers on the glass.
 //
 // All geometry is anchored to the tile's top-face centre (sx, sy) — the same
 // point addBlock/addSurface place from — with vertical offsets tuned against the
@@ -133,19 +139,30 @@ export const buildBuildingAccents = (
 
   switch (id) {
     case 'windmill': {
-      // Four tapered sails on a hub, mounted on the mill tower's upper front,
-      // turning slowly (~12s/rev). Static (reduced motion) → a calm X pose.
-      const blades = scene.add.graphics({ x: sx, y: sy - 70 }).setDepth(sy + 3);
+      // Four tapered sails mounted on the mill tower's upper SE face, turning
+      // slowly (~12s/rev). The classic iso cheat: the spinning cross lives inside
+      // a FORESHORTENED, slightly-tilted container (scaleX ≈ 0.72 of scaleY, plus
+      // a small face-angle rotation), so a blade tip traces an ELLIPSE on the
+      // tilted face rather than a flat screen-plane circle — the sails read as
+      // bolted to the tower, not stuck on the glass. Static (reduced motion) →
+      // a calm frozen pose, still foreshortened onto the face.
+      const face = scene.add.container(sx + 1, sy - 66);
+      face.setScale(0.72, 1);
+      face.setRotation(-0.16); // tilt to the tower's SE face angle
+      face.setDepth(sy + 3);
+      const blades = scene.add.graphics();
       for (const deg of [0, 90, 180, 270]) {
         drawBlade(blades, (deg * Math.PI) / 180);
       }
-      // Hub: an outlined wood dot.
+      // Hub: an outlined wood dot on the face.
       blades.fillStyle(C.woodDark, 1);
       blades.fillCircle(0, 0, 3.5);
       blades.lineStyle(1, C.ink, 1);
       blades.strokeCircle(0, 0, 3.5);
-      objects.push(blades);
+      face.add(blades);
+      objects.push(face);
       if (animate) {
+        // Rotate the blades INSIDE the skewed container so the sweep is elliptical.
         tweens.push(
           scene.tweens.add({
             targets: blades,
@@ -287,8 +304,11 @@ export const buildBuildingAccents = (
       table.lineBetween(tx + 12, ty, tx + 20, ty + 12);
       objects.push(table);
 
-      // The blade — drawn UNDER the log (depth 2.75 < 2.8) so its lower half is
-      // buried inside the log while its toothed upper half rises above the cut.
+      // The blade — an ISO ELLIPSE (a 2:1-squashed circle, the iso read of a
+      // circular saw set into the cut) drawn UNDER the log (depth 2.75 < 2.8) so
+      // its lower half is buried in the log and only the toothed upper arc rises
+      // above the kerf. Static — a spinning disc read as a flat sticker (the old
+      // clash); a squashed, half-sunk ellipse sits IN the timber.
       const gold = t >= 3;
       const bladeFace = gold ? C.glow : C.stone;
       const bladeEdge = gold ? C.accent : C.stoneDark;
@@ -296,22 +316,31 @@ export const buildBuildingAccents = (
       const cly = ty - 5;
       const clh = 12;
       const saw = scene.add.graphics({ x: tx, y: cly + 1 }).setDepth(sy + 2.75);
-      const R = 13;
+      const RX = 15;
+      const RY = 7.5;
       saw.fillStyle(bladeFace, 1);
-      saw.fillCircle(0, 0, R);
-      saw.lineStyle(1.5, C.ink, 1);
-      saw.strokeCircle(0, 0, R);
-      for (let k = 0; k < 10; k += 1) {
-        const a = (k / 10) * Math.PI * 2;
-        poly(saw, [[-3, -R], [0, -R], [0, -R - 4]], a, C.cream);
-        poly(saw, [[0, -R], [3, -R], [0, -R - 4]], a, bladeEdge);
-        outline(saw, [[-3, -R], [3, -R], [0, -R - 4]], a, C.ink, 1);
+      saw.fillEllipse(0, 0, RX * 2, RY * 2);
+      // Teeth around the rim, following the ellipse (outlined, two-tone tips).
+      const teeth = 14;
+      for (let k = 0; k < teeth; k += 1) {
+        const t0 = ((k - 0.32) / teeth) * Math.PI * 2;
+        const t1 = ((k + 0.32) / teeth) * Math.PI * 2;
+        const tm = (k / teeth) * Math.PI * 2;
+        const b0: readonly [number, number] = [RX * Math.cos(t0), RY * Math.sin(t0)];
+        const b1: readonly [number, number] = [RX * Math.cos(t1), RY * Math.sin(t1)];
+        const ap: readonly [number, number] = [(RX + 3) * Math.cos(tm), (RY + 3) * Math.sin(tm)];
+        poly(saw, [b0, b1, ap], 0, k % 2 === 0 ? C.cream : bladeEdge);
+        outline(saw, [b0, b1, ap], 0, C.ink, 1);
       }
+      saw.lineStyle(1.5, C.ink, 1);
+      saw.strokeEllipse(0, 0, RX * 2, RY * 2);
+      // Arbor hub + a couple of concentric rings for the plate read.
+      saw.lineStyle(1, bladeEdge, 0.9);
+      saw.strokeEllipse(0, 0, RX * 1.2, RY * 1.2);
       saw.fillStyle(bladeEdge, 1);
-      saw.fillCircle(0, 0, 3.5);
+      saw.fillEllipse(0, 0, 6, 3.5);
       saw.lineStyle(1, C.ink, 1);
-      saw.strokeCircle(0, 0, 3.5);
-      saw.setAngle(15);
+      saw.strokeEllipse(0, 0, 6, 3.5);
       objects.push(saw);
 
       // The log being cut, on top of the blade's lower half (mid-cut read).

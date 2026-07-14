@@ -3,6 +3,7 @@ import { store } from '../state';
 import {
   clearNode,
   clearPending,
+  closePopover,
   el,
   hideTip,
   iconEl,
@@ -113,6 +114,9 @@ export const mountSheetRoot = (parent: HTMLElement): void => {
 
 export const openSheet = (spec: SheetSpec): void => {
   if (!card || !backdrop || !titleEl || !bodyEl) return;
+  // A modal sheet and the tile popover are mutually exclusive — close any open
+  // popover silently (the scene keeps whatever selection this sheet is for).
+  closePopover(true);
   // Swap out any previous sheet's subscriptions without firing a close event.
   const wasOpen = current !== undefined;
   teardown();

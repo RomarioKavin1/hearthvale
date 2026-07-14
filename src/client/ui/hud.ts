@@ -27,6 +27,7 @@ import {
   injectStyles,
   isPending,
   markPending,
+  mountPopoverRoot,
   mountToasts,
   notifyError,
   promptLogin,
@@ -130,6 +131,7 @@ export const initHud = (game: Game): void => {
   initObjectivesCollapse();
 
   mountSheetRoot(hud);
+  mountPopoverRoot(hud);
   mountToasts(hud);
   // The guided walkthrough overlay (coach marks) sits above the chrome and points
   // new players at the next action; it self-hides for veterans / once completed.
