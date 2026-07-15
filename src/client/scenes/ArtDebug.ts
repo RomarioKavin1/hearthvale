@@ -235,22 +235,20 @@ export class ArtDebug extends Scene {
     });
     y += ROW + 160;
 
-    // Crest standard (H1 flag v2): stone pedestal + each colored crest tower.
+    // Crest standard (H5 grounded crest): each colored crest tower planted on the
+    // tile with a small pack stone at its foot — no bases-pack pedestal.
     this.label(16, y + 20, 'crest standard — Sand | Rustic | Forest | Royal', 12);
     CREST_TOWER.forEach((key, i) => {
       const cx = 160 + i * (COL + 20);
       const cyRow = y + 90;
       this.ground(cx, cyRow);
-      // Pedestal plate raised so its top face meets the tower's foot, and the
-      // scaled tower nudged down to stand ON that plate (they nest as one standard).
-      this.add
-        .image(cx, cyRow - 15, 'base-stone-detail')
-        .setOrigin(0.5, 0.72)
-        .setScale(0.72)
+      // Grounding stone at the standard's foot, then the tower seated into it.
+      addSurface(this, 'rocks-grass', cx + 3, cyRow + 7)
+        .setScale(0.44)
         .setDepth(cyRow + 1);
       addSurface(this, key, cx, cyRow)
-        .setScale(0.56)
-        .setY(cyRow + BASE_DY + 8)
+        .setScale(0.6)
+        .setY(cyRow + BASE_DY + 24)
         .setDepth(cyRow + 2);
       const names = ['Sand', 'Rustic', 'Forest', 'Royal'];
       this.label(cx - 16, cyRow + 40, names[i] ?? '', 10);

@@ -47,6 +47,11 @@ export const PAL = {
   stone: '#9a94a6',
   stoneDark: '#7e7890',
 
+  // Steel — warm sawmill-blade grays (a watercolour steel that harmonises with
+  // the wood palette rather than a cold machined gray).
+  steel: '#c6bda6',
+  steelDark: '#8c7f68',
+
   // Foliage
   leaf: '#6aa354',
   leafDark: '#568a43',

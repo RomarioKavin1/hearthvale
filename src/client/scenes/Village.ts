@@ -278,8 +278,8 @@ const PIP_DEPTH = 50000;
 /** Ready-to-collect "good bubble" (H4): the parchment badge diameter + the good
  * icon inside it (screen px at zoom 1), the gentle sine-bob amplitude (world px),
  * and how far above the tile the bubble floats. */
-const BUBBLE_BADGE_PX = 34;
-const BUBBLE_ICON_PX = 22;
+const BUBBLE_BADGE_PX = 40;
+const BUBBLE_ICON_PX = 30;
 const BUBBLE_BOB = 5;
 const BUBBLE_DY = TILE_H * 1.9;
 /** Counter-scale clamp for the bubble so it stays readable zoomed out yet never
@@ -974,17 +974,20 @@ export class Village extends Scene {
 
   // ── Village crest pennant (E1) ───────────────────────────────────────────────
 
-  /** (Re)build the village crest STANDARD on the plaza (H1 crest flag v2): a
-   * carved stone pedestal (bases pack) with the pack's own colored crest tower
-   * (Sand/Rustic/Forest/Royal → Beige/Brown/Green/Purple) standing on it as the
-   * heraldic flag element — 100% pack art, replacing the old drawn pennant.
+  /** (Re)build the village crest STANDARD on the plaza (H5 grounded crest): the
+   * pack's own colored crest tower (Sand/Rustic/Forest/Royal → Beige/Brown/Green/
+   * Purple) planted directly on the tile as the heraldic flag element — 100% pack
+   * art. A small Sketch Town stone tucks at its foot so it reads as GROUNDED.
    *
-   * H3: the small flat cream emblem ICON that used to fly on the tower is removed
-   * from the WORLD — a 2D screen-plane glyph on an isometric standard read as a
-   * sticker, clashing the diorama the same way the old drawn accents did. The
-   * mod's chosen emblem still appears in the Village Hall sheet and splash chip;
-   * in the world the native colored crest tower carries the heraldry. Sits beside
-   * the Hall on the plaza front corner and depth-sorts like a building. */
+   * H5: the Isometric-Miniature-Bases wooden pedestal was REMOVED — its plate
+   * didn't match the Sketch Town pack and lifted the crest so it appeared to hover
+   * (user feedback). The colored crest tower is itself a stone standard, so it
+   * grounds on a pack-native rock rather than a mismatched plate.
+   *
+   * H3: the small flat cream emblem ICON that used to fly on the tower stays
+   * removed from the WORLD (a 2D screen-plane glyph on an isometric standard read
+   * as a sticker); the mod's chosen emblem still appears in the Village Hall sheet
+   * and splash chip. Sits beside the Hall on the plaza front corner. */
   private updateCrest(): void {
     for (const p of this.crestParts) p.destroy();
     this.crestParts = [];
@@ -993,22 +996,21 @@ export class Village extends Scene {
 
     const towerKey = CREST_TOWER[city.crestColor] ?? CREST_TOWER[0]!;
     const { sx, sy } = isoToScreen(CREST_TILE.x, CREST_TILE.y, TILE_W, TILE_H);
+    const family = themeFamily(this.theme());
 
-    // Stone pedestal: the tall bases-pack plate, raised so its top face meets the
-    // crest tower's foot (they nest as a single standard).
-    const pedestal = this.add
-      .image(sx, sy - 15, 'base-stone-detail')
-      .setOrigin(0.5, 0.72)
-      .setScale(0.72)
+    // A small pack-native stone rests on the tile at the standard's foot, so the
+    // crest grounds naturally (replaces the mismatched bases-pack plate).
+    const stone = addSurface(this, themedKey(family, 'rocks-grass'), sx + 3, sy + 7)
+      .setScale(0.44)
       .setDepth(sy + 4);
-    this.crestParts.push(pedestal);
+    this.crestParts.push(stone);
 
-    // The colored crest tower standing ON the pedestal (Sketch Town geometry, so
-    // it aligns with addSurface); scaled down so it reads as a standard, not a
-    // second keep, and nudged down to seat on the plate.
+    // The colored crest tower planted on the tile, its foot seated into the stone
+    // (Sketch Town geometry, so it aligns with addSurface); scaled down so it reads
+    // as a standard, not a second keep.
     const tower = addSurface(this, towerKey, sx, sy)
-      .setScale(0.56)
-      .setY(sy + BASE_DY + 8)
+      .setScale(0.6)
+      .setY(sy + BASE_DY + 24)
       .setDepth(sy + 5);
     this.crestParts.push(tower);
   }
@@ -1718,11 +1720,19 @@ export class Village extends Scene {
     const badge = this.add
       .image(0, 0, 'ui-badge')
       .setDisplaySize(BUBBLE_BADGE_PX, BUBBLE_BADGE_PX);
+    // A dark silhouette of the icon sits just behind it: gives even the pale good
+    // sprites (flour/bricks are near-beige) a defining edge on the cream parchment,
+    // so the icon reads clearly at default zoom AND zoomed out (H5).
+    const iconShadow = this.add
+      .image(1.5, 1.5, iconKey)
+      .setDisplaySize(BUBBLE_ICON_PX, BUBBLE_ICON_PX)
+      .setTint(0x2a2233)
+      .setAlpha(0.34);
     const icon = this.add
       .image(0, -1, iconKey)
       .setDisplaySize(BUBBLE_ICON_PX, BUBBLE_ICON_PX);
     const c = this.add
-      .container(x, y, [shadow, badge, icon])
+      .container(x, y, [shadow, badge, iconShadow, icon])
       .setDepth(PIP_DEPTH)
       .setScale(this.bubbleScale());
     if (!this.reducedMotion) {
@@ -1952,6 +1962,19 @@ export class Village extends Scene {
     const data = store.data;
     if (!data) return;
     const world = this.cameras.main.getWorldPoint(p.x, p.y);
+
+    // Ready-bubble hit-test FIRST (H5): a precise tap on a floating ready bubble
+    // collects that building directly, even though the bubble hovers ~2 tiles
+    // above it. Bubbles exist only on the player's OWN ripe tiles, so a hit is
+    // always a valid collect — routed through the same collectTile pipeline as a
+    // building tap (toast/XP/perfect-harvest). The bubble wins over the tile math
+    // below, so it never fights the building tap underneath.
+    const bubbleTile = this.bubbleHitTile(world.x, world.y);
+    if (bubbleTile) {
+      this.collectTile(bubbleTile.x, bubbleTile.y);
+      return;
+    }
+
     const a = world.x / (TILE_W / 2);
     const b = world.y / (TILE_H / 2);
     const x = Math.round((a + b) / 2);
@@ -2001,6 +2024,28 @@ export class Village extends Scene {
 
     this.setSelection(key, x, y);
     this.dispatchSelected({ key, x, y, tile, mine, claimable });
+  }
+
+  /** Tile of the ready bubble under a world point, or null. The bubble floats in
+   * the world (container at (bubble.x, bubble.y), counter-scaled per zoom, bobbing
+   * on bubble.y), so hit-test a disc of the badge radius around its live centre.
+   * Returns the CLOSEST bubble when several overlap. */
+  private bubbleHitTile(wx: number, wy: number): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (const [key, view] of this.views) {
+      const b = view.bubble;
+      if (!b) continue;
+      const r = (BUBBLE_BADGE_PX / 2) * b.scaleX + 5;
+      const dx = wx - b.x;
+      const dy = wy - b.y;
+      const d = dx * dx + dy * dy;
+      if (d <= r * r && d < bestD) {
+        bestD = d;
+        best = parseKey(key);
+      }
+    }
+    return best;
   }
 
   private collectTile(x: number, y: number): void {

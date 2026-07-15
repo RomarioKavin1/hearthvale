@@ -5,8 +5,8 @@
 // tower, sawmill = open timber yard, kiln = oven dome, bakery = shop, manor =
 // estate — see manifest BUILDING_ART) and this module hand-draws the small
 // living/identifying accent on top: the windmill's turning sails, the sawmill's
-// sprite-composed timber yard (awning + log rack + plank deck + trestle — H4,
-// zero drawn geometry), the kiln's chimney + ember, the bakery's
+// watercolour-textured CIRCULAR SAW BLADE rising half-buried from the log it cuts
+// (H5) over a small timber yard, the kiln's chimney + ember, the bakery's
 // striped awning + hanging sign, the manor's balcony + hedges, the quarry's pit,
 // and the per-tier house upgrades. Shared by the live Village scene AND the
 // ?artdebug surface so both render identically.
@@ -20,10 +20,10 @@
 // aesthetics — they're drawn in the flat screen plane"): the windmill sails now
 // spin INSIDE a foreshortened, slightly-tilted container (scaleX ≈ 0.72 of
 // scaleY + a small face rotation), so the sweep traces an ELLIPSE on the tower's
-// SE face instead of a screen-plane circle. (H4: the sawmill's drawn saw / log /
-// plank geometry was retired entirely — it now composes from pack sprites only;
-// see the sawmill case below.) The windmill sails read as part of the diorama
-// rather than a sticker on the glass.
+// SE face instead of a screen-plane circle. (H5: the sawmill's circular blade is
+// likewise mounted in a foreshortened container so the toothed disc sits in the
+// log's iso side-plane; see the sawmill case below.) The windmill sails read as
+// part of the diorama rather than a sticker on the glass.
 //
 // All geometry is anchored to the tile's top-face centre (sx, sy) — the same
 // point addBlock/addSurface place from — with vertical offsets tuned against the
@@ -102,6 +102,105 @@ const outline = (
   for (let i = 1; i < r.length; i += 1) g.lineTo(r[i]![0], r[i]![1]);
   g.closePath();
   g.strokePath();
+};
+
+/** Shared texture key for the hand-drawn circular saw blade (built once). */
+const SAW_TEX = 'hv-saw-blade';
+
+/**
+ * Build the sawmill's circular SAW BLADE as a ONE-OFF canvas texture (H5) that
+ * matches the Kenney Sketch Town watercolour/ink look — instead of the flat 2D
+ * disc and the drawn iso-ellipse that both clashed before. Painted with:
+ *   • a soft warm-steel radial gradient body (upper-left glint → warm shadow), so
+ *     it reads as watercolour volume, not a flat fill;
+ *   • a ring of sketchy angled rip-saw TEETH around the rim;
+ *   • a brown ink outline (~3px) on the whole tooth silhouette + inner ring +
+ *     radial spokes + a hub, echoing the pack's hand-inked linework;
+ *   • an off-white paper tint halo bleeding just past the teeth.
+ * Generated at 128px for crisp downscaling; drawn ONCE (idempotent on the key),
+ * then mounted as a normal image so it can be foreshortened + slowly spun.
+ */
+const ensureSawBladeTexture = (scene: Scene): void => {
+  if (scene.textures.exists(SAW_TEX)) return;
+  const S = 128;
+  const tex = scene.textures.createCanvas(SAW_TEX, S, S);
+  if (!tex) return;
+  const ctx = tex.getContext();
+  const cx = S / 2;
+  const cy = S / 2;
+  const tip = 52; // tooth-tip radius
+  const gullet = 42; // valley between teeth
+  const body = 44; // blade body radius (inner ring sits just inside)
+  const n = 12; // teeth
+
+  // Tooth silhouette: alternating tip / gullet points, teeth raked one way (a
+  // rip-saw slant) so a slow spin reads as turning.
+  const toothPath = (): void => {
+    ctx.beginPath();
+    for (let i = 0; i < n; i += 1) {
+      const aTip = ((i - 0.28) / n) * Math.PI * 2 - Math.PI / 2;
+      const aGul = ((i + 0.5) / n) * Math.PI * 2 - Math.PI / 2;
+      const tx = cx + Math.cos(aTip) * tip;
+      const ty = cy + Math.sin(aTip) * tip;
+      const gx = cx + Math.cos(aGul) * gullet;
+      const gy = cy + Math.sin(aGul) * gullet;
+      if (i === 0) ctx.moveTo(tx, ty);
+      else ctx.lineTo(tx, ty);
+      ctx.lineTo(gx, gy);
+    }
+    ctx.closePath();
+  };
+
+  // Soft off-white paper halo just past the teeth (watercolour bleed).
+  ctx.fillStyle = PAL.cream;
+  ctx.globalAlpha = 0.16;
+  ctx.beginPath();
+  ctx.arc(cx, cy, tip + 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Body: warm-steel radial gradient (glint upper-left → warm shadow lower-right).
+  const grd = ctx.createRadialGradient(cx - 15, cy - 17, 4, cx, cy, tip);
+  grd.addColorStop(0, PAL.cream);
+  grd.addColorStop(0.3, PAL.steel);
+  grd.addColorStop(1, PAL.steelDark);
+  toothPath();
+  ctx.fillStyle = grd;
+  ctx.fill();
+
+  // Inner ring + radial spokes + hub, in brown ink.
+  ctx.strokeStyle = PAL.woodDark;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, body - 4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 2.5;
+  for (let k = 0; k < 6; k += 1) {
+    const a = (k / 6) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * 9, cy + Math.sin(a) * 9);
+    ctx.lineTo(cx + Math.cos(a) * (body - 6), cy + Math.sin(a) * (body - 6));
+    ctx.stroke();
+  }
+  // Hub (arbor): brown disc with a light centre bore.
+  ctx.fillStyle = PAL.woodDark;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = PAL.steel;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ink the whole tooth silhouette last so the outline sits over everything.
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = PAL.woodDark;
+  toothPath();
+  ctx.stroke();
+
+  tex.refresh();
 };
 
 /**
@@ -221,22 +320,20 @@ export const buildBuildingAccents = (
     }
 
     case 'sawmill': {
-      // OPEN TIMBER YARD (H4 v4) — composed ENTIRELY from Sketch Town pack sprites,
-      // ZERO drawn geometry, and with NO abstract scaffold cage (the retired
-      // structure-high frame read as an orange box — the "still 2D and ugly"
-      // note). The manifest primary is a BIG LOG STACK (balcony-wood = a bundle of
-      // round sawn timbers); here we ground the rest of a working lumber yard around
-      // it: a low LEAN-TO awning (roof-slant) tucked over the back as the mill
-      // shelter, a SAWHORSE cutting trestle (structure-low) as the vertical work
-      // anchor, a finished-PLANK stack (bridge) at the output side, and extra
-      // logs/planks as the operation grows by tier. Every piece is a real object
-      // resting on the tile (addSurface's block-lift) — no floating, no cage. Reads
-      // "wood processing" and shares its grammar with no house / mill / kiln / bakery.
+      // SAW MILL (H5) — the identifying element is now the CIRCULAR SAW BLADE the
+      // user asked for, painted as a watercolour/ink TEXTURE (ensureSawBladeTexture)
+      // that matches the pack instead of the flat disc / drawn ellipse that clashed
+      // before. The blade rises out of the log the mill is cutting: the manifest
+      // primary (balcony-wood = a bundle of round sawn timbers) is the woodpile
+      // behind; a single "log being cut" (fence-wood) crosses the FRONT so the
+      // blade's lower third is occluded — it reads as HALF-BURIED, sawing through
+      // the log, not a sticker on the glass. A tidy finished-PLANK stack (bridge)
+      // sits to the output side. Everything grounds on the tile (no floating cage).
       const t = tier;
+      ensureSawBladeTexture(scene);
 
       // Yard-prop helper: a pack sprite resting ON the tile surface (addSurface's
-      // one-block lift), nudged by (dx,dy) and scaled to clutter size. No drawn
-      // shapes, no per-object allocation beyond the sprites themselves.
+      // one-block lift), nudged by (dx,dy) and scaled to clutter size.
       const yard = (
         key: Parameters<typeof addBlock>[1],
         dx: number,
@@ -251,44 +348,50 @@ export const buildBuildingAccents = (
         return o;
       };
 
-      // LEAN-TO AWNING (back shelter): a modest slant wedge tucked at the BACK-left
-      // and drawn BEHIND the front clutter, so it reads as the mill's timber-store
-      // roof rather than a dominant cottage roof. Its foot is occluded by the
-      // woodpile in front, so it never looks like it floats.
-      const awning = addBlock(scene, 'roof-slant-brown', sx - 9, sy - 28, BASE_DY - 18)
-        .setScale(0.74)
-        .setFlipX(true)
-        .setDepth(sy + 2.4);
-      objects.push(awning);
-      // Tier 3 grows the shelter with a second smaller lean-to over the plank side.
-      if (t >= 3) {
-        objects.push(
-          addBlock(scene, 'roof-slant-brown', sx + 22, sy - 20, BASE_DY - 10)
-            .setScale(0.5)
-            .setDepth(sy + 2.45)
+      // A spare LOG in the woodpile behind the blade (flanks the manifest primary),
+      // and a second course at tier >= 2 — a proper timber stack.
+      yard('balcony-wood', -26, 12, 0.6, sy + 2.3, true);
+      if (t >= 2) yard('balcony-wood', -30, 4, 0.5, sy + 2.35);
+
+      // THE SAW BLADE — the hero. Mounted rising from the top log, inside a
+      // FORESHORTENED container (scaleX < 1 + a slight lean) so the toothed disc
+      // sits in the log's iso side-plane rather than flat-on to the camera, yet
+      // stays round enough to read unmistakably as a saw. Drawn ABOVE the woodpile
+      // but BELOW the front cutting-log so its base is buried in the cut.
+      const face = scene.add.container(sx - 1, sy - 30);
+      face.setScale(0.9, 1);
+      face.setRotation(-0.14);
+      face.setDepth(sy + 2.7);
+      const blade = scene.add.image(0, 0, SAW_TEX).setDisplaySize(56, 56);
+      face.add(blade);
+      objects.push(face);
+      if (animate) {
+        // Extremely slow spin (~18s/rev) of the textured disc INSIDE the skewed
+        // container, so the sweep stays a stable foreshortened ellipse.
+        tweens.push(
+          scene.tweens.add({
+            targets: blade,
+            angle: 360,
+            duration: 18000,
+            repeat: -1,
+            ease: 'Linear',
+          })
         );
       }
 
-      // SAWHORSE + LOG BEING CUT (front-centre): the cutting station — a low timber
-      // trestle (structure-low) with a round log (fence-wood) laid across it. The
-      // vertical work anchor and the clearest "this is a sawmill" cue; drawn on top.
-      yard('structure-low', 0, 9, 0.48, sy + 3.7);
-      yard('fence-wood', 2, 0, 0.5, sy + 3.85);
+      // THE LOG BEING CUT (front-centre): a round log laid across the FRONT, drawn
+      // over the blade's lower third so the blade emerges through it — the clearest
+      // "this is a sawmill" cue. Grounds the blade so it never floats.
+      yard('fence-wood', 3, 2, 0.56, sy + 3.4);
 
-      // LOG STACK (front-left): round timbers waiting to be cut — flanks the manifest
-      // primary log for a proper woodpile. Grows a course at tier >= 2.
-      yard('balcony-wood', -27, 13, 0.64, sy + 3.4);
-      if (t >= 2) yard('balcony-wood', -33, 5, 0.52, sy + 3.45, true);
+      // FINISHED-PLANK stack (front-right): sawn boards leaving the yard. Grows a
+      // course at tier >= 2; a spare log joins at tier >= 3.
+      const planks = yard('bridge', 28, 13, 0.58, sy + 3.5);
+      if (t >= 2) yard('bridge', 31, 5, 0.5, sy + 3.55);
+      if (t >= 3) yard('balcony-wood', 32, -3, 0.44, sy + 3.6, true);
 
-      // PLANK STACK (front-right): the bridge sprite is a flat sawn-board deck —
-      // finished lumber leaving the yard. Second course + a spare log at higher tiers.
-      const planks = yard('bridge', 28, 14, 0.6, sy + 3.5);
-      if (t >= 2) yard('bridge', 31, 6, 0.52, sy + 3.55);
-      if (t >= 3) yard('balcony-wood', 31, -3, 0.46, sy + 3.6, true);
-
-      // Subtle, sprite-only "yard is working" accent: a gentle alpha shimmer on the
-      // finished plank stack (~2.4s). Reduced motion → static full alpha. No drawn
-      // shapes, and the single reusable tween is torn down with the structure.
+      // Subtle "yard is working" alpha shimmer on the plank stack (~2.4s). Reduced
+      // motion → static full alpha. The reusable tween is torn down with the tile.
       if (animate) {
         tweens.push(
           scene.tweens.add({
