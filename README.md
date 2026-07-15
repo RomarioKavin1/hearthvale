@@ -24,10 +24,13 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 - **12 buildings across three production chains** — grain, wood, and stone — plus a bakery, houses, a manor, and decor pieces.
 - **A living market** — sell your goods when the price is right; prices rise when the village runs short and fall when it is well stocked. Workshops process your own held goods first (free), then buy any remainder from the stockpile your sales fill.
 - **Golden Perfect Harvests** — ripe buildings sparkle gold now and then; tap during the sparkle for a double harvest.
+- **Ready-to-collect bubbles** — when something finishes, a parchment bubble with the good's icon bobs over the building (plus a soft gold ring on its tile). Tap the bubble itself to collect, or use Collect All.
+- **Building popovers** — tapping a building opens a compact card anchored right at the building (production, storage, collect / upgrade / paint / demolish, or Boost on a neighbour's) instead of a full-screen modal, so the village stays visible while you manage it.
+- **Peek through the crowd** — in a dense village, sprites blocking a selected tile fade automatically, and a Peek button ghosts every building for a few seconds so you can read the whole map.
 - **A Village Mural** — a mini r/place in every village: a shared 24×16 canvas anyone can paint, 12 pixels a day, from a wooden board on the plaza. Every subreddit's village ends up looking different at a glance.
 - **Villager outfits** — pick one of eight colours for your walker so "the little one in red is me"; the villagers strolling the plaza wear their owners' chosen outfits.
 - **A village crest** — moderators fly a crest on the Village Hall (six emblems × four banner colours) and it shows as a chip beside the village name on the feed splash.
-- **Ancient monuments** — every village is founded around a handful of seeded set pieces — a ruined watchtower, an old stone circle, an abandoned homestead, an ancient gate, a wild orchard, a wayfarer's camp — scattered on the map and unique to each subreddit. Tap one for its story; the land beneath a monument can't be built on, so they're permanent landmarks.
+- **Ancient ruins** — every village is founded around a handful of seeded set pieces — a crumbled wall, an old stone circle, an abandoned homestead, a fallen fence, a wild orchard, a dry well — scattered on the map and unique to each subreddit. Tap one for its story; the land beneath a ruin can't be built on, so they're permanent landmarks. In the Desert biome they re-skin to match the sands.
 - **A guided tour and quest journal** — a spotlight walkthrough covers your first session, and an 18-goal journal hands you the next objective (with rewards) for weeks.
 - **The Village Hall** — five levels built from planks and bricks, with pro-rata coin payouts, a village-wide production buff per level, land-ring unlocks, and naming rights for top contributors.
 - **Placement strategy** — a windmill by a wheat field earns more, so does a sawmill by a grove; river-side raw producers do best of all, and decor spreads a smaller bonus.
@@ -35,7 +38,7 @@ Hearthvale is a shared, persistent village that lives inside a single Reddit pos
 - **Check-in streaks and neighbour boosts** — reward showing up and helping other players' plots.
 - **Demolish and rebuild** — clear any building for a 50% coin refund, so no plot is ever a dead end.
 - **Leaderboards and flair** — village value, lifetime earnings, and Hall contributions, with titles to match.
-- **Two biomes, five themes** — moderators pick a look for the whole village: the four grass themes (Meadow, Autumn, Twilight, Pale) recolour the meadow world, and **Desert** swaps the entire terrain family for a sand biome — dunes, palms, oases and desert domes — while everyone's buildings and the Grand Keep stay the same. Monuments re-skin to match (a ruined tower becomes a fallen desert dome).
+- **Two biomes, five themes** — moderators pick a look for the whole village: the four grass themes (Meadow, Autumn, Twilight, Pale) recolour the meadow world, and **Desert** swaps the entire terrain family for a sand biome — dunes, palms, oases and desert domes — while everyone's buildings and the Village Hall stay the same.
 - **Per-subreddit customization** — moderators name their village, pick a colour theme + biome (Meadow, Autumn, Twilight, Pale, or Desert) and choose a crest emblem + banner colour from a mod menu form, and any player can paint their building roofs one of four colours.
 - **Mobile-first** — designed for the phone-sized Reddit feed, with a comfortable touch HUD.
 

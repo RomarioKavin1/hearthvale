@@ -3,3 +3,9 @@ dist/
 .superpowers/
 .devvit/
 .env
+
+# development/planning docs and video workspace (local only)
+docs/design/
+docs/plans/
+docs/submission/
+video/
