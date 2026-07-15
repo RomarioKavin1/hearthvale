@@ -18,6 +18,16 @@ body {
   font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
 }
 
+/* Form controls do NOT inherit font-family by default — without this every
+ * <button>/<input>/<select> falls back to the system font and reads off-brand. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  letter-spacing: inherit;
+}
+
 #app {
   position: fixed;
   inset: 0;

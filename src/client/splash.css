@@ -16,6 +16,15 @@
   src: url('/fonts/fredoka.woff2') format('woff2');
 }
 
+/* Form controls do not inherit font-family by default — keep splash buttons on Fredoka. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  letter-spacing: inherit;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

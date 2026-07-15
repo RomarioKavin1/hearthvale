@@ -934,7 +934,16 @@ const CSS = `
   letter-spacing: 0.3px;
 }
 .hv-fab .hv-icon-mask { color: var(--wood-dark); }
-.hv-fab .hv-fab-cap { font-size: 9px; letter-spacing: 0.2px; }
+.hv-fab .hv-fab-cap {
+  font-size: 9px;
+  letter-spacing: 0;
+  /* Labels must never escape the 56px plate: one line, clipped, tight leading
+   * ("Check in" used to wrap and its second line spilled below the border). */
+  white-space: nowrap;
+  max-width: 48px;
+  overflow: hidden;
+  line-height: 1;
+}
 .hv-fab.hv-primary { background: var(--glow); }
 .hv-fab:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--wood-dark); }
 .hv-fab[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: 0 3px 0 var(--wood-dark); transform: none; }
@@ -1977,6 +1986,12 @@ const CSS = `
   border-radius: 0;
   box-shadow: var(--shadow-drop);
   color: var(--ink);
+  /* A long label must never spill past the 9-slice plate. */
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hv-btn:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }
 .hv-btn[disabled] { box-shadow: var(--shadow-drop); transform: none; }
