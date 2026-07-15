@@ -1,40 +1,43 @@
-import { CATALOG, GRID_SIZE } from '../../shared/catalog';
+import { GRID_SIZE } from '../../shared/catalog';
 import type { StateResponse } from '../../shared/types';
 import { questSnapshot } from '../../shared/quests';
 import { isClaimable, isPlaza, neighbors, tileKey } from '../../shared/logic/grid';
 import { isRiver } from '../../shared/logic/expansion';
 import { isMonument } from '../../shared/logic/monuments';
 import { highlightTiles, tileToScreen } from '../events';
-import type { SpriteKey } from '../art/manifest';
 import { store } from '../state';
-import { clearNode, el, iconEl, setToastLift, todayUtc } from './dom';
+import { el, setToastLift } from './dom';
 
 /**
- * The guided walkthrough (U1) — an active coach-mark overlay that points new
- * players at the exact thing to do next. It complements the always-on Journal
- * banner: the banner says WHAT the current goal is; the walkthrough points WHERE
- * to tap, with a dimmed spotlight cut-out, a bouncing arrow and a small
- * parchment tip card (Kenney UI-pack art via CSS in dom.ts).
+ * The guided walkthrough (H8) — a mobile-first COACH BAR that teaches the loop by
+ * doing. A fixed, full-width parchment bar carries the current instruction; it
+ * docks ABOVE the FAB rail by default and flips to just-under-the-chips at the TOP
+ * whenever its own spotlight target would fall behind it, so it never covers the
+ * thing it points at. A non-blocking spotlight outline (no dim veil) rings the
+ * target on the map or in the HUD.
  *
- * Steps are derived from the same signals the Journal reads (owned plots, whether
- * a wheat field exists, collects, check-in, plus two "sheet seen" flags), so the
- * tour auto-advances the instant the player performs each action — nothing here
- * tracks progress independently. Targets resolve to either a DOM element (FABs,
- * the wheat-field build card, the Hall pill) or a scene tile (via the
- * `tileToScreen` bridge the Village scene registers); scene targets are tracked
- * live so the mark follows the map as it pans or zooms.
+ * Steps are EVENT-DRIVEN where the game gives a signal: the "settle", "plant",
+ * "collect", "sell" and "hall" steps complete the instant the player performs the
+ * real action (read from the same store signals the Journal uses, plus one
+ * "hall sheet seen" flag). Informational steps ("welcome", "grow", the final
+ * "journal" card) advance on a big Next / Got it button instead. Nothing here is a
+ * blocking veil, every step has a subtle Skip tour, a missing target simply hides
+ * the ring — so the tour can never softlock.
  *
- * The tour is one-shot per browser session (`sessionStorage`) and never shown to
- * veterans (anyone who has already earned/collected/levelled). It is skippable at
- * every step and degrades to a static arrow under `prefers-reduced-motion`.
+ * Scene targets resolve through the `tileToScreen` bridge the Village scene
+ * registers, so a spotlight tracks its tile as the map pans/zooms. The tour is
+ * one-shot per browser session (`sessionStorage`), never shown to veterans, and
+ * replayable from the "i" reference modal (see `replayTour`).
  */
 
 const DONE_KEY = 'hv-walkthrough-done';
-const WHEATFIELD_COST = CATALOG.wheatfield.cost;
 
 // One flag for the Hall step, which has no player-state signal of its own: set
 // when the Village Hall sheet first opens (see sheets.ts). Session-scoped.
 let hallSeen = false;
+/** Info-step acknowledgements (welcome / grow / journal) this session — an info
+ * step is "complete" once its Next button has been pressed. */
+const acknowledged = new Set<string>();
 
 /** Called by sheets.ts when the Market sheet opens: re-evaluate so the sell
  * step's coach mark can move from the Market FAB onto the wheat row/Sell button. */
@@ -55,13 +58,15 @@ type Target =
 
 type Step = {
   id: string;
-  /** Imperative, self-sufficient title — carries the instruction on its own so
-   * the compact mobile strip can drop the blurb entirely. */
+  /** 'event' steps complete when the player performs the real action (`done`);
+   * 'info' steps complete when the player presses the bar's Next button. */
+  kind: 'info' | 'event';
+  /** The bar's Next / Got it button label (info steps only). */
+  cta?: string;
+  /** Imperative, self-sufficient title — the headline instruction. */
   title: string;
   body: string;
-  /** Step glyph shown in the compact strip. */
-  icon: SpriteKey;
-  /** True once the player has performed this step's action. */
+  /** True once the player has performed this step's action (event steps only). */
   done: (data: StateResponse, snap: ReturnType<typeof questSnapshot>) => boolean;
   target: (data: StateResponse) => Target | null;
   /** Optional candidate tiles to pulse ("tap any of these — your choice"). When
@@ -134,25 +139,41 @@ const firstBuildingTile = (
   return t ? { x: t.x, y: t.y } : null;
 };
 
-const checkedInToday = (data: StateResponse): boolean =>
-  data.me?.lastCheckIn === todayUtc();
+/** The journal target: the expanded banner if it's on-screen, else the compact
+ * chip — whichever the collapsible column is currently showing. */
+const journalSelector = (): string => {
+  const banner = document.querySelector('.hv-jr');
+  if (banner instanceof HTMLElement && banner.offsetParent !== null) return '.hv-jr';
+  return '.hv-obj-jr';
+};
+
+const NEVER_DONE = (): boolean => false;
 
 const STEPS: Step[] = [
   {
-    id: 'found',
-    title: 'Tap any open grass to settle',
-    icon: 'icon-home',
-    body: 'Tap any open grass tile to found your homestead — your choice! Your House rises where you settle first.',
+    id: 'welcome',
+    kind: 'info',
+    cta: 'Begin',
+    title: 'Welcome to your village',
+    body: "This is your subreddit's shared village. Everything here is built by real people — including you, right now.",
+    done: NEVER_DONE,
+    target: () => null,
+  },
+  {
+    id: 'settle',
+    kind: 'event',
+    title: 'Found your homestead',
+    body: 'Tap the glowing tile to found your homestead. Your first claim is free and builds your House.',
     done: (_d, snap) => snap.owned >= 1,
     // No single arrow — the scene pulses a few candidate tiles instead.
     target: () => null,
     highlights: (data) => nearestClaimableKeys(data, 3),
   },
   {
-    id: 'field',
-    title: 'Settle a plot, then build a Wheat Field',
-    icon: 'icon-hammer',
-    body: `Pick a spot beside your house, settle it, then build a Wheat Field (${WHEATFIELD_COST} coins). Wheat feeds the whole village.`,
+    id: 'plant',
+    kind: 'event',
+    title: 'Plant a Wheat Field',
+    body: 'Plant a Wheat Field on the tile beside your house — tap it, then pick Wheat Field.',
     done: (_d, snap) => snap.wheatfieldBuilt,
     target: () => {
       // If the build sheet is open, point straight at the Wheat Field card.
@@ -168,10 +189,19 @@ const STEPS: Step[] = [
     },
   },
   {
+    id: 'grow',
+    kind: 'info',
+    cta: 'Got it',
+    title: 'Crops grow in real time',
+    body: 'Crops grow in real time — even while you are away. When something is ready, a bubble appears over it.',
+    done: NEVER_DONE,
+    target: () => null,
+  },
+  {
     id: 'collect',
-    title: 'Tap your field to collect the harvest',
-    icon: 'icon-coin',
-    body: 'Your field grows in real time. When a coin pops above it, tap the field to collect — the goods go into your wallet.',
+    kind: 'event',
+    title: 'Harvest your wheat',
+    body: 'Tap the bubble to harvest. See a golden sparkle? Tap during it for a DOUBLE harvest.',
     done: (data) => (data.me?.collects ?? 0) >= 1,
     target: () => ({
       kind: 'tile',
@@ -180,9 +210,9 @@ const STEPS: Step[] = [
   },
   {
     id: 'sell',
-    title: 'Open the Market and sell your wheat',
-    icon: 'icon-cart',
-    body: 'Open the Market and sell your wheat — coins arrive the moment you sell, and prices rise when the village runs short.',
+    kind: 'event',
+    title: 'Sell wheat at the Market',
+    body: "Sell your wheat at the Village Market. Prices rise when the village runs short — your sale fills the stockpile that powers everyone's workshops.",
     done: (data) => (data.me?.soldUnits ?? 0) >= 1,
     target: () => {
       // Deepest-available target: the wheat Sell button (row expanded), else the
@@ -197,18 +227,10 @@ const STEPS: Step[] = [
     },
   },
   {
-    id: 'checkin',
-    title: 'Tap the Hearth to check in',
-    icon: 'icon-streak',
-    body: 'Warm yourself at the Hearth each day for coins, XP and a growing streak.',
-    done: (data) => checkedInToday(data),
-    target: () => ({ kind: 'dom', selector: '[data-fab="checkin"]' }),
-  },
-  {
     id: 'hall',
-    title: 'Open the Village Hall to contribute',
-    icon: 'icon-trophy',
-    body: "The Village Hall is everyone's goal — contribute planks and bricks to level the whole village up together.",
+    kind: 'event',
+    title: 'The Village Hall',
+    body: "The Village Hall is the whole village's shared goal. It needs planks, bricks AND more villagers to level up — every level unlocks new land and perks for everyone. Invite your subreddit: the village literally cannot grow without more people.",
     done: () => hallSeen,
     target: () => {
       const pill = document.querySelector('.hv-keep-pill');
@@ -218,33 +240,40 @@ const STEPS: Step[] = [
       return { kind: 'dom', selector: '.hv-obj-hall' };
     },
   },
+  {
+    id: 'journal',
+    kind: 'info',
+    cta: 'Finish',
+    title: 'Your Journal knows the way',
+    body: "Your Journal always knows your next goal. The tour ends here — the village doesn't.",
+    done: NEVER_DONE,
+    target: () => ({ kind: 'dom', selector: journalSelector() }),
+  },
 ];
 
-// ── Overlay DOM ──────────────────────────────────────────────────────────────
+/** A step is complete when its real action fired (event) or its Next was pressed
+ * (info) — the tour advances to the first incomplete step. */
+const stepComplete = (
+  step: Step,
+  data: StateResponse,
+  snap: ReturnType<typeof questSnapshot>
+): boolean => (step.kind === 'info' ? acknowledged.has(step.id) : step.done(data, snap));
+
+
+// ── Coach-bar DOM ────────────────────────────────────────────────────────────
 
 let root: HTMLElement | undefined;
 let spot: HTMLElement | undefined;
 let arrow: HTMLElement | undefined;
-let card: HTMLElement | undefined;
-let icoWrap: HTMLElement | undefined;
-let stepLabel: HTMLElement | undefined;
+let bar: HTMLElement | undefined;
 let titleEl: HTMLElement | undefined;
 let bodyEl: HTMLElement | undefined;
 let dotsEl: HTMLElement | undefined;
-/** The minimized scroll chip that stands in for the whole card. */
-let chip: HTMLElement | undefined;
+let nextBtn: HTMLButtonElement | undefined;
 
 let activeIndex = -1;
 let rafId = 0;
 let decided = false;
-/** Compact strip: blurb revealed by tapping the strip; auto-collapses on step
- * change. Ignored on desktop (the full card always shows its body). */
-let expanded = false;
-/** Card collapsed to the scroll chip; auto-restores on step change. */
-let minimized = false;
-
-/** The narrow-screen strip mode: a slim single-line card with no blurb. */
-const isCompact = (): boolean => window.innerWidth <= 520 || window.innerHeight <= 600;
 /** The candidate-tile keys last handed to the scene, so we only redraw the
  * pulsing highlights when the set actually changes (not every store tick). */
 let lastHighlightSig: string | null = null;
@@ -265,6 +294,14 @@ const markDone = (): void => {
   }
 };
 
+const clearDone = (): void => {
+  try {
+    sessionStorage.removeItem(DONE_KEY);
+  } catch {
+    // ignore
+  }
+};
+
 /** A returning/experienced player who should never see the tour. */
 const isVeteran = (data: StateResponse): boolean => {
   const me = data.me;
@@ -282,55 +319,44 @@ const build = (mount: HTMLElement): void => {
   spot = el('div', { cls: 'hv-wt-spot' });
   arrow = el('div', { cls: 'hv-wt-arrow', attrs: { role: 'presentation' } });
 
-  icoWrap = el('span', { cls: 'hv-wt-ico', attrs: { role: 'presentation' } });
-  stepLabel = el('p', { cls: 'hv-wt-step', text: '' });
-  titleEl = el('p', { cls: 'hv-wt-title', text: '' });
-  bodyEl = el('p', { cls: 'hv-wt-body', text: '' });
-  dotsEl = el('div', { cls: 'hv-wt-dots' });
-  const main = el('div', { cls: 'hv-wt-main', children: [stepLabel, titleEl, bodyEl] });
-
-  const minBtn = el('button', {
-    cls: 'hv-wt-min',
-    text: '–',
-    attrs: { type: 'button', 'aria-label': 'Minimize tip', title: 'Minimize' },
-    on: {
-      click: (e: Event) => {
-        e.stopPropagation();
-        minimize();
-      },
-    },
+  dotsEl = el('div', { cls: 'hv-coach-dots', attrs: { role: 'presentation' } });
+  titleEl = el('p', { cls: 'hv-coach-title', text: '' });
+  bodyEl = el('p', { cls: 'hv-coach-body', text: '' });
+  const main = el('div', {
+    cls: 'hv-coach-main',
+    children: [dotsEl, titleEl, bodyEl],
   });
-  const skip = el('button', {
-    cls: 'hv-wt-skip',
-    text: 'Skip',
+
+  nextBtn = el('button', {
+    cls: 'hv-coach-next',
+    text: 'Next',
     attrs: { type: 'button' },
-    on: {
-      click: (e: Event) => {
-        e.stopPropagation();
-        complete();
-      },
-    },
+    on: { click: () => acknowledgeActive() },
   });
-  const foot = el('div', { cls: 'hv-wt-foot', children: [dotsEl, minBtn, skip] });
-  card = el('div', {
-    cls: 'hv-wt-card',
-    attrs: { role: 'dialog', 'aria-label': 'Getting started' },
-    children: [icoWrap, main, foot],
-    // Tapping the strip (anywhere but a button) toggles the blurb — compact only.
-    on: { click: () => toggleExpanded() },
+  const skipBtn = el('button', {
+    cls: 'hv-coach-skip',
+    text: 'Skip tour',
+    attrs: { type: 'button' },
+    on: { click: () => complete() },
+  });
+  const actions = el('div', {
+    cls: 'hv-coach-actions',
+    children: [nextBtn, skipBtn],
   });
 
-  // Minimized stand-in: a small scroll chip that restores the card on tap.
-  chip = el('button', {
-    cls: 'hv-wt-chip is-hidden',
-    attrs: { type: 'button', 'aria-label': 'Show getting-started tip', title: 'Getting started' },
-    children: [iconEl('icon-scroll', 20)],
-    on: { click: () => restore() },
+  bar = el('div', {
+    cls: 'hv-coach',
+    attrs: { role: 'dialog', 'aria-label': 'Getting started' },
+    children: [main, actions],
   });
+  // Presses on the bar must never leak to a window-level map handler (H8
+  // tap-through guard); pointerup is left alone so Phaser's release bookkeeping
+  // still runs (see the popover note in dom.ts).
+  bar.addEventListener('pointerdown', (e) => e.stopPropagation());
 
   root = el('div', {
     cls: 'hv-wt-root is-hidden',
-    children: [spot, arrow, card, chip],
+    children: [spot, arrow, bar],
   });
   mount.appendChild(root);
 
@@ -341,24 +367,6 @@ const build = (mount: HTMLElement): void => {
   window.addEventListener('resize', () => {
     if (activeIndex >= 0) position();
   });
-};
-
-/** Toggle the compact strip's blurb. No-op on desktop or while minimized. */
-const toggleExpanded = (): void => {
-  if (!isCompact() || minimized) return;
-  expanded = !expanded;
-  position();
-};
-
-const minimize = (): void => {
-  minimized = true;
-  expanded = false;
-  position();
-};
-
-const restore = (): void => {
-  minimized = false;
-  position();
 };
 
 const hide = (): void => {
@@ -373,6 +381,7 @@ const hide = (): void => {
   }
   lastHighlightSig = '';
   setToastLift(0);
+  setFabLift(0);
 };
 
 const complete = (): void => {
@@ -380,8 +389,15 @@ const complete = (): void => {
   hide();
 };
 
-/** The first step whose action the player hasn't performed yet (or null when the
- * whole tour is finished). */
+/** The current info step's Next button was pressed — mark it seen and advance. */
+const acknowledgeActive = (): void => {
+  const step = activeIndex >= 0 ? STEPS[activeIndex] : undefined;
+  if (!step || step.kind !== 'info') return;
+  acknowledged.add(step.id);
+  evaluate();
+};
+
+/** The first step the player hasn't completed yet (or null: tour finished). */
 const activeStep = (data: StateResponse): { step: Step; index: number } | null => {
   const me = data.me;
   if (!me) return null;
@@ -389,18 +405,18 @@ const activeStep = (data: StateResponse): { step: Step; index: number } | null =
   for (let i = 0; i < STEPS.length; i += 1) {
     const step = STEPS[i];
     if (!step) continue;
-    if (!step.done(data, snap)) return { step, index: i };
+    if (!stepComplete(step, data, snap)) return { step, index: i };
   }
   return null;
 };
 
 const setStepContent = (step: Step, index: number): void => {
-  if (!stepLabel || !titleEl || !bodyEl || !dotsEl || !icoWrap) return;
-  stepLabel.textContent = `Step ${index + 1} of ${STEPS.length}`;
+  if (!titleEl || !bodyEl || !dotsEl || !nextBtn) return;
   titleEl.textContent = step.title;
   bodyEl.textContent = step.body;
-  clearNode(icoWrap);
-  icoWrap.appendChild(iconEl(step.icon, 20));
+  nextBtn.textContent = step.cta ?? 'Next';
+  // Event steps advance on the real in-game action — no button for them.
+  nextBtn.style.display = step.kind === 'info' ? '' : 'none';
   const dots = dotsEl.children;
   for (let i = 0; i < dots.length; i += 1) {
     dots[i]?.classList.toggle('is-on', i === index);
@@ -429,15 +445,9 @@ const targetRect = (
   return { x: pt.x - w / 2, y: pt.y - h / 2, w, h };
 };
 
-/** Keep a bottom-docked tip card clear of the bottom-right FAB rail (≈2 FABs wide
- * plus margins) so it never overlaps — nor blocks — a FAB it points at. */
-const FAB_RAIL_CLEARANCE = 84;
-/** The minimized scroll-chip's box (a touch target ~like the journal chip). */
-const CHIP_SIZE = 46;
-
 /** Bottom edge (viewport px) of the top HUD chrome — the ink top bar plus the
- * objective/journal column — so a TOP-docked card parks just beneath it and never
- * lands over the objective chips. */
+ * objective/journal column — so the TOP-docked bar parks just beneath it and
+ * never lands over the chips. */
 const topChromeBottom = (): number => {
   let bottom = 52;
   for (const sel of ['.hv-topbar', '.hv-topleft']) {
@@ -450,24 +460,31 @@ const topChromeBottom = (): number => {
   return bottom;
 };
 
+/** While the bar is docked at the BOTTOM, the FAB rail is lifted above it via a
+ * CSS variable on the HUD host (see .hv-fabs in dom.ts), so the bar can span the
+ * full width without covering the FABs — and drops back when the bar leaves. */
+const setFabLift = (px: number): void => {
+  const hud = document.getElementById('hv-hud');
+  if (!hud) return;
+  if (px > 0) hud.style.setProperty('--coach-lift', `${Math.round(px)}px`);
+  else hud.style.removeProperty('--coach-lift');
+};
+
 /**
- * Place the spotlight ring, arrow and tip card (or its minimized chip) each frame.
+ * Place the spotlight ring, arrow and coach bar each frame.
  *
  * The ring is a purely visual OUTLINE (no dim veil, no fill — see dom.ts): it is
  * never an input gate, and it re-anchors or hides every frame as its target moves
- * or disappears (a collapsed pill leaves no hollow box).
+ * or disappears (a missing target leaves no hollow box — and never blocks).
  *
- * The card is target-aware: it docks in the vertical half OPPOSITE the current
- * target so it never sits over the thing it points at. A target in the bottom half
- * (or none — the "found" step highlights tiles with no single rect) parks the card
- * at TOP, just below the HUD chrome and centered; a target in the top half parks it
- * at BOTTOM, left-aligned and width-capped so the bottom-right FAB rail stays fully
- * tappable. On a phone (`isCompact`) the card renders as a slim single-line strip;
- * minimized, it collapses to a small scroll chip docked at the card's own edge.
+ * The bar is target-aware: it docks at the BOTTOM by default (lifting the FAB
+ * rail above itself), but the moment its spotlight target sits in the bottom 45%
+ * of the viewport it flips to the TOP, just under the HUD chips — the bar must
+ * never cover its own target.
  */
 const position = (): void => {
   const data = store.data;
-  if (!root || !spot || !arrow || !card || !chip || activeIndex < 0 || !data) return;
+  if (!root || !spot || !arrow || !bar || activeIndex < 0 || !data) return;
   const step = STEPS[activeIndex];
   if (!step) return;
   const target = step.target(data);
@@ -476,15 +493,7 @@ const position = (): void => {
   const modalNode = document.querySelector('.hv-backdrop.is-open .hv-modal');
   const modal = modalNode instanceof HTMLElement ? modalNode : null;
 
-  const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const compact = isCompact();
-
-  // View-mode classes: strip vs comfortable card, blurb reveal, minimized chip.
-  card.classList.toggle('hv-wt-compact', compact);
-  card.classList.toggle('is-expanded', compact && expanded);
-  card.classList.toggle('is-hidden', minimized);
-  chip.classList.toggle('is-hidden', !minimized);
 
   // ── Spotlight ring + arrow ──────────────────────────────────────────────
   // A scene tile whose sheet is now open is hidden behind the modal — drop the
@@ -507,49 +516,26 @@ const position = (): void => {
     arrow.style.top = `${above ? rect.y - 26 : rect.y + rect.h + 26}px`;
   }
 
-  // ── Card / chip slot ─────────────────────────────────────────────────────
-  let atBottom = false;
-  if (modal !== null) {
-    // Docked to the modal's top — a fixed slot above the header banner, never
-    // over the modal body (so it can't land on the sell steppers after a row
-    // expands). Clamped below the top bar so it can't clip off-screen.
-    card.style.maxWidth = '';
-    const cw = card.offsetWidth || 280;
-    const ch = card.offsetHeight || 150;
-    const mr = modal.getBoundingClientRect();
-    const left = Math.max(12, Math.min(mr.left + (mr.width - cw) / 2, vw - cw - 12));
-    const top = Math.max(56, mr.top - ch - 8);
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
-    chip.style.left = `${Math.max(12, Math.min(mr.right - CHIP_SIZE - 4, vw - CHIP_SIZE - 12))}px`;
-    chip.style.top = `${Math.max(56, mr.top - CHIP_SIZE - 8)}px`;
+  // ── Bar dock ─────────────────────────────────────────────────────────────
+  // A visible target whose centre falls in the bottom 45% of the viewport (FABs,
+  // a low tile) pushes the bar to the TOP so it can never cover it. Otherwise the
+  // bar rests at the bottom, full width, lifting the FAB rail above itself.
+  const targetCy = rect ? rect.y + rect.h / 2 : null;
+  const wantTop = targetCy !== null && targetCy > vh * 0.55;
+  bar.classList.toggle('is-top', wantTop);
+  const bh = bar.offsetHeight || 120;
+  if (wantTop) {
+    bar.style.top = `${topChromeBottom() + 8}px`;
+    bar.style.bottom = 'auto';
+    setToastLift(0);
+    setFabLift(0);
   } else {
-    // Dock opposite the target's half. A target centered in the TOP half ⇒ card
-    // at BOTTOM; a target in the BOTTOM half (or no rect) ⇒ card at TOP.
-    atBottom = rect !== null && rect.y + rect.h / 2 < vh * 0.5;
-    card.style.maxWidth = atBottom
-      ? `${Math.max(160, vw - 12 - FAB_RAIL_CLEARANCE)}px`
-      : '';
-    if (atBottom) {
-      const ch = card.offsetHeight || 150;
-      card.style.left = '12px';
-      card.style.top = `${vh - ch - 24}px`;
-      chip.style.left = '12px';
-      chip.style.top = `${vh - CHIP_SIZE - 24}px`;
-    } else {
-      const topY = topChromeBottom() + 8;
-      const cw = card.offsetWidth || 280;
-      card.style.left = `${Math.max(12, Math.min((vw - cw) / 2, vw - cw - 12))}px`;
-      card.style.top = `${topY}px`;
-      chip.style.left = `${Math.max(12, (vw - CHIP_SIZE) / 2)}px`;
-      chip.style.top = `${topY}px`;
-    }
+    bar.style.top = 'auto';
+    bar.style.bottom = '0px';
+    // Gain toasts + the FAB rail both hop above the bottom-docked bar.
+    setToastLift(bh + 14);
+    setFabLift(bh + 2);
   }
-
-  // Raise the toast stack above whatever is bottom-docked (card or chip) so gain
-  // toasts never clip behind it; reset otherwise.
-  const bottomH = minimized ? CHIP_SIZE : card.offsetHeight || 150;
-  setToastLift(atBottom ? bottomH + 36 : 0);
 };
 
 /** Reposition every frame while a step is active (cheap: a few reads + writes),
@@ -576,12 +562,7 @@ const show = (step: Step, index: number): void => {
   const changed = index !== activeIndex;
   activeIndex = index;
   root.classList.remove('is-hidden');
-  if (changed) {
-    // A new step resets the transient view flags: blurb collapses, card restores.
-    expanded = false;
-    minimized = false;
-    setStepContent(step, index);
-  }
+  if (changed) setStepContent(step, index);
   applyHighlights(step, store.data);
   position();
   if (!rafId) rafId = requestAnimationFrame(loop);
@@ -612,6 +593,18 @@ const evaluate = (): void => {
     return;
   }
   show(active.step, active.index);
+};
+
+/** Restart the tour from the top (the "Replay tour" action in the info modal).
+ * Clears the done flag + this session's info-step acknowledgements; event steps
+ * the player has genuinely completed stay completed (the tour fast-forwards
+ * through them), so a veteran replaying sees the steps still relevant to them —
+ * and the veteran gate is bypassed (an explicit replay is always honoured). */
+export const replayTour = (): void => {
+  clearDone();
+  acknowledged.clear();
+  decided = true;
+  evaluate();
 };
 
 /** Mount the walkthrough overlay and begin mirroring the store. Call once, after

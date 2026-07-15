@@ -33,8 +33,8 @@ import {
   promptLogin,
   withTip,
 } from './dom';
-import { action, openSheet, refreshSheet, setSheetTitle, toast } from './sheet';
-import { noteHallOpened, noteMarketOpened } from './walkthrough';
+import { action, closeSheet, openSheet, refreshSheet, setSheetTitle, toast } from './sheet';
+import { noteHallOpened, noteMarketOpened, replayTour } from './walkthrough';
 
 /**
  * The "menu" sheets: the read-only Village Market info panel (prices, trends,
@@ -807,6 +807,21 @@ export const openHowToSheet = (): void => {
         wrap.appendChild(details);
       });
       body.appendChild(wrap);
+      // Replay the guided tour (H8): closes this sheet, then restarts the coach
+      // bar from the top (event steps already performed fast-forward).
+      const replay = el('button', {
+        cls: 'hv-btn hv-btn-ghost',
+        attrs: { type: 'button' },
+        children: [iconEl('icon-scroll', 16), el('span', { text: 'Replay tour' })],
+        on: {
+          click: () => {
+            closeSheet();
+            replayTour();
+          },
+        },
+      });
+      replay.style.marginTop = '12px';
+      body.appendChild(replay);
     },
   });
 };

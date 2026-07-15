@@ -82,6 +82,7 @@ import {
 import { monuments } from '../../shared/logic/monuments';
 import type { PlacedMonument } from '../../shared/logic/monuments';
 import { store } from '../state';
+import { renderScale } from '../dpr';
 import { api } from '../net';
 import { GOOD_SPRITE, openPopoverTileKey, toast } from '../ui/dom';
 import { openMuralSheet } from '../ui/mural';
@@ -89,6 +90,7 @@ import type { HvPeekState, HvTileSelected } from '../events';
 import {
   HV_CLEAR_SELECTION,
   HV_FOCUS_TILE,
+  HV_OVERLAY_OPENED,
   HV_PEEK_STATE,
   HV_TILE_SELECTED,
   HV_TOGGLE_PEEK,
@@ -270,6 +272,10 @@ const ZOOM_MAX = 2.4;
  * pan). Touch fingers jitter more than a mouse, so this sits above the old 8px
  * so real taps aren't lost — yet well below a deliberate drag. */
 const TAP_SLOP = 14;
+/** Both canvas pointers must have reported activity (down or move) within this
+ * window before a two-finger gesture is treated as a pinch (H8). A pointer the
+ * browser silently abandoned goes stale past this, so it can never fake a pinch. */
+const PINCH_FRESH_MS = 500;
 /** Occlusion relief (H2). Alpha a structure fades to while it occludes the open
  * tile sheet's tile; the alpha ALL structures fade to in peek/ghost mode; the
  * peek auto-off delay; and the fade tween length. */
@@ -460,6 +466,21 @@ export class Village extends Scene {
    * lifted — used to suppress the tap (a pinch must never collect a tile) and to
    * re-seed the single-finger pan anchor when one finger lifts (no jump). */
   private multiTouch = false;
+  /**
+   * Authoritative set of pointers currently pressed that ORIGINATED on the game
+   * canvas, keyed by pointerId → last-activity timestamp (H8). Maintained via
+   * capture-phase document/window listeners so a release the DOM consumed (an
+   * overlay ate the pointerup, or a handler called stopPropagation) still prunes
+   * the entry. Phaser's own `input.activePointer` bookkeeping can go stale in that
+   * case — leaving a phantom second finger that turns the next single-finger drag
+   * into a spurious pinch-zoom — so pinch is gated on THIS set, never on Phaser's.
+   */
+  private canvasPointers: Map<number, number> = new Map();
+  private onDocPointerDownCap: (e: Event) => void = () => {};
+  private onWinPointerMoveCap: (e: Event) => void = () => {};
+  private onWinPointerUpCap: (e: Event) => void = () => {};
+  private onWinBlur: () => void = () => {};
+  private onOverlayOpened: () => void = () => {};
 
   private onStoreChange: () => void = () => {};
   private onVisibility: () => void = () => {};
@@ -494,7 +515,9 @@ export class Village extends Scene {
     this.loading = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'Loading village…', {
         fontFamily: 'Fredoka, ui-rounded, system-ui, sans-serif',
-        fontSize: '16px',
+        // Screen-fixed text: one game px is one DEVICE px (H8 HiDPI), so the
+        // CSS-feel size scales by dpr to stay 16 CSS px on every screen.
+        fontSize: `${Math.round(16 * renderScale())}px`,
         color: PAL.cream,
       })
       .setOrigin(0.5)
@@ -1706,9 +1729,11 @@ export class Village extends Scene {
   }
 
   /** Clamped counter-scale so the ready bubble stays legible zoomed out and never
-   * balloons zoomed in (screen size ≈ constant across the mid zoom range). */
+   * balloons zoomed in (screen size ≈ constant across the mid zoom range). The
+   * camera zoom carries the HiDPI factor (H8) — divide it out so the bubble's
+   * CSS-pixel footprint matches on 1× and Retina screens alike. */
   private bubbleScale(): number {
-    const z = this.cameras.main.zoom || 1;
+    const z = (this.cameras.main.zoom || 1) / renderScale();
     return Phaser.Math.Clamp(1 / z, BUBBLE_SCALE_LO, BUBBLE_SCALE_HI);
   }
 
@@ -1883,12 +1908,15 @@ export class Village extends Scene {
     const vw = this.scale.width;
     const vh = this.scale.height;
     // Leave room for the top bar + floating action buttons overlaying the canvas.
-    const marginX = 48;
-    const marginY = 130;
+    // Viewport, margins and the zoom clamp are all in DEVICE px now (H8 HiDPI):
+    // multiplying the CSS-feel values by dpr keeps the framing identical.
+    const dpr = renderScale();
+    const marginX = 48 * dpr;
+    const marginY = 130 * dpr;
     const zoom = Phaser.Math.Clamp(
       Math.min((vw - marginX) / contentW, (vh - marginY) / contentH),
-      0.5,
-      1.2
+      0.5 * dpr,
+      1.2 * dpr
     );
     cam.setZoom(zoom);
 
@@ -1911,7 +1939,15 @@ export class Village extends Scene {
       container?.classList.toggle('is-grabbing', on);
     };
 
+    this.installPointerTracking();
+
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // Architectural tap-through guard (H8): ignore any press whose real DOM
+      // target was a HUD overlay (popover swatch, sheet, coach bar, toast) rather
+      // than the game canvas. Those events reach Phaser only when an overlay layer
+      // failed to catch them; treating them as map presses selected the tile
+      // *under* the overlay. A canvas-origin press proceeds as a map drag/tap.
+      if (!this.isCanvasEvent(p.event)) return;
       this.dragging = true;
       this.startX = p.x;
       this.startY = p.y;
@@ -1927,7 +1963,16 @@ export class Village extends Scene {
       const p1 = this.input.pointer1;
       const p2 = this.input.pointer2;
       const cam = this.cameras.main;
-      if (p1.isDown && p2.isDown) {
+      // Pinch requires TWO real canvas fingers by our own reliable accounting —
+      // Phaser's p1/p2.isDown can be stale after a DOM-consumed release (H8).
+      if (this.canvasPointers.size >= 2 && p1.isDown && p2.isDown) {
+        // A stale finger the browser abandoned won't have moved recently; require
+        // both pointers fresh before zooming, so a frozen pointer can't pinch.
+        if (!this.pinchPointersFresh()) {
+          this.pinchDist = 0;
+          this.dragging = false;
+          return;
+        }
         // ── Pinch: zoom anchored at the finger midpoint + two-finger drag pan ──
         this.multiTouch = true;
         const midX = (p1.x + p2.x) / 2;
@@ -1939,10 +1984,11 @@ export class Village extends Scene {
           cam.scrollX -= (midX - this.lastMidX) / cam.zoom;
           cam.scrollY -= (midY - this.lastMidY) / cam.zoom;
           // Zoom about the midpoint: the world point under the fingers stays put.
+          // Clamps ride the HiDPI factor — camera zoom is in device px (H8).
           const nextZoom = Phaser.Math.Clamp(
             (cam.zoom * d) / this.pinchDist,
-            ZOOM_MIN,
-            ZOOM_MAX
+            ZOOM_MIN * renderScale(),
+            ZOOM_MAX * renderScale()
           );
           this.zoomAround(nextZoom, midX, midY);
         }
@@ -1981,17 +2027,22 @@ export class Village extends Scene {
       const wasMulti = this.multiTouch;
       this.pinchDist = 0;
       this.dragging = false;
-      // Only clear the multi-touch guard once BOTH fingers are up, so lifting the
-      // first finger of a pinch can't be mistaken for a tap on the second lift.
-      if (!this.input.pointer1.isDown && !this.input.pointer2.isDown) {
+      // Only clear the multi-touch guard once EVERY canvas finger is up, so lifting
+      // the first finger of a pinch can't be mistaken for a tap on the second lift.
+      // Our own set (pruned in capture phase before this handler) is authoritative
+      // — Phaser's pointer1/pointer2 can lie after a DOM-consumed release (H8).
+      if (this.canvasPointers.size === 0) {
         this.multiTouch = false;
         setGrabbing(false);
       }
       if (wasMulti || !wasDrag) return;
+      // Only a press that began on the canvas is a map tap (tap-through guard).
+      if (!this.isCanvasEvent(p.event)) return;
       // Manhattan move threshold — kept generous so a slightly-smudged touch tap
-      // still selects a tile rather than being swallowed as a pan.
+      // still selects a tile rather than being swallowed as a pan. Pointer coords
+      // are device px (H8 HiDPI), so the CSS-feel slop scales by dpr.
       const moved = Math.abs(p.x - this.startX) + Math.abs(p.y - this.startY);
-      if (moved < TAP_SLOP) this.handleTap(p);
+      if (moved < TAP_SLOP * renderScale()) this.handleTap(p);
     });
 
     this.input.on(
@@ -2003,12 +2054,101 @@ export class Village extends Scene {
         // stays fixed, matching the pinch feel.
         const nextZoom = Phaser.Math.Clamp(
           cam.zoom * (dy > 0 ? 0.9 : 1.1),
-          ZOOM_MIN,
-          ZOOM_MAX
+          ZOOM_MIN * renderScale(),
+          ZOOM_MAX * renderScale()
         );
         this.zoomAround(nextZoom, p.x, p.y);
       }
     );
+  }
+
+  /** True when a DOM event's real target is the game canvas (not a HUD overlay). */
+  private isCanvasEvent(ev: Event | null | undefined): boolean {
+    // No DOM event (synthetic) — trust it as canvas-originated (desktop wheel etc).
+    if (!ev) return true;
+    return ev.target === this.game.canvas;
+  }
+
+  /** Both live canvas pointers have reported activity within PINCH_FRESH_MS. */
+  private pinchPointersFresh(): boolean {
+    if (this.canvasPointers.size < 2) return false;
+    const now = performance.now();
+    let fresh = 0;
+    for (const t of this.canvasPointers.values()) {
+      if (now - t <= PINCH_FRESH_MS) fresh += 1;
+    }
+    return fresh >= 2;
+  }
+
+  /**
+   * Install capture-phase pointer bookkeeping (H8). We track, by pointerId, every
+   * press that began on the CANVAS and prune it the instant the browser reports a
+   * release — even one a DOM overlay consumed (capture phase runs before the
+   * target, so `stopPropagation` on a widget can't hide it from us). This set is
+   * the single source of truth for "how many fingers are really on the map", so a
+   * stale Phaser pointer can never manufacture a phantom pinch. blur / tab-hide
+   * clear everything since the OS may swallow the matching releases entirely.
+   */
+  private installPointerTracking(): void {
+    const canvas = this.game.canvas;
+    this.onDocPointerDownCap = (e: Event): void => {
+      if (!(e instanceof PointerEvent)) return;
+      if (e.target === canvas) {
+        this.canvasPointers.set(e.pointerId, performance.now());
+      } else {
+        // A press that began on a DOM overlay is never part of a map gesture.
+        this.canvasPointers.delete(e.pointerId);
+      }
+    };
+    this.onWinPointerMoveCap = (e: Event): void => {
+      if (!(e instanceof PointerEvent)) return;
+      if (this.canvasPointers.has(e.pointerId)) {
+        this.canvasPointers.set(e.pointerId, performance.now());
+      }
+    };
+    this.onWinPointerUpCap = (e: Event): void => {
+      if (!(e instanceof PointerEvent)) return;
+      this.canvasPointers.delete(e.pointerId);
+      if (this.canvasPointers.size < 2) this.pinchDist = 0;
+    };
+    this.onWinBlur = (): void => this.resetGesture();
+    this.onOverlayOpened = (): void => this.resetGesture();
+
+    document.addEventListener('pointerdown', this.onDocPointerDownCap, true);
+    window.addEventListener('pointermove', this.onWinPointerMoveCap, true);
+    window.addEventListener('pointerup', this.onWinPointerUpCap, true);
+    window.addEventListener('pointercancel', this.onWinPointerUpCap, true);
+    window.addEventListener('blur', this.onWinBlur);
+    window.addEventListener(HV_OVERLAY_OPENED, this.onOverlayOpened);
+  }
+
+  private removePointerTracking(): void {
+    document.removeEventListener('pointerdown', this.onDocPointerDownCap, true);
+    window.removeEventListener('pointermove', this.onWinPointerMoveCap, true);
+    window.removeEventListener('pointerup', this.onWinPointerUpCap, true);
+    window.removeEventListener('pointercancel', this.onWinPointerUpCap, true);
+    window.removeEventListener('blur', this.onWinBlur);
+    window.removeEventListener(HV_OVERLAY_OPENED, this.onOverlayOpened);
+  }
+
+  /** Hard-reset all drag/pinch gesture state (H8). Called when a DOM overlay opens
+   * over the canvas, on window blur, and on tab-hide — any moment a press might end
+   * without the scene seeing its release. Anchors re-seed on the next move. */
+  private resetGesture(): void {
+    // Heal Phaser's own bookkeeping: if OUR tracker says no finger is on the
+    // canvas, any Phaser touch pointer still flagged down is definitionally
+    // stale (its release was consumed by the DOM / stolen by the OS). Left
+    // alone it makes the next single-finger drag read as a two-pointer pinch.
+    if (this.canvasPointers.size === 0) {
+      for (const stale of [this.input.pointer1, this.input.pointer2]) {
+        if (stale?.isDown) stale.reset();
+      }
+    }
+    this.dragging = false;
+    this.pinchDist = 0;
+    this.multiTouch = false;
+    this.canvasPointers.clear();
+    document.getElementById('game-container')?.classList.remove('is-grabbing');
   }
 
   /**
@@ -2408,6 +2548,10 @@ export class Village extends Scene {
     this.onVisibility = () => {
       if (document.visibilityState === 'visible') {
         void store.refresh().catch(() => {});
+      } else {
+        // Tab hidden: the OS may swallow the pointer releases, so clear any
+        // in-flight drag/pinch to avoid a stale gesture on return (H8).
+        this.resetGesture();
       }
     };
     document.addEventListener('visibilitychange', this.onVisibility);
@@ -2649,6 +2793,9 @@ export class Village extends Scene {
         color: '#ffd700',
         stroke: PAL.ink,
         strokeThickness: 4,
+        // World-plane text: render its internal canvas at dpr× so the camera's
+        // HiDPI zoom doesn't upscale a 1× raster (H8 crispness).
+        resolution: renderScale(),
       })
       .setOrigin(0.5, 1)
       .setDepth(EFFECT_DEPTH + 1);
@@ -2744,6 +2891,8 @@ export class Village extends Scene {
         color: PAL.cream,
         backgroundColor: PAL.ink,
         padding: { x: 4, y: 2 },
+        // Crisp under the HiDPI camera zoom (see perfectText note).
+        resolution: renderScale(),
       })
       .setOrigin(0.5, 1)
       .setDepth(EFFECT_DEPTH);
@@ -3343,6 +3492,7 @@ export class Village extends Scene {
       this.conn = undefined;
     }
     store.off('change', this.onStoreChange);
+    this.removePointerTracking();
     window.removeEventListener(HV_FOCUS_TILE, this.onFocusTile);
     window.removeEventListener(HV_CLEAR_SELECTION, this.onClearSelection);
     window.removeEventListener(HV_TOGGLE_PEEK, this.onTogglePeek);

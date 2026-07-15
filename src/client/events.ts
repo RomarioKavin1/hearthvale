@@ -26,6 +26,15 @@ export const HV_TILE_SELECTED = 'hv:tileSelected';
 export const HV_CLEAR_SELECTION = 'hv:clearSelection';
 export const HV_FOCUS_TILE = 'hv:focusTile';
 
+/**
+ * Fired (on `window`) whenever a DOM overlay opens ABOVE the canvas — the tile
+ * popover, a modal sheet, or the tutorial coach bar. The Village scene listens
+ * and HARD-RESETS its drag/pinch gesture state (H8): a touch that ends on a
+ * freshly-opened overlay would otherwise leave Phaser's pointer bookkeeping stale
+ * and turn the next single-finger drag into a phantom pinch-zoom.
+ */
+export const HV_OVERLAY_OPENED = 'hv:overlayOpened';
+
 /** Fired by the HUD's Peek FAB to ask the scene to toggle ghost (see-through)
  * mode; and back by the scene to reflect the live peek state on the FAB. */
 export const HV_TOGGLE_PEEK = 'hv:togglePeek';
@@ -106,4 +115,10 @@ export const setCollapseObjectives = (fn: CollapseFn | null): void => {
 /** The scene calls this on a canvas pointerdown to collapse the objectives column. */
 export const requestCollapseObjectives = (): void => {
   collapseObjectivesFn?.();
+};
+
+/** Announce that a DOM overlay just opened (popover / sheet / coach bar), so the
+ * scene can hard-reset its drag/pinch state (H8 phantom-pinch guard). */
+export const notifyOverlayOpened = (): void => {
+  window.dispatchEvent(new CustomEvent(HV_OVERLAY_OPENED));
 };

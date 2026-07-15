@@ -1,4 +1,4 @@
-import { HV_CLEAR_SELECTION } from '../events';
+import { HV_CLEAR_SELECTION, notifyOverlayOpened } from '../events';
 import { store } from '../state';
 import {
   clearNode,
@@ -133,6 +133,9 @@ export const openSheet = (spec: SheetSpec): void => {
   }
 
   backdrop.classList.add('is-open');
+  // A modal overlay just opened over the canvas — reset any half-formed map
+  // gesture so it can't strand a stale Phaser pointer (H8 phantom-pinch guard).
+  notifyOverlayOpened();
   if (!wasOpen) document.addEventListener('keydown', onKeydown);
 };
 

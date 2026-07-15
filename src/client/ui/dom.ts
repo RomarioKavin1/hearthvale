@@ -26,7 +26,7 @@ import {
 } from '../../shared/logic/economy';
 import { store } from '../state';
 import type { ScreenPoint } from '../events';
-import { HV_CLEAR_SELECTION } from '../events';
+import { HV_CLEAR_SELECTION, notifyOverlayOpened } from '../events';
 
 /**
  * DOM utility layer for the HUD (Task 6).
@@ -649,6 +649,11 @@ export const mountPopoverRoot = (parent: HTMLElement): void => {
     attrs: { role: 'dialog' },
     children: [close, popBody, popArrow],
   });
+  // Every press that lands on the card is consumed here so it can never bubble
+  // out to a window-level map handler (H8 tap-through). pointerup is deliberately
+  // NOT stopped — Phaser resets its pointer bookkeeping on the window pointerup,
+  // and swallowing it would strand a stale pointer (the phantom-pinch trigger).
+  popCard.addEventListener('pointerdown', (e) => e.stopPropagation());
   parent.appendChild(popCard);
   document.addEventListener('pointerdown', onPopPointerDown, true);
   document.addEventListener('keydown', onPopKeydown);
@@ -679,6 +684,9 @@ export const openPopover = (spec: PopoverSpec): void => {
   }
   popCard.classList.add('is-open');
   positionPopover();
+  // An overlay just opened over the canvas — clear any half-formed map gesture so
+  // the tap that opened this popover can't linger as a stale Phaser pointer (H8).
+  notifyOverlayOpened();
   if (popRaf === undefined) popRaf = requestAnimationFrame(popLoop);
 };
 
@@ -936,11 +944,14 @@ const CSS = `
 .hv-fabs {
   position: absolute;
   right: calc(var(--sar) + 12px);
-  bottom: calc(var(--sab) + 12px);
+  /* --coach-lift raises the rail above the tutorial coach bar while the bar is
+   * docked at the bottom (set inline on #hv-hud by walkthrough.ts; 0 otherwise). */
+  bottom: calc(var(--sab) + 12px + var(--coach-lift, 0px));
   display: flex;
   flex-direction: column;
   gap: 12px;
   align-items: flex-end;
+  transition: bottom 180ms ease-out;
 }
 .hv-fab {
   pointer-events: auto;
@@ -1106,6 +1117,11 @@ const CSS = `
  * A compact parchment card that points at a map tile. No backdrop — it sits over
  * the map (z above the modal layer) but only the card itself catches input. */
 .hv-pop {
+  /* The HUD host is pointer-events:none; the popover MUST re-enable input on the
+   * whole card (H8). Without this the card + its swatches/rows inherit none, so a
+   * tap on a roof-paint swatch fell straight through to the map canvas and
+   * selected the tile underneath (tap-through). */
+  pointer-events: auto;
   position: fixed;
   left: 0; top: 0;
   z-index: 30;
@@ -2346,118 +2362,91 @@ const CSS = `
   0%, 100% { transform: translate(-50%, -50%) rotate(var(--rot)) translateY(0); }
   50% { transform: translate(-50%, -50%) rotate(var(--rot)) translateY(9px); }
 }
-.hv-wt-card {
+/* The coach BAR (H8): a fixed full-width parchment strip, safe-area aware.
+ * Docked at the bottom by default (the FAB rail lifts above it via --coach-lift);
+ * flips to the top (.is-top) whenever its spotlight target sits in the lower
+ * 45% of the viewport, so the bar can never cover the thing it points at. */
+.hv-coach {
   position: absolute;
   pointer-events: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: min(280px, calc(100vw - 28px));
-  padding: 14px 14px 12px;
+  align-items: center;
+  gap: 10px;
+  max-height: 130px;
+  padding: 12px calc(var(--sar) + 14px) calc(var(--sab) + 10px) calc(var(--sal) + 14px);
   background: transparent;
-  border: 16px solid transparent;
+  border: 14px solid transparent;
   border-image: url('/ui/panel_brown.png') 16 fill stretch;
   color: var(--ink);
-  box-shadow: 0 8px 22px rgba(46,40,55,0.45);
-  transition: left 180ms ease-out, top 180ms ease-out;
+  box-shadow: 0 -6px 18px rgba(46,40,55,0.35);
 }
-.hv-wt-main { display: flex; flex-direction: column; min-width: 0; }
-/* Step glyph — shown only in the compact strip. */
-.hv-wt-ico { display: none; flex: 0 0 auto; align-items: center; justify-content: center; color: var(--wood-dark); }
-.hv-wt-step {
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  opacity: 0.6;
-  margin: 0 0 4px;
-}
-.hv-wt-title { font-size: 15px; font-weight: 800; line-height: 1.25; margin: 0 0 5px; letter-spacing: 0.2px; }
-.hv-wt-body { font-size: 12.5px; line-height: 1.45; margin: 0 0 4px; }
-.hv-wt-foot { display: flex; align-items: center; gap: 8px; }
-.hv-wt-dots { display: inline-flex; gap: 5px; margin-right: auto; }
+.hv-coach.is-top { bottom: auto; box-shadow: 0 6px 18px rgba(46,40,55,0.35); }
+.hv-coach-main { flex: 1 1 auto; min-width: 0; }
+.hv-coach-dots { display: flex; gap: 5px; margin: 0 0 5px; }
 .hv-wt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wood-dark); opacity: 0.28; }
 .hv-wt-dot.is-on { opacity: 1; background: var(--glow); }
-.hv-wt-min {
-  pointer-events: auto;
+.hv-coach-title {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+  margin: 0 0 3px;
+}
+.hv-coach-body {
+  font-size: 14px;
+  line-height: 1.35;
+  margin: 0;
+  /* Never truncate mid-word; long steps (the Hall) wrap up to 4 lines. */
+  overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.hv-coach-actions {
   flex: 0 0 auto;
-  width: 24px; height: 24px;
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 0 0 2px;
-  background: transparent;
-  border: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.hv-coach-next {
+  pointer-events: auto;
+  min-height: 48px;
+  min-width: 96px;
+  padding: 0 18px;
+  background: var(--glow);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: 0 4px 0 var(--wood-dark);
   font-family: inherit;
-  font-size: 20px; font-weight: 800; line-height: 1;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
   color: var(--ink);
-  opacity: 0.7;
   cursor: url('/cursors/hand_point.png') 12 4, pointer;
 }
-.hv-wt-min:hover { opacity: 1; }
-.hv-wt-skip {
+.hv-coach-next:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--wood-dark); }
+.hv-coach-skip {
   pointer-events: auto;
-  flex: 0 0 auto;
-  padding: 5px 10px;
+  min-height: 28px;
+  padding: 4px 8px;
   background: transparent;
   border: 0;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--ink);
-  opacity: 0.7;
+  opacity: 0.65;
   cursor: url('/cursors/hand_point.png') 12 4, pointer;
 }
-.hv-wt-skip:hover { opacity: 1; }
-
-/* Compact strip (phones): a slim single line — icon + imperative title + dots +
- * minimize + Skip, no blurb. Tapping the strip reveals the blurb (is-expanded). */
-.hv-wt-compact {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  width: min(460px, calc(100vw - 16px));
-  max-height: 44px;
-  border-width: 8px;
-  padding: 2px 8px;
-  cursor: url('/cursors/hand_point.png') 12 4, pointer;
-}
-.hv-wt-compact.is-expanded { max-height: none; }
-.hv-wt-compact .hv-wt-ico { display: inline-flex; }
-.hv-wt-compact .hv-wt-step { display: none; }
-.hv-wt-compact .hv-wt-body { display: none; }
-.hv-wt-compact .hv-wt-main { flex: 1 1 auto; }
-.hv-wt-compact .hv-wt-title {
-  font-size: 13px; margin: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hv-wt-compact .hv-wt-foot { flex: 0 0 auto; }
-.hv-wt-compact.is-expanded { align-items: flex-start; }
-.hv-wt-compact.is-expanded .hv-wt-main { padding-top: 2px; }
-.hv-wt-compact.is-expanded .hv-wt-title { white-space: normal; }
-.hv-wt-compact.is-expanded .hv-wt-body { display: block; margin: 4px 0 0; }
-
-/* Minimized: the card collapses to a small scroll chip at its docked edge. */
-.hv-wt-card.is-hidden, .hv-wt-chip.is-hidden { display: none; }
-.hv-wt-chip {
-  position: absolute;
-  pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px; height: 46px;
-  padding: 0;
-  background: var(--cream);
-  border: 3px solid var(--ink);
-  border-radius: 12px;
-  box-shadow: 0 3px 0 var(--wood-dark);
-  color: var(--wood-dark);
-  cursor: url('/cursors/hand_point.png') 12 4, pointer;
-  transition: left 180ms ease-out, top 180ms ease-out;
-}
-.hv-wt-chip:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark); }
-.hv-wt-chip .hv-icon-mask { color: var(--wood-dark); }
+.hv-coach-skip:hover { opacity: 1; }
 
 @media (prefers-reduced-motion: reduce) {
   .hv-wt-arrow { animation: none; }
-  .hv-wt-spot, .hv-wt-arrow, .hv-wt-card, .hv-wt-chip { transition: none; }
+  .hv-wt-spot, .hv-wt-arrow, .hv-fabs { transition: none; }
 }
 `;
