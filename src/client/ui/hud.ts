@@ -44,7 +44,12 @@ import {
 import type { ShareKind } from '../net';
 import { mountSheetRoot } from './sheet';
 import { openMenuSheet, openTileSheet } from './panels';
-import { openKeepSheet, openLevelSheet, openMarketSheet } from './sheets';
+import {
+  openHowToSheet,
+  openKeepSheet,
+  openLevelSheet,
+  openMarketSheet,
+} from './sheets';
 import { mountJournal } from './journal';
 import { initWalkthrough } from './walkthrough';
 
@@ -232,7 +237,16 @@ const buildTopBar = (): HTMLElement => {
     left.appendChild(built.chip);
   }
 
-  // Right: level ring (logged in) or the sign-in pill (logged out).
+  // Right: an always-visible info button, then the level ring (logged in) or the
+  // sign-in pill (logged out). The info button opens the full "How Hearthvale
+  // works" reference — the same sheet the Menu's "How to play" entry opens.
+  const infoBtn = el('button', {
+    cls: 'hv-info-btn',
+    attrs: { type: 'button', 'aria-label': 'How Hearthvale works' },
+    children: [el('span', { cls: 'hv-info-glyph', text: 'i' })],
+    on: { click: () => openHowToSheet() },
+  });
+  withTip(infoBtn, 'How Hearthvale works');
   buildRing();
   signinPill = el('button', {
     cls: 'hv-signin-pill',
@@ -240,7 +254,10 @@ const buildTopBar = (): HTMLElement => {
     children: [iconEl('icon-home', 15), el('span', { text: 'Sign in to build' })],
     on: { click: () => promptLogin() },
   });
-  const right = el('div', { cls: 'hv-tb-right', children: [ring, signinPill] });
+  const right = el('div', {
+    cls: 'hv-tb-right',
+    children: [infoBtn, ring, signinPill],
+  });
 
   // Center: ONE compact "Today" chip covering weather + festival.
   todayIcon = iconEl('icon-star', 14);

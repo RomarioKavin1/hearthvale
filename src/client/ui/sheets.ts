@@ -663,47 +663,150 @@ export const openLeaderboardsSheet = (): void => {
     });
 };
 
-// ── How to play ──────────────────────────────────────────────────────────────
+// ── How Hearthvale works (the complete reference) ─────────────────────────────
 
-const HOW_STEPS: Array<{ icon: SpriteKey; title: string; text: string }> = [
-  { icon: 'icon-home', title: 'Settle', text: 'Tap open grass to claim a plot — you can settle two plots right from the start. Your first claim builds your House.' },
-  { icon: 'furrow-crop-wheat', title: 'Plant', text: 'Build a Wheat Field, Grove or Quarry and let it ripen.' },
-  { icon: 'icon-coin', title: 'Tap to collect', text: 'Tap a ready building to gather its goods — they go straight into your wallet.' },
-  { icon: 'icon-cart', title: 'Sell at the Market', text: 'Sell your goods at the Market — prices rise when the village runs short, and processors buy from the stockpile your sales fill.' },
-  { icon: 'icon-star', title: 'Perfect Harvest', text: 'Ripe buildings sparkle gold now and then — tap during the sparkle for a double harvest.' },
-  { icon: 'icon-hammer', title: 'Grow', text: 'Spend coins on more buildings and upgrades. Workshops like the windmill grind YOUR OWN goods first (free), then buy any extra from the village stockpile. Sawmills and kilns make planks and bricks.' },
-  { icon: 'icon-trophy', title: 'Raise the Village Hall', text: 'Contribute planks and bricks together — every Hall level boosts everyone and unlocks new land.' },
+/**
+ * The single source of truth for "how the game works", opened both from the
+ * always-visible HUD info button and the Menu's "How to play" entry. Every
+ * number here is pulled from the shared catalog / economy / quest logic so the
+ * reference never drifts from the rules the server actually runs. Rendered as a
+ * tap-to-expand accordion (native <details>) so the sheet stays scannable.
+ */
+const INFO_SECTIONS: Array<{
+  icon: SpriteKey;
+  title: string;
+  lines: string[];
+}> = [
+  {
+    icon: 'icon-home',
+    title: 'Getting started',
+    lines: [
+      'Tap open grass to settle a plot. Your first claim is free and raises your House.',
+      'You begin with two plots, so you can start a field and a grove before any level-up.',
+      'A short guided tour points out settling, planting, collecting and selling.',
+    ],
+  },
+  {
+    icon: 'icon-hammer',
+    title: 'Buildings & chains',
+    lines: [
+      'Raw producers: Wheat Field (60c, wheat), Forester’s Grove (80c, logs), Quarry (150c, stone, Lv2).',
+      'Processors: Windmill (220c, 2 wheat to 1 flour, Lv2), Sawmill (300c, 2 logs to 1 planks, Lv3), Mason’s Kiln (400c, 2 stone to 1 bricks, Lv4).',
+      'Bakery (350c, Lv3) bakes 1 flour into 12 coins. Homes: House (free first claim), Manor (1600c, Lv9). Decor: Old Well (120c), Tree Grove (60c), Stone Fountain (700c).',
+      'Chains: wheat to flour to bread; logs to planks; stone to bricks.',
+      'Wallet-first: a workshop grinds YOUR OWN goods free first, then buys any extra from the shared stockpile.',
+      'Upgrade to tier 2 (x2.5 cost, x2.2 rate) or tier 3 (x6 cost, x4 rate). Demolishing refunds 50%.',
+    ],
+  },
+  {
+    icon: 'icon-coin',
+    title: 'Ready & collecting',
+    lines: [
+      'Ripe buildings float a bubble. Tap the bubble or the building to collect straight into your wallet.',
+      'Collect All (the coin button) gathers every ready building at once.',
+      'Perfect Harvest: a ripe building sparkles gold about every 11s for ~1.8s. Tap during the sparkle to double that harvest.',
+    ],
+  },
+  {
+    icon: 'icon-cart',
+    title: 'Market',
+    lines: [
+      'Marginal pricing: every unit you sell nudges the price. Prices rise when the village is short and fall on a surplus.',
+      'Base prices: wheat 3, logs 4, stone 5, flour 9, planks 12, bricks 15.',
+      'Selling fills the shared stockpile that workshops buy from. A "village needs" note flags goods running low.',
+    ],
+  },
+  {
+    icon: 'icon-trophy',
+    title: 'Village Hall',
+    lines: [
+      'Five levels, each needing planks + bricks AND a house population: L1 30p/15b, 2 houses; L2 60/40, 4; L3 120/80, 8; L4 200/140, 14; L5 320/220, 22.',
+      'Perks stack: +3% village production per level, +1 plot for everyone from L3, daily boost limit 5 rising to 7 at L4.',
+      'Each level pays a coin pot (level n = n x 400c) split by contribution (at least 25c each). The top contributor names the level, which also unlocks a wider land ring.',
+    ],
+  },
+  {
+    icon: 'icon-star',
+    title: 'Placement bonuses',
+    lines: [
+      'Windmill by a Wheat Field, Bakery by a Windmill, Sawmill by a Grove, Kiln by a Quarry: +25% each.',
+      'A raw producer beside the river: +50%.',
+      'Adjacent decor: +0.1 x tier each (cap +60%, doubled during a decor festival). Total placement bonus caps at +100%.',
+    ],
+  },
+  {
+    icon: 'icon-streak',
+    title: 'Daily rhythm',
+    lines: [
+      'Weather rolls daily: sunny +10%, harvest moon +50%, rain +30% to wheat and logs, clear neutral.',
+      'A festival auto-rotates coins to raw to processed to decor, giving that category +50% for the day.',
+      'Check in daily for 25c x your streak day (up to 175c at a 7-day streak) plus 50 XP. Missing a day resets the streak.',
+      'A fresh daily post keeps the village in the feed.',
+    ],
+  },
+  {
+    icon: 'icon-scroll',
+    title: 'Quests & journal',
+    lines: [
+      'The Journal runs a quest chain (found homestead, build a field, first harvest, Perfect Harvest, sell 10, and on). Claim each for coins and XP.',
+      'XP levels you up: level N needs 50 x N x (N-1) XP, up to level 15. New levels unlock buildings and plots.',
+      'Titles by level: Settler, Builder (3), Architect (6), Alderman (9), Founder (12).',
+    ],
+  },
+  {
+    icon: 'icon-question',
+    title: 'Expression',
+    lines: [
+      'Village Mural: a shared 24 x 16 canvas. Paint up to 12 pixels a day, and painting over others is allowed.',
+      'Personalise with 8 villager outfits and roof paint (25c). Mods set the crest, village name and theme or biome.',
+    ],
+  },
+  {
+    icon: 'icon-check',
+    title: 'Neighbours',
+    lines: [
+      'Boost a neighbour’s building: it produces double for 30 minutes and you earn 15c + 5 XP.',
+      'The daily boost limit is 5, rising to 7 once the Village Hall reaches level 4.',
+      'Leaderboards rank villagers by Value, Earned and Contributed.',
+    ],
+  },
+  {
+    icon: 'icon-arrow-up',
+    title: 'Land',
+    lines: [
+      'Land opens in rings as the Village Hall levels up, not from raw population. Locked tiles reject building until the Hall unlocks them.',
+      'Ruins (crumbled walls, old stone circles, dry wells) are scenic landmarks you cannot build on.',
+      'The river and the central village square are also unbuildable.',
+    ],
+  },
 ];
 
 export const openHowToSheet = (): void => {
   openSheet({
-    title: 'How to play',
+    title: 'How Hearthvale works',
     render: (body) => {
-      const how = el('div', { cls: 'hv-how' });
-      for (const step of HOW_STEPS) {
-        how.appendChild(
-          el('div', {
-            cls: 'hv-how-step',
-            children: [
-              el('div', { cls: 'hv-how-emoji', children: [iconEl(step.icon, 24)] }),
-              el('div', {
-                cls: 'hv-how-txt',
-                children: [
-                  el('b', { text: step.title }),
-                  el('span', { text: step.text }),
-                ],
-              }),
-            ],
-          })
-        );
-      }
-      how.appendChild(
-        el('p', {
-          cls: 'hv-note',
-          text: 'Check in daily for a growing coin streak, and boost a neighbour’s building for a little bonus.',
-        })
-      );
-      body.appendChild(how);
+      const wrap = el('div', { cls: 'hv-info' });
+      INFO_SECTIONS.forEach((sec, i) => {
+        const bodyLines = el('div', {
+          cls: 'hv-info-body',
+          children: sec.lines.map((t) => el('p', { text: t })),
+        });
+        const summary = el('summary', {
+          cls: 'hv-info-sum',
+          children: [
+            el('span', { cls: 'hv-info-ic', children: [iconEl(sec.icon, 18)] }),
+            el('span', { cls: 'hv-info-ttl', text: sec.title }),
+          ],
+        });
+        const details = el('details', {
+          cls: 'hv-info-sec',
+          children: [summary, bodyLines],
+        });
+        // Open the first section so the sheet never reads as an empty list.
+        if (i === 0) details.setAttribute('open', '');
+        wrap.appendChild(details);
+      });
+      body.appendChild(wrap);
     },
   });
 };

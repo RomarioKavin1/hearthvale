@@ -860,6 +860,34 @@ const CSS = `
 }
 .hv-ring:active { transform: translateY(1px); }
 
+/* Always-visible info button (opens the "How Hearthvale works" reference). A
+ * round parchment plate matching the coin/good chips; sits left of the level
+ * ring in the top-right group. */
+.hv-info-btn {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  width: 40px; height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  background: var(--cream);
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.28);
+  color: var(--wood-dark);
+  cursor: pointer;
+}
+.hv-info-btn:active { transform: translateY(1px); box-shadow: none; }
+.hv-info-glyph {
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
+  font-weight: 800;
+  font-style: italic;
+  font-size: 19px;
+  line-height: 1;
+}
+
 /* Weather + festival: cream-on-ink chips that truncate gracefully. */
 .hv-tb-chip {
   display: inline-flex;
@@ -944,13 +972,13 @@ const CSS = `
   overflow: hidden;
   line-height: 1;
 }
-.hv-fab.hv-primary { background: var(--glow); }
+.hv-fab.hv-primary { background-color: var(--glow); }
 .hv-fab:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--wood-dark); }
 .hv-fab[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: 0 3px 0 var(--wood-dark); transform: none; }
-.hv-fab.is-checked { background: var(--wall-shade); }
+.hv-fab.is-checked { background-color: var(--wall-shade); }
 .hv-fab.is-checked .hv-icon-mask { color: var(--ink); opacity: 0.6; }
 /* Peek FAB while ghost mode is active — a glowing "on" state. */
-.hv-fab.is-peeking { background: var(--glow); box-shadow: 0 0 0 2px var(--glow), 0 3px 0 var(--wood-dark); }
+.hv-fab.is-peeking { background-color: var(--glow); box-shadow: 0 0 0 2px var(--glow), 0 3px 0 var(--wood-dark); }
 .hv-fab.is-peeking .hv-icon-mask { color: var(--ink); }
 /* Below a short viewport, drop the labels for icon-only FABs. */
 @media (max-height: 399px) {
@@ -1398,6 +1426,63 @@ const CSS = `
 }
 .hv-how-txt { font-size: 13.5px; line-height: 1.4; }
 .hv-how-txt b { display: block; font-size: 14.5px; letter-spacing: 0.3px; }
+
+/* ── "How Hearthvale works" reference: a tap-to-expand accordion ── */
+.hv-info { display: flex; flex-direction: column; gap: 8px; }
+.hv-info-sec {
+  background: var(--parch-face);
+  border: 2px solid var(--parch-edge);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.hv-info-sum {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  font-weight: 800;
+  font-size: 14.5px;
+  letter-spacing: 0.3px;
+  color: var(--wood-dark);
+  cursor: pointer;
+  /* Hide the native disclosure triangle; the chevron below stands in for it. */
+  list-style: none;
+}
+.hv-info-sum::-webkit-details-marker { display: none; }
+.hv-info-ic {
+  flex: 0 0 auto;
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.hv-info-ic .hv-icon-mask { color: var(--wood-dark); }
+.hv-info-ttl { flex: 1 1 auto; }
+/* Chevron cue: points right when closed, rotates down when the section is open. */
+.hv-info-sum::after {
+  content: '';
+  flex: 0 0 auto;
+  width: 8px; height: 8px;
+  border-right: 2px solid var(--wood-dark);
+  border-bottom: 2px solid var(--wood-dark);
+  transform: rotate(-45deg);
+  transition: transform 140ms ease-out;
+}
+.hv-info-sec[open] .hv-info-sum::after { transform: rotate(45deg); }
+.hv-info-body {
+  padding: 0 13px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hv-info-body p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hv-info-sum::after { transition: none; }
+}
 
 /* ── Top-left column: Journal banner + Keep pill ─────────── */
 .hv-topleft {
@@ -2089,9 +2174,15 @@ const CSS = `
  *   icon centred with a tiny label below, badge top-right, pressed sinks. ── */
 .hv-fab {
   background: transparent;
+  /* Round the box to match the wood-plate art's corners and clip the tint to
+   * the inner face. Without this, any state fill/ring (primary gold, checked
+   * grey, peek glow) painted the SQUARE border-box and bled past the rounded
+   * border-image as a "residue rectangle" at the corners. padding-box keeps the
+   * tint inside the wood frame; the matching radius rounds the glow box-shadows. */
   border: 9px solid transparent;
   border-image: var(--ui-brown) 8 fill stretch;
-  border-radius: 0;
+  border-radius: 14px;
+  background-clip: padding-box;
   box-shadow: var(--shadow-drop);
 }
 .hv-fab:active { transform: translateY(3px); box-shadow: var(--shadow-drop-lo); }

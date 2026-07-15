@@ -266,6 +266,10 @@ const BUILDING_SCALE = 0.88;
  * (was 2.0) for a good look at a dense village, and slightly further out. */
 const ZOOM_MIN = 0.42;
 const ZOOM_MAX = 2.4;
+/** Manhattan pixel budget a press may wander and still count as a tap (not a
+ * pan). Touch fingers jitter more than a mouse, so this sits above the old 8px
+ * so real taps aren't lost — yet well below a deliberate drag. */
+const TAP_SLOP = 14;
 /** Occlusion relief (H2). Alpha a structure fades to while it occludes the open
  * tile sheet's tile; the alpha ALL structures fade to in peek/ghost mode; the
  * peek auto-off delay; and the fade tween length. */
@@ -448,6 +452,14 @@ export class Village extends Scene {
   private lastX = 0;
   private lastY = 0;
   private pinchDist = 0;
+  /** Screen-space midpoint of the two pinch fingers on the previous frame, so a
+   * two-finger drag pans by the midpoint delta (and the zoom anchors there). */
+  private lastMidX = 0;
+  private lastMidY = 0;
+  /** True from the moment a gesture has two fingers down until every finger has
+   * lifted — used to suppress the tap (a pinch must never collect a tile) and to
+   * re-seed the single-finger pan anchor when one finger lifts (no jump). */
+  private multiTouch = false;
 
   private onStoreChange: () => void = () => {};
   private onVisibility: () => void = () => {};
@@ -1914,22 +1926,50 @@ export class Village extends Scene {
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       const p1 = this.input.pointer1;
       const p2 = this.input.pointer2;
+      const cam = this.cameras.main;
       if (p1.isDown && p2.isDown) {
+        // ── Pinch: zoom anchored at the finger midpoint + two-finger drag pan ──
+        this.multiTouch = true;
+        const midX = (p1.x + p2.x) / 2;
+        const midY = (p1.y + p2.y) / 2;
         const d = Phaser.Math.Distance.Between(p1.x, p1.y, p2.x, p2.y);
         if (this.pinchDist > 0) {
-          const cam = this.cameras.main;
-          cam.setZoom(
-            Phaser.Math.Clamp((cam.zoom * d) / this.pinchDist, ZOOM_MIN, ZOOM_MAX)
+          // Pan by however far the midpoint slid (world px = screen px / zoom),
+          // so a two-finger drag moves the map 1:1 while pinching.
+          cam.scrollX -= (midX - this.lastMidX) / cam.zoom;
+          cam.scrollY -= (midY - this.lastMidY) / cam.zoom;
+          // Zoom about the midpoint: the world point under the fingers stays put.
+          const nextZoom = Phaser.Math.Clamp(
+            (cam.zoom * d) / this.pinchDist,
+            ZOOM_MIN,
+            ZOOM_MAX
           );
+          this.zoomAround(nextZoom, midX, midY);
         }
         this.pinchDist = d;
+        this.lastMidX = midX;
+        this.lastMidY = midY;
         this.dragging = false;
+        setGrabbing(true);
         return;
       }
-      this.pinchDist = 0;
+      if (this.pinchDist > 0) {
+        // One finger just lifted mid-pinch. Re-seed the pan anchor to the finger
+        // still down so the next move pans smoothly instead of snapping by the
+        // stale delta accumulated during the pinch.
+        this.pinchDist = 0;
+        if (p.isDown) {
+          this.dragging = true;
+          this.startX = p.x;
+          this.startY = p.y;
+          this.lastX = p.x;
+          this.lastY = p.y;
+        }
+        return;
+      }
       if (!p.isDown || !this.dragging) return;
       setGrabbing(true);
-      const cam = this.cameras.main;
+      // Divide by zoom so a drag tracks the world 1:1 at every zoom level.
       cam.scrollX -= (p.x - this.lastX) / cam.zoom;
       cam.scrollY -= (p.y - this.lastY) / cam.zoom;
       this.lastX = p.x;
@@ -1937,25 +1977,55 @@ export class Village extends Scene {
     });
 
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      setGrabbing(false);
-      const wasPinch = this.pinchDist > 0;
       const wasDrag = this.dragging;
+      const wasMulti = this.multiTouch;
       this.pinchDist = 0;
       this.dragging = false;
-      if (wasPinch || !wasDrag) return;
+      // Only clear the multi-touch guard once BOTH fingers are up, so lifting the
+      // first finger of a pinch can't be mistaken for a tap on the second lift.
+      if (!this.input.pointer1.isDown && !this.input.pointer2.isDown) {
+        this.multiTouch = false;
+        setGrabbing(false);
+      }
+      if (wasMulti || !wasDrag) return;
+      // Manhattan move threshold — kept generous so a slightly-smudged touch tap
+      // still selects a tile rather than being swallowed as a pan.
       const moved = Math.abs(p.x - this.startX) + Math.abs(p.y - this.startY);
-      if (moved < 8) this.handleTap(p);
+      if (moved < TAP_SLOP) this.handleTap(p);
     });
 
     this.input.on(
       'wheel',
-      (_p: unknown, _o: unknown, _dx: number, dy: number) => {
+      (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
         const cam = this.cameras.main;
-        cam.setZoom(
-          Phaser.Math.Clamp(cam.zoom * (dy > 0 ? 0.9 : 1.1), ZOOM_MIN, ZOOM_MAX)
+        // Multiplicative step keeps every wheel tick the same *proportional* zoom
+        // (smooth across the range); anchor at the cursor so the point under it
+        // stays fixed, matching the pinch feel.
+        const nextZoom = Phaser.Math.Clamp(
+          cam.zoom * (dy > 0 ? 0.9 : 1.1),
+          ZOOM_MIN,
+          ZOOM_MAX
         );
+        this.zoomAround(nextZoom, p.x, p.y);
       }
     );
+  }
+
+  /**
+   * Set the camera zoom while keeping the world point currently under screen
+   * pixel (sx, sy) pinned to that same pixel — the anchored-zoom every map app
+   * expects. Without this, setZoom() alone pivots about the screen centre, so
+   * the spot under the fingers/cursor drifts away as you zoom. The camera's
+   * setBounds() clamp still applies afterward, so the map can't escape at edges.
+   */
+  private zoomAround(nextZoom: number, sx: number, sy: number): void {
+    const cam = this.cameras.main;
+    if (nextZoom === cam.zoom) return;
+    const before = cam.getWorldPoint(sx, sy);
+    cam.setZoom(nextZoom);
+    const after = cam.getWorldPoint(sx, sy);
+    cam.scrollX += before.x - after.x;
+    cam.scrollY += before.y - after.y;
   }
 
   private handleTap(p: Phaser.Input.Pointer): void {
