@@ -83,7 +83,7 @@ import { monuments } from '../../shared/logic/monuments';
 import type { PlacedMonument } from '../../shared/logic/monuments';
 import { store } from '../state';
 import { api } from '../net';
-import { toast } from '../ui/dom';
+import { GOOD_SPRITE, openPopoverTileKey, toast } from '../ui/dom';
 import { openMuralSheet } from '../ui/mural';
 import type { HvPeekState, HvTileSelected } from '../events';
 import {
@@ -213,10 +213,17 @@ type TileView = {
   claim: Phaser.GameObjects.Image | undefined;
   goldPip: Phaser.GameObjects.Image | undefined;
   finder: Phaser.GameObjects.Rectangle | undefined;
-  pip: Phaser.GameObjects.Image | undefined;
-  /** Perfect-Harvest golden sparkle (S2): pre-created alongside the ready pip and
-   * toggled visible during the tile's golden window by a light 300ms timer, so the
-   * window's sub-2s resolution costs zero per-frame object churn. */
+  /** Ready-to-collect marker (H4) — a bobbing parchment-circle "good bubble"
+   * (badge + shadow + the ready good's icon) floating in the screen plane above
+   * the building, replacing the old subtle coin pip. Counter-scaled against the
+   * camera zoom (update()) and hidden while this tile's popover is open. */
+  bubble: Phaser.GameObjects.Container | undefined;
+  /** Ready-to-collect marker (H4) — a soft gold iso ellipse pulsing on the tile
+   * beneath the structure (depth just above ground), the ground half of the pair. */
+  readyRing: Phaser.GameObjects.Graphics | undefined;
+  /** Perfect-Harvest golden sparkle (S2): pre-created alongside the ready bubble and
+   * toggled visible ON TOP of it during the tile's golden window by a light 300ms
+   * timer, so the window's sub-2s resolution costs zero per-frame object churn. */
   sparkle: Phaser.GameObjects.Image | undefined;
   boostPip: Phaser.GameObjects.Image | undefined;
   growthKey: SpriteKey | undefined;
@@ -268,6 +275,24 @@ const PEEK_MS = 6000;
 const FADE_MS = 120;
 const EFFECT_DEPTH = 100000;
 const PIP_DEPTH = 50000;
+/** Ready-to-collect "good bubble" (H4): the parchment badge diameter + the good
+ * icon inside it (screen px at zoom 1), the gentle sine-bob amplitude (world px),
+ * and how far above the tile the bubble floats. */
+const BUBBLE_BADGE_PX = 34;
+const BUBBLE_ICON_PX = 22;
+const BUBBLE_BOB = 5;
+const BUBBLE_DY = TILE_H * 1.9;
+/** Counter-scale clamp for the bubble so it stays readable zoomed out yet never
+ * balloons zoomed in: bubbleScale = clamp(1 / cameraZoom, lo, hi). */
+const BUBBLE_SCALE_LO = 0.7;
+const BUBBLE_SCALE_HI = 1.55;
+/** Ready-to-collect ground ring (H4): a soft gold iso ellipse on the tile under
+ * the building, pulsing between these alphas (static mid value under reduced
+ * motion), sized to sit inside the tile diamond. */
+const RING_RX = TILE_W * 0.4;
+const RING_RY = TILE_H * 0.4;
+const RING_ALPHA_LO = 0.15;
+const RING_ALPHA_HI = 0.45;
 /** Drifting cloud shadows sit above the diorama but below pips/effects. */
 const CLOUD_DEPTH = 40000;
 /**
@@ -1130,6 +1155,10 @@ export class Village extends Scene {
     // Keep the villager headcount in step with the population (house count),
     // spawning/despawning only on an actual change — never a random lifecycle.
     this.reconcileWalkers();
+    // H4: recompute ready markers on every state change (not just the 2s timer) so
+    // a collect — via the popover Collect or the Collect-all FAB — clears the
+    // bubble + ground ring INSTANTLY rather than lingering until the next tick.
+    this.updatePips();
   }
 
   private newView(): TileView {
@@ -1141,7 +1170,8 @@ export class Village extends Scene {
       claim: undefined,
       goldPip: undefined,
       finder: undefined,
-      pip: undefined,
+      bubble: undefined,
+      readyRing: undefined,
       sparkle: undefined,
       boostPip: undefined,
       growthKey: undefined,
@@ -1551,7 +1581,8 @@ export class Village extends Scene {
     if (!view) return;
     this.clearStructural(view);
     this.killButterfliesAt(key);
-    for (const pip of [view.finder, view.pip, view.sparkle, view.boostPip]) {
+    this.clearReadyMarker(view);
+    for (const pip of [view.finder, view.boostPip]) {
       if (pip) {
         this.tweens.killTweensOf(pip);
         pip.destroy();
@@ -1589,7 +1620,9 @@ export class Village extends Scene {
         this.drawCropBase(view, sx, sy, g.frac);
       }
 
-      // Ready-to-collect coin pip (own producing tiles with pending output).
+      // Ready-to-collect marker (H4): a bobbing parchment "good bubble" above the
+      // building + a pulsing gold ground ring on its tile, on own producing tiles
+      // that have pending output. Replaces the old subtle coin pip.
       let ready = false;
       if (tile.owner === this.me && tile.buildingId !== undefined && now >= tile.readyAt) {
         const adj = adjacencyBonus(data.grid, x, y, fest, now);
@@ -1597,24 +1630,18 @@ export class Village extends Scene {
         // (windmill/sawmill/kiln/bakery), whose output is capped by available
         // input goods, are recognised as ready — matching the Collect badge's
         // readyCount. An emptyStockpile() here made every processor read as 0
-        // output, so its pending-production pip never appeared.
+        // output, so its ready marker never appeared.
         const { gained } = accrue(tile, now, fest, adj, data.city.weather, data.stockpile, data.me?.wallet);
         ready = gained.coins + goodsTotal(gained.goods) > 0;
       }
-      if (ready && !view.pip) {
-        view.pip = this.spawnPip(sx, sy - TILE_H * 1.7, 'icon-coin', C_GLOW);
-        // Pair the ready pip with a hidden golden sparkle; the 300ms sparkle timer
-        // reveals it during the tile's golden window (Perfect Harvest).
-        view.sparkle = this.spawnSparkle(sx, sy - TILE_H * 1.75);
-      } else if (!ready && view.pip) {
-        this.tweens.killTweensOf(view.pip);
-        view.pip.destroy();
-        view.pip = undefined;
-        if (view.sparkle) {
-          this.tweens.killTweensOf(view.sparkle);
-          view.sparkle.destroy();
-          view.sparkle = undefined;
-        }
+      if (ready && !view.bubble && tile.buildingId !== undefined) {
+        // Ground ring first (beneath), then the bubble above, then a hidden golden
+        // sparkle the 300ms timer reveals ON TOP during the golden window.
+        view.readyRing = this.spawnReadyRing(sx, sy);
+        view.bubble = this.spawnBubble(sx, sy - BUBBLE_DY, this.readyBubbleKey(tile.buildingId));
+        view.sparkle = this.spawnSparkle(sx, sy - BUBBLE_DY);
+      } else if (!ready && view.bubble) {
+        this.clearReadyMarker(view);
       }
 
       // Boost pip (any boosted tile shows an up-arrow).
@@ -1651,20 +1678,124 @@ export class Village extends Scene {
     return pip;
   }
 
-  /** A larger golden star that overlays the coin pip during a tile's golden
-   * window (~2× the pip, gold tint, gentle scale-pulse). Created hidden; the
-   * sparkle timer toggles its visibility. */
+  /** The icon shown inside a building's ready bubble: the good it outputs (raw
+   * producers → their good; processors → their processed good), or the coin icon
+   * for coin buildings / the bakery (which mints coins). Reuses the game's own
+   * good→sprite mapping (the same icons the wallet/market show). */
+  private readyBubbleKey(id: BuildingId): SpriteKey {
+    const spec = CATALOG[id];
+    if (spec.role === 'raw' && spec.good) return GOOD_SPRITE[spec.good];
+    if (spec.role === 'processor' && spec.output && spec.output !== 'coins') {
+      return GOOD_SPRITE[spec.output];
+    }
+    return 'icon-coin';
+  }
+
+  /** Clamped counter-scale so the ready bubble stays legible zoomed out and never
+   * balloons zoomed in (screen size ≈ constant across the mid zoom range). */
+  private bubbleScale(): number {
+    const z = this.cameras.main.zoom || 1;
+    return Phaser.Math.Clamp(1 / z, BUBBLE_SCALE_LO, BUBBLE_SCALE_HI);
+  }
+
+  /**
+   * The bobbing "good bubble": a parchment-circle badge (UI pack `ui-badge`) with
+   * a soft drop-shadow behind it and the ready good's icon on top, floating in the
+   * SCREEN plane above the building (game convention — not iso-skewed). Gentle
+   * ~1.6s sine bob; static under reduced motion. Counter-scaled each tick by
+   * update(); zero per-frame allocation beyond this one container + its tween.
+   */
+  private spawnBubble(
+    x: number,
+    y: number,
+    iconKey: SpriteKey
+  ): Phaser.GameObjects.Container {
+    const shadow = this.add
+      .image(2, 3, 'ui-badge')
+      .setDisplaySize(BUBBLE_BADGE_PX, BUBBLE_BADGE_PX)
+      .setTint(0x000000)
+      .setAlpha(0.22);
+    const badge = this.add
+      .image(0, 0, 'ui-badge')
+      .setDisplaySize(BUBBLE_BADGE_PX, BUBBLE_BADGE_PX);
+    const icon = this.add
+      .image(0, -1, iconKey)
+      .setDisplaySize(BUBBLE_ICON_PX, BUBBLE_ICON_PX);
+    const c = this.add
+      .container(x, y, [shadow, badge, icon])
+      .setDepth(PIP_DEPTH)
+      .setScale(this.bubbleScale());
+    if (!this.reducedMotion) {
+      this.tweens.add({
+        targets: c,
+        y: y - BUBBLE_BOB,
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.inOut',
+      });
+    }
+    return c;
+  }
+
+  /** The pulsing gold ground ring: a soft iso ellipse on the tile beneath the
+   * building (depth just above ground, below the structure), alpha breathing
+   * ~1.6s between RING_ALPHA_LO/HI. Static mid-alpha under reduced motion. */
+  private spawnReadyRing(sx: number, sy: number): Phaser.GameObjects.Graphics {
+    const g = this.add.graphics().setDepth(sy + 0.35);
+    g.fillStyle(GOLD, 1);
+    g.fillEllipse(sx, sy, RING_RX * 2, RING_RY * 2);
+    if (this.reducedMotion) {
+      g.setAlpha((RING_ALPHA_LO + RING_ALPHA_HI) / 2);
+    } else {
+      g.setAlpha(RING_ALPHA_HI);
+      this.tweens.add({
+        targets: g,
+        alpha: RING_ALPHA_LO,
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.inOut',
+      });
+    }
+    return g;
+  }
+
+  /** Tear down a tile's ready marker (bubble + ground ring + golden sparkle) and
+   * kill their tweens together — used on collect (instant clear) and tile change. */
+  private clearReadyMarker(view: TileView): void {
+    if (view.bubble) {
+      this.tweens.killTweensOf(view.bubble);
+      view.bubble.destroy();
+      view.bubble = undefined;
+    }
+    if (view.readyRing) {
+      this.tweens.killTweensOf(view.readyRing);
+      view.readyRing.destroy();
+      view.readyRing = undefined;
+    }
+    if (view.sparkle) {
+      this.tweens.killTweensOf(view.sparkle);
+      view.sparkle.destroy();
+      view.sparkle = undefined;
+    }
+  }
+
+  /** A larger golden star that overlays the ready bubble during a tile's golden
+   * window (Perfect Harvest), gold tint + gentle scale-pulse, drawn ABOVE the
+   * bubble so it composes as a rarer "this one's special" flourish. Created
+   * hidden; the sparkle timer toggles its visibility. */
   private spawnSparkle(x: number, y: number): Phaser.GameObjects.Image {
     const sparkle = this.add
       .image(x, y, 'icon-star')
-      .setScale(0.36)
+      .setScale(0.4)
       .setTint(GOLD)
-      .setDepth(PIP_DEPTH + 1)
+      .setDepth(PIP_DEPTH + 2)
       .setVisible(false);
     if (!this.reducedMotion) {
       this.tweens.add({
         targets: sparkle,
-        scale: 0.46,
+        scale: 0.52,
         duration: 400,
         yoyo: true,
         repeat: -1,
@@ -1675,20 +1806,18 @@ export class Village extends Scene {
   }
 
   /**
-   * Light 300ms sweep over ready tiles: reveal each tile's golden sparkle (and
-   * hide its coin pip) exactly while `isGoldenWindow(key, now)` is true. Pure
-   * visibility toggles on pre-created sprites — zero allocation per tick — giving
-   * the 1.8s window enough resolution that the ~2s pip timer alone can't.
+   * Light 300ms sweep over ready tiles: reveal each tile's golden sparkle exactly
+   * while `isGoldenWindow(key, now)` is true — layered ON TOP of the ready bubble
+   * (which stays visible) so Perfect Harvest reads as a rarer flourish, not a
+   * swap. Pure visibility toggles on a pre-created sprite — zero allocation per
+   * tick — giving the 1.8s window enough resolution the ~2s marker timer can't.
    */
   private updateSparkles(): void {
     const now = this.now();
     for (const [key, view] of this.views) {
-      if (!view.pip || !view.sparkle) continue;
+      if (!view.bubble || !view.sparkle) continue;
       const golden = isGoldenWindow(key, now);
-      if (view.sparkle.visible !== golden) {
-        view.sparkle.setVisible(golden);
-        view.pip.setVisible(!golden);
-      }
+      if (view.sparkle.visible !== golden) view.sparkle.setVisible(golden);
     }
   }
 
@@ -3037,6 +3166,18 @@ export class Village extends Scene {
   override update(time: number, _delta: number): void {
     if (time - this.lastBarTick < 250) return; // throttle to ~4 Hz
     this.lastBarTick = time;
+
+    // H4: keep every ready bubble counter-scaled against the live camera zoom, and
+    // hide the one whose building has an open popover (the card would cover it).
+    // Pure property writes on pre-created objects — no allocation.
+    const bScale = this.bubbleScale();
+    const popKey = openPopoverTileKey();
+    for (const [key, view] of this.views) {
+      if (!view.bubble) continue;
+      view.bubble.setScale(bScale);
+      const visible = key !== popKey;
+      if (view.bubble.visible !== visible) view.bubble.setVisible(visible);
+    }
 
     const data = store.data;
     if (!data) return;

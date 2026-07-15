@@ -656,6 +656,11 @@ export const mountPopoverRoot = (parent: HTMLElement): void => {
 
 export const isPopoverOpen = (): boolean => popSpec !== undefined;
 
+/** The tile key (`"x,y"`) the popover is currently anchored to, or null when no
+ * popover is open. Used by the world scene to hide that building's ready bubble
+ * while its popover covers it (H4). */
+export const openPopoverTileKey = (): string | null => popSpec?.tileKey ?? null;
+
 /** Open (or, on a re-tap of the same tile, toggle-close) the tile popover. */
 export const openPopover = (spec: PopoverSpec): void => {
   if (!popCard || !popBody) return;

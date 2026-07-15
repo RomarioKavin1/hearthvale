@@ -173,7 +173,11 @@ export type SpriteKey =
   | 'icon-cross'
   | 'icon-gear'
   | 'icon-trophy'
-  | 'icon-question';
+  | 'icon-question'
+  // UI pack (adventure): the parchment circle used as the ready-to-collect good
+  // bubble's badge in the world (H4). A full-colour panel piece, NOT a tintable
+  // icon mask — so it is deliberately kept OUT of ICON_KEYS.
+  | 'ui-badge';
 
 const ICON_KEYS = new Set<SpriteKey>([
   'icon-coin',
@@ -350,6 +354,7 @@ export const SPRITES: Record<SpriteKey, string> = {
   'icon-gear': '/icons/icon-gear.png',
   'icon-trophy': '/icons/icon-trophy.png',
   'icon-question': '/icons/icon-question.png',
+  'ui-badge': '/ui/round_brown.png',
 };
 
 /** Sanity guard (used by ArtDebug in Task V3): true if `key` is a UI icon rather than a diorama sprite. */
@@ -524,18 +529,20 @@ export const BUILDING_ART: Record<BuildingId, BuildingArt> = {
     shape: 'point',
     roofByTier: { 1: 'roof-point-brown', 2: 'roof-point-green', 3: 'roof-point-purple' },
   },
-  // Sawmill = DENSE LUMBER YARD (H2): NO house base — the tall open timber frame
-  // (structure-high) is the canopy's visible posts, and the accents pack the tile
-  // as a working yard: a slant-roof canopy, a BIG stacked log pile, a saw table
-  // with the blade half-buried mid-cut in a log (the storytelling detail), a
-  // plank lean-to and a sawdust mound. Tier growth (bigger stacks / a second
-  // canopy / a gold saw) lives in accents.ts. A yard, never a cottage.
+  // Sawmill = OPEN TIMBER YARD (H4 sprite pass v4): NO house base, and NO abstract
+  // scaffold cage (the old structure-high frame read as an orange box — the "still
+  // 2D and ugly" feedback). The yard is now composed ENTIRELY from grounded pack
+  // sprites: the primary is a BIG LOG STACK (balcony-wood = a bundle of round sawn
+  // timbers), and the accents (accents.ts) dress the tile with a low lean-to awning
+  // (roof-slant), a SAWHORSE cutting trestle (structure-low) and a finished-PLANK
+  // stack (bridge). Tier growth adds more logs/planks. Reads "wood processing" at a
+  // glance and shares its grammar with no house / windmill / kiln / bakery.
   sawmill: {
     kind: 'flat',
     byTier: {
-      1: ['structure-high'],
-      2: ['structure-high'],
-      3: ['structure-high'],
+      1: ['balcony-wood'],
+      2: ['balcony-wood'],
+      3: ['balcony-wood'],
     },
   },
   // Mason's Kiln = OVEN DOME (H1): NO house base — a desert oven dome body with a

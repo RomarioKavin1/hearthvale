@@ -5,7 +5,8 @@
 // tower, sawmill = open timber yard, kiln = oven dome, bakery = shop, manor =
 // estate — see manifest BUILDING_ART) and this module hand-draws the small
 // living/identifying accent on top: the windmill's turning sails, the sawmill's
-// static saw + log pile + canopy, the kiln's chimney + ember, the bakery's
+// sprite-composed timber yard (awning + log rack + plank deck + trestle — H4,
+// zero drawn geometry), the kiln's chimney + ember, the bakery's
 // striped awning + hanging sign, the manor's balcony + hedges, the quarry's pit,
 // and the per-tier house upgrades. Shared by the live Village scene AND the
 // ?artdebug surface so both render identically.
@@ -19,9 +20,10 @@
 // aesthetics — they're drawn in the flat screen plane"): the windmill sails now
 // spin INSIDE a foreshortened, slightly-tilted container (scaleX ≈ 0.72 of
 // scaleY + a small face rotation), so the sweep traces an ELLIPSE on the tower's
-// SE face instead of a screen-plane circle; the sawmill's flat saw disc becomes
-// a 2:1 iso ellipse half-buried lengthwise in the cut log. Both read as part of
-// the diorama rather than stickers on the glass.
+// SE face instead of a screen-plane circle. (H4: the sawmill's drawn saw / log /
+// plank geometry was retired entirely — it now composes from pack sprites only;
+// see the sawmill case below.) The windmill sails read as part of the diorama
+// rather than a sticker on the glass.
 //
 // All geometry is anchored to the tile's top-face centre (sx, sy) — the same
 // point addBlock/addSurface place from — with vertical offsets tuned against the
@@ -31,7 +33,7 @@
 import type { GameObjects, Scene, Tweens } from 'phaser';
 import { PAL } from '../../shared/palette';
 import type { BuildingId, Tier } from '../../shared/types';
-import { addBlock, addSurface, BASE_DY, ROOF_DY } from './render';
+import { addBlock, addSurface, BASE_DY } from './render';
 
 const hexNum = (hex: string): number => parseInt(hex.replace('#', ''), 16);
 
@@ -219,145 +221,86 @@ export const buildBuildingAccents = (
     }
 
     case 'sawmill': {
-      // A DENSE LUMBER YARD (H2). The tall open frame (BUILDING_ART) provides the
-      // canopy posts; here we cap it with a slant-roof canopy and fill the tile
-      // with a working yard: a BIG stacked log pile, a saw table with the blade
-      // half-buried mid-cut in a log (the storytelling detail), a plank lean-to
-      // and a sawdust mound. Tier grows the stacks, adds a second canopy, and
-      // turns the saw gold. Everything ink-lined + two-tone to match Sketch Town.
+      // OPEN TIMBER YARD (H4 v4) — composed ENTIRELY from Sketch Town pack sprites,
+      // ZERO drawn geometry, and with NO abstract scaffold cage (the retired
+      // structure-high frame read as an orange box — the "still 2D and ugly"
+      // note). The manifest primary is a BIG LOG STACK (balcony-wood = a bundle of
+      // round sawn timbers); here we ground the rest of a working lumber yard around
+      // it: a low LEAN-TO awning (roof-slant) tucked over the back as the mill
+      // shelter, a SAWHORSE cutting trestle (structure-low) as the vertical work
+      // anchor, a finished-PLANK stack (bridge) at the output side, and extra
+      // logs/planks as the operation grows by tier. Every piece is a real object
+      // resting on the tile (addSurface's block-lift) — no floating, no cage. Reads
+      // "wood processing" and shares its grammar with no house / mill / kiln / bakery.
       const t = tier;
 
-      // Slant-roof canopy over the posts. Tier 3 adds a second, smaller canopy so
-      // the yard reads as a bigger operation.
-      const canopy = addBlock(scene, 'roof-slant-brown', sx - 2, sy - 4, BASE_DY + ROOF_DY)
-        .setScale(0.86)
-        .setDepth(sy + 3.5);
-      objects.push(canopy);
+      // Yard-prop helper: a pack sprite resting ON the tile surface (addSurface's
+      // one-block lift), nudged by (dx,dy) and scaled to clutter size. No drawn
+      // shapes, no per-object allocation beyond the sprites themselves.
+      const yard = (
+        key: Parameters<typeof addBlock>[1],
+        dx: number,
+        dy: number,
+        scale: number,
+        depth: number,
+        flip = false
+      ): GameObjects.Image => {
+        const o = addBlock(scene, key, sx + dx, sy + dy, BASE_DY).setScale(scale).setDepth(depth);
+        if (flip) o.setFlipX(true);
+        objects.push(o);
+        return o;
+      };
+
+      // LEAN-TO AWNING (back shelter): a modest slant wedge tucked at the BACK-left
+      // and drawn BEHIND the front clutter, so it reads as the mill's timber-store
+      // roof rather than a dominant cottage roof. Its foot is occluded by the
+      // woodpile in front, so it never looks like it floats.
+      const awning = addBlock(scene, 'roof-slant-brown', sx - 9, sy - 28, BASE_DY - 18)
+        .setScale(0.74)
+        .setFlipX(true)
+        .setDepth(sy + 2.4);
+      objects.push(awning);
+      // Tier 3 grows the shelter with a second smaller lean-to over the plank side.
       if (t >= 3) {
-        const canopy2 = addBlock(scene, 'roof-slant-brown', sx + 24, sy - 14, BASE_DY + ROOF_DY)
-          .setScale(0.58)
-          .setFlipX(true)
-          .setDepth(sy + 3.4);
-        objects.push(canopy2);
+        objects.push(
+          addBlock(scene, 'roof-slant-brown', sx + 22, sy - 20, BASE_DY - 10)
+            .setScale(0.5)
+            .setDepth(sy + 2.45)
+        );
       }
 
-      // Sawdust mound at the foot of the saw table (drawn first so it sits behind).
-      const tx = sx + 4;
-      const ty = sy + 12;
-      const dust = scene.add.graphics().setDepth(sy + 2.5);
-      dust.fillStyle(C.path, 0.95);
-      dust.fillEllipse(tx, ty + 13, 32, 10);
-      dust.fillStyle(C.pathDark, 0.9);
-      dust.fillEllipse(tx - 5, ty + 14, 15, 5);
-      dust.fillStyle(C.cream, 0.9);
-      for (const [dx, dy] of [[-9, 10], [3, 12], [-2, 15], [8, 13]] as const) {
-        dust.fillCircle(tx + dx, ty + dy, 1);
+      // SAWHORSE + LOG BEING CUT (front-centre): the cutting station — a low timber
+      // trestle (structure-low) with a round log (fence-wood) laid across it. The
+      // vertical work anchor and the clearest "this is a sawmill" cue; drawn on top.
+      yard('structure-low', 0, 9, 0.48, sy + 3.7);
+      yard('fence-wood', 2, 0, 0.5, sy + 3.85);
+
+      // LOG STACK (front-left): round timbers waiting to be cut — flanks the manifest
+      // primary log for a proper woodpile. Grows a course at tier >= 2.
+      yard('balcony-wood', -27, 13, 0.64, sy + 3.4);
+      if (t >= 2) yard('balcony-wood', -33, 5, 0.52, sy + 3.45, true);
+
+      // PLANK STACK (front-right): the bridge sprite is a flat sawn-board deck —
+      // finished lumber leaving the yard. Second course + a spare log at higher tiers.
+      const planks = yard('bridge', 28, 14, 0.6, sy + 3.5);
+      if (t >= 2) yard('bridge', 31, 6, 0.52, sy + 3.55);
+      if (t >= 3) yard('balcony-wood', 31, -3, 0.46, sy + 3.6, true);
+
+      // Subtle, sprite-only "yard is working" accent: a gentle alpha shimmer on the
+      // finished plank stack (~2.4s). Reduced motion → static full alpha. No drawn
+      // shapes, and the single reusable tween is torn down with the structure.
+      if (animate) {
+        tweens.push(
+          scene.tweens.add({
+            targets: planks,
+            alpha: 0.82,
+            duration: 2400,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.inOut',
+          })
+        );
       }
-      objects.push(dust);
-
-      // BIG log stack: a pyramid of log ends (heartwood discs) on the left — grows
-      // row by row with tier so a levelled yard is a visibly larger woodpile.
-      const logR = 7;
-      const rows = t >= 3 ? [3, 3, 2] : t >= 2 ? [3, 2, 1] : [2, 1];
-      const baseLX = sx - 44;
-      const baseLY = sy + 16;
-      const logs = scene.add.graphics().setDepth(sy + 2.6);
-      rows.forEach((count, row) => {
-        const ry = baseLY - row * (logR * 2 - 2);
-        const rowOff = row * logR;
-        for (let i = 0; i < count; i += 1) {
-          const cx = baseLX + rowOff + i * (logR * 2 + 1);
-          logs.fillStyle(C.wood, 1);
-          logs.fillCircle(cx, ry, logR);
-          logs.lineStyle(1.5, C.ink, 1);
-          logs.strokeCircle(cx, ry, logR);
-          logs.fillStyle(C.woodLight, 1);
-          logs.fillCircle(cx, ry, logR - 3);
-          logs.lineStyle(1, C.woodDark, 1);
-          logs.strokeCircle(cx, ry, logR - 3);
-          logs.strokeCircle(cx, ry, logR - 5);
-        }
-      });
-      objects.push(logs);
-
-      // Plank lean-to: a stack of sawn boards on the right, staggered light/dark.
-      const planks = scene.add.graphics().setDepth(sy + 2.6);
-      const px0 = sx + 22;
-      const py0 = sy + 18;
-      const plankCount = t >= 3 ? 5 : t >= 2 ? 4 : 3;
-      for (let i = 0; i < plankCount; i += 1) {
-        const yy = py0 - i * 4;
-        const xoff = (i % 2) * 3;
-        planks.fillStyle(i % 2 === 0 ? C.woodLight : C.wood, 1);
-        planks.fillRect(px0 + xoff, yy, 30, 4);
-        planks.lineStyle(1, C.ink, 1);
-        planks.strokeRect(px0 + xoff, yy, 30, 4);
-      }
-      objects.push(planks);
-
-      // Saw table: a trestle carrying a log with a circular blade rising mid-cut.
-      const table = scene.add.graphics().setDepth(sy + 2.7);
-      table.lineStyle(3, C.woodDark, 1);
-      table.lineBetween(tx - 20, ty + 12, tx - 12, ty);
-      table.lineBetween(tx - 20, ty, tx - 12, ty + 12);
-      table.lineBetween(tx + 12, ty + 12, tx + 20, ty);
-      table.lineBetween(tx + 12, ty, tx + 20, ty + 12);
-      objects.push(table);
-
-      // The blade — an ISO ELLIPSE (a 2:1-squashed circle, the iso read of a
-      // circular saw set into the cut) drawn UNDER the log (depth 2.75 < 2.8) so
-      // its lower half is buried in the log and only the toothed upper arc rises
-      // above the kerf. Static — a spinning disc read as a flat sticker (the old
-      // clash); a squashed, half-sunk ellipse sits IN the timber.
-      const gold = t >= 3;
-      const bladeFace = gold ? C.glow : C.stone;
-      const bladeEdge = gold ? C.accent : C.stoneDark;
-      const clx = tx - 26;
-      const cly = ty - 5;
-      const clh = 12;
-      const saw = scene.add.graphics({ x: tx, y: cly + 1 }).setDepth(sy + 2.75);
-      const RX = 15;
-      const RY = 7.5;
-      saw.fillStyle(bladeFace, 1);
-      saw.fillEllipse(0, 0, RX * 2, RY * 2);
-      // Teeth around the rim, following the ellipse (outlined, two-tone tips).
-      const teeth = 14;
-      for (let k = 0; k < teeth; k += 1) {
-        const t0 = ((k - 0.32) / teeth) * Math.PI * 2;
-        const t1 = ((k + 0.32) / teeth) * Math.PI * 2;
-        const tm = (k / teeth) * Math.PI * 2;
-        const b0: readonly [number, number] = [RX * Math.cos(t0), RY * Math.sin(t0)];
-        const b1: readonly [number, number] = [RX * Math.cos(t1), RY * Math.sin(t1)];
-        const ap: readonly [number, number] = [(RX + 3) * Math.cos(tm), (RY + 3) * Math.sin(tm)];
-        poly(saw, [b0, b1, ap], 0, k % 2 === 0 ? C.cream : bladeEdge);
-        outline(saw, [b0, b1, ap], 0, C.ink, 1);
-      }
-      saw.lineStyle(1.5, C.ink, 1);
-      saw.strokeEllipse(0, 0, RX * 2, RY * 2);
-      // Arbor hub + a couple of concentric rings for the plate read.
-      saw.lineStyle(1, bladeEdge, 0.9);
-      saw.strokeEllipse(0, 0, RX * 1.2, RY * 1.2);
-      saw.fillStyle(bladeEdge, 1);
-      saw.fillEllipse(0, 0, 6, 3.5);
-      saw.lineStyle(1, C.ink, 1);
-      saw.strokeEllipse(0, 0, 6, 3.5);
-      objects.push(saw);
-
-      // The log being cut, on top of the blade's lower half (mid-cut read).
-      const cutLog = scene.add.graphics().setDepth(sy + 2.8);
-      cutLog.fillStyle(C.wood, 1);
-      cutLog.fillRoundedRect(clx, cly, 52, clh, 5);
-      cutLog.lineStyle(1.5, C.ink, 1);
-      cutLog.strokeRoundedRect(clx, cly, 52, clh, 5);
-      // Near end cap (heartwood rings).
-      cutLog.fillStyle(C.woodLight, 1);
-      cutLog.fillEllipse(clx + 52, cly + clh / 2, 7, clh);
-      cutLog.lineStyle(1, C.woodDark, 1);
-      cutLog.strokeEllipse(clx + 52, cly + clh / 2, 7, clh);
-      // The kerf: a dark slit where the blade bites through the log.
-      cutLog.fillStyle(C.ink, 0.85);
-      cutLog.fillRect(tx - 1.5, cly - 1, 3, clh + 2);
-      objects.push(cutLog);
       break;
     }
 
