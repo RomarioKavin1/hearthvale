@@ -2375,7 +2375,10 @@ const CSS = `
   display: flex;
   align-items: center;
   gap: 10px;
-  max-height: 130px;
+  /* ~130px on typical steps (short bodies); the ceiling flexes to 190px so the
+   * long Village Hall step stays fully READABLE on a 375px phone — the body's
+   * 8-line clamp below governs the real height. */
+  max-height: 190px;
   padding: 12px calc(var(--sar) + 14px) calc(var(--sab) + 10px) calc(var(--sal) + 14px);
   background: transparent;
   border: 14px solid transparent;
@@ -2399,10 +2402,11 @@ const CSS = `
   font-size: 14px;
   line-height: 1.35;
   margin: 0;
-  /* Never truncate mid-word; long steps (the Hall) wrap up to 4 lines. */
+  /* Never truncate mid-word; the longest step (the Hall) needs 7 lines at 375px,
+   * so the clamp sits above that — it exists only as a runaway guard. */
   overflow-wrap: break-word;
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 8;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

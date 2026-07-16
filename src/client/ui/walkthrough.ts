@@ -139,6 +139,20 @@ const firstBuildingTile = (
   return t ? { x: t.x, y: t.y } : null;
 };
 
+/** True when `selector` matches an element that is actually VISIBLE right now.
+ * The modal sheet and popover keep their last-rendered content in the DOM after
+ * closing (only `is-open` drops — opacity 0, still laid out), so a bare
+ * querySelector would "find" controls the player cannot see. */
+const visibleTarget = (selector: string): boolean => {
+  const node = document.querySelector(selector);
+  if (!(node instanceof HTMLElement) || node.offsetParent === null) return false;
+  if (node.closest('.hv-backdrop') && !node.closest('.hv-backdrop.is-open')) {
+    return false;
+  }
+  if (node.closest('.hv-pop') && !node.closest('.hv-pop.is-open')) return false;
+  return true;
+};
+
 /** The journal target: the expanded banner if it's on-screen, else the compact
  * chip — whichever the collapsible column is currently showing. */
 const journalSelector = (): string => {
@@ -177,14 +191,15 @@ const STEPS: Step[] = [
     done: (_d, snap) => snap.wheatfieldBuilt,
     target: () => {
       // If the build sheet is open, point straight at the Wheat Field card.
-      const card = document.querySelector('[data-build-id="wheatfield"]');
-      if (card instanceof HTMLElement) return { kind: 'dom', selector: '[data-build-id="wheatfield"]' };
+      if (visibleTarget('[data-build-id="wheatfield"]')) {
+        return { kind: 'dom', selector: '[data-build-id="wheatfield"]' };
+      }
       return null;
     },
     highlights: (data) => {
-      // Once the build sheet is open, the arrow points at the card — drop the
+      // Once the build sheet is open, the ring points at the card — drop the
       // tile highlights so we don't split attention.
-      if (document.querySelector('[data-build-id="wheatfield"]')) return [];
+      if (visibleTarget('[data-build-id="wheatfield"]')) return [];
       return fieldHighlightKeys(data, data.me?.id ?? '', 3);
     },
   },
@@ -217,10 +232,10 @@ const STEPS: Step[] = [
     target: () => {
       // Deepest-available target: the wheat Sell button (row expanded), else the
       // wheat market row, else the Market FAB that opens the sheet.
-      if (document.querySelector('[data-sell-btn="wheat"]')) {
+      if (visibleTarget('[data-sell-btn="wheat"]')) {
         return { kind: 'dom', selector: '[data-sell-btn="wheat"]' };
       }
-      if (document.querySelector('[data-mkt-good="wheat"]')) {
+      if (visibleTarget('[data-mkt-good="wheat"]')) {
         return { kind: 'dom', selector: '[data-mkt-good="wheat"]' };
       }
       return { kind: 'dom', selector: '[data-fab="market"]' };
@@ -432,6 +447,14 @@ const targetRect = (
   if (target.kind === 'dom') {
     const node = document.querySelector(target.selector);
     if (!(node instanceof HTMLElement) || node.offsetParent === null) return null;
+    // The modal sheet keeps its last-rendered content in the DOM after closing
+    // (the backdrop merely drops `is-open` — opacity 0, still laid out), and the
+    // popover works the same way. A target inside a CLOSED backdrop/popover is
+    // invisible, so ringing it would spotlight thin air over the map.
+    if (node.closest('.hv-backdrop') && !node.closest('.hv-backdrop.is-open')) {
+      return null;
+    }
+    if (node.closest('.hv-pop') && !node.closest('.hv-pop.is-open')) return null;
     const r = node.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) return null;
     return { x: r.left, y: r.top, w: r.width, h: r.height };
